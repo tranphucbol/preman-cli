@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package test.echo;
+
+// Root-relative import, exactly like asset-exchange-v2's protos: only resolvable
+// when src/main/proto is on the include path.
+import "echo/common.proto";
+
+message EchoRequest {
+  string text = 1;
+  int64 amount = 2;
+  string trans_id = 3;
+  Mode mode = 4;
+}
+
+enum Mode {
+  MODE_UNSPECIFIED = 0;
+  SUCCEED = 1;
+  BUSINESS_FAIL = 2;
+  TRANSPORT_FAIL = 3;
+}
+
+message EchoReply {
+  ReturnCode return_code = 1;
+  string message = 2;
+  string echoed = 3;
+  int64 amount = 4;
+  string trans_id = 5;
+}
+
+service EchoService {
+  rpc Echo(EchoRequest) returns (EchoReply);
+  rpc Ping(EchoRequest) returns (EchoReply);
+}

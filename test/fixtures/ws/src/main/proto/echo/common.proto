@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package test.echo;
+
+// Mirrors the shape of asset-exchange-v2-common.proto: zero value is meaningless,
+// OK is 1, so business success must be checked explicitly.
+enum ReturnCode {
+  RETURN_CODE_UNSPECIFIED = 0;
+  OK = 1;
+  INVALID_ARGUMENT = 3;
+}

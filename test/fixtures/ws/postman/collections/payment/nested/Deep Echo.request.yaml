@@ -1,0 +1,16 @@
+$kind: grpc-request
+name: Deep Echo
+url: "{{grpc_url}}"
+methodPath: test.echo.EchoService.Echo
+message:
+  content: |-
+    {
+      "text": "deep",
+      "mode": "{{mode}}",
+      "trans_id": "{{trans_id}}"
+    }
+settings: {}
+schema:
+  source: file
+  location: ../../../../src/main/proto/echo/echo.proto
+order: 5

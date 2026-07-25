@@ -1,0 +1,22 @@
+$kind: grpc-request
+name: Ping
+url: "{{grpc_url}}"
+methodPath: test.echo.EchoService.Ping
+message:
+  content: |-
+    {
+      "text": "ping"
+    }
+settings: {}
+schema:
+  source: file
+  location: ../../../src/main/proto/echo/echo.proto
+scripts:
+  - type: onMessage
+    language: text/javascript
+    code: |-
+      pm.test("message echoes what we sent", function () {
+          pm.expect(pm.message.data.echoed).to.equal("ping");
+          pm.response.messages.to.include({ echoed: "ping" });
+      });
+order: 10

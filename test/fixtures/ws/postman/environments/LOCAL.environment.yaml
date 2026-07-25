@@ -1,0 +1,15 @@
+# Local development environment.
+# Comments and key order here must survive a writeback.
+name: LOCAL
+values:
+  - key: grpc_url # empty on purpose: exercises the config fallback
+    value: ''
+  - key: trans_id
+    value: ''
+  - key: greeting
+    value: hello
+  - key: mode
+    value: SUCCEED
+  - key: disabled_var
+    value: nope
+    enabled: false

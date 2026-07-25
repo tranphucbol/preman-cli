@@ -1,0 +1,6 @@
+name: Globals
+values:
+  - key: greeting
+    value: overridden-by-environment
+  - key: global_only
+    value: from-globals

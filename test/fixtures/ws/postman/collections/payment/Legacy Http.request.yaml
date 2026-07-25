@@ -1,0 +1,5 @@
+$kind: http-request
+name: Legacy Http
+method: GET
+url: http://localhost:8080/health
+order: 30

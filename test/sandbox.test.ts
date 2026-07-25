@@ -1,0 +1,333 @@
+import { describe, expect, it } from "vitest";
+import { CliError } from "../src/errors.js";
+import { runScript, type ScriptResponseInfo } from "../src/scripts/sandbox.js";
+import { VariableStore } from "../src/vars/store.js";
+
+/** Verbatim `beforeInvoke` script from postman/collections/payment/Long Chau.request.yaml. */
+const REAL_TRANS_ID_SCRIPT = `const date = new Date();
+const prefix =
+    (date.getFullYear() % 100) * 10000 +
+    (date.getMonth() + 1) * 100 +
+    date.getDate();
+const id = Math.floor(Math.random() * 1000000000);
+const trans_id = prefix * 1000000000 + id;
+pm.environment.set("trans_id", trans_id);`;
+
+function runFull(code: string, store = new VariableStore(), response?: ScriptResponseInfo) {
+  return runScript({
+    code,
+    store,
+    info: { requestName: "Long Chau", eventName: response === undefined ? "beforeInvoke" : "afterResponse" },
+    request: { url: "{{grpc_url}}", methodPath: "pe.aev2.ExchangeService.Exchange", body: '{"a":1}' },
+    ...(response === undefined ? {} : { response }),
+  });
+}
+
+function run(code: string, store = new VariableStore()) {
+  return runFull(code, store).logs;
+}
+
+describe("runScript", () => {
+  it("givenRealTransIdScript_whenRun_thenSetsDatePrefixedNumericEnvironmentVariable", () => {
+    const store = new VariableStore({ environment: { trans_id: "" } });
+    run(REAL_TRANS_ID_SCRIPT, store);
+
+    const transId = store.get("trans_id");
+    const now = new Date();
+    const prefix = String((now.getFullYear() % 100) * 10000 + (now.getMonth() + 1) * 100 + now.getDate());
+
+    expect(transId).toMatch(/^\d+$/);
+    expect(transId).toHaveLength(prefix.length + 9);
+    expect(transId?.startsWith(prefix)).toBe(true);
+    // The value must be a change so it gets written back to the environment file.
+    expect(store.changes("environment")).toEqual({ trans_id: transId });
+  });
+
+  it("givenConsoleCalls_whenRun_thenCapturesLevelAndFormattedText", () => {
+    const logs = run(`
+      console.log("plain", 1, true);
+      console.warn({ a: 1 });
+      console.error("boom");
+    `);
+    expect(logs).toEqual([
+      { level: "log", text: "plain 1 true" },
+      { level: "warn", text: '{"a":1}' },
+      { level: "error", text: "boom" },
+    ]);
+  });
+
+  it("givenScopeApis_whenRun_thenReadsAndWritesTheRightLayer", () => {
+    const store = new VariableStore({ globals: { g: "from-globals" }, environment: { e: "from-env" } });
+    run(
+      `
+      pm.environment.set("e2", "env-written");
+      pm.globals.set("g2", "globals-written");
+      pm.collectionVariables.set("c", "collection-written");
+      pm.variables.set("v", "local-written");
+      console.log(pm.environment.get("e"), pm.globals.get("g"), pm.variables.get("e"));
+      console.log(String(pm.environment.has("nope")), String(pm.variables.has("g")));
+    `,
+      store,
+    );
+
+    expect(store.changes("environment")).toEqual({ e2: "env-written" });
+    expect(store.changes("globals")).toEqual({ g2: "globals-written" });
+    expect(store.changes("collection")).toEqual({ c: "collection-written" });
+    // pm.variables.set is not persisted anywhere, so it lands in the local scope.
+    expect(store.changes("local")).toEqual({ v: "local-written" });
+    expect(store.get("v")).toBe("local-written");
+  });
+
+  it("givenScopeIsolation_whenReadingFromAnotherScope_thenReturnsUndefined", () => {
+    const store = new VariableStore({ globals: { only: "in-globals" } });
+    const logs = run(`console.log(String(pm.environment.get("only")), String(pm.globals.get("only")));`, store);
+    expect(logs[0]?.text).toBe("undefined in-globals");
+  });
+
+  it("givenUnsetAndClear_whenRun_thenRecordsEmptyStringChanges", () => {
+    const store = new VariableStore({ environment: { a: "1", b: "2" } });
+    run(`pm.environment.unset("a"); pm.globals.set("keep", "1");`, store);
+    expect(store.changes("environment")).toEqual({ a: "" });
+
+    const store2 = new VariableStore({ environment: { a: "1", b: "2" } });
+    run(`pm.environment.clear();`, store2);
+    expect(store2.changes("environment")).toEqual({ a: "", b: "" });
+  });
+
+  it("givenLegacyPostmanApi_whenRun_thenWritesEnvironmentVariable", () => {
+    const store = new VariableStore({ environment: { legacy: "old" } });
+    run(`postman.setEnvironmentVariable("legacy", postman.getEnvironmentVariable("legacy") + "-new");`, store);
+    expect(store.get("legacy")).toBe("old-new");
+  });
+
+  it("givenPmInfoAndRequest_whenRun_thenExposesRequestContext", () => {
+    const logs = run(`console.log(pm.info.requestName, pm.info.eventName, pm.request.methodPath, pm.request.body.raw);`);
+    expect(logs[0]?.text).toBe('Long Chau beforeInvoke pe.aev2.ExchangeService.Exchange {"a":1}');
+  });
+
+  it("givenToObject_whenRun_thenMergesScopesByPrecedence", () => {
+    const store = new VariableStore({ globals: { shared: "g", g: "1" }, environment: { shared: "e" } });
+    const logs = run(`console.log(JSON.stringify(pm.variables.toObject()));`, store);
+    expect(JSON.parse(logs[0]!.text)).toEqual({ shared: "e", g: "1" });
+  });
+
+  it("givenThrowingScript_whenRun_thenThrowsCliErrorCarryingLogs", () => {
+    try {
+      run(`console.log("before the boom"); throw new Error("nope");`);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CliError);
+      const cliError = error as CliError;
+      expect(cliError.message).toContain('script "beforeInvoke" failed');
+      expect(cliError.message).toContain("nope");
+      expect(cliError.details).toEqual(["log: before the boom"]);
+    }
+  });
+
+  it("givenInfiniteLoop_whenRun_thenTimesOut", () => {
+    expect(() =>
+      runScript({
+        code: `while (true) {}`,
+        store: new VariableStore(),
+        info: { requestName: "spin", eventName: "beforeInvoke" },
+        request: { url: "", methodPath: "", body: "" },
+        timeoutMs: 50,
+      }),
+    ).toThrow(CliError);
+  });
+
+  it("givenScriptTouchingHostGlobals_whenRun_thenTheyAreAbsent", () => {
+    const logs = run(`console.log(typeof process, typeof require, typeof fetch);`);
+    expect(logs[0]?.text).toBe("undefined undefined undefined");
+  });
+
+  it("givenPreScript_whenRun_thenResponseAndMessageAreAbsent", () => {
+    const logs = run(`console.log(typeof pm.response, typeof pm.message);`);
+    expect(logs[0]?.text).toBe("undefined undefined");
+  });
+});
+
+/** Verbatim `afterResponse` script from postman/collections/payment/Long Chau.request.yaml. */
+const REAL_TEST_SCRIPT = `const message = pm.response.messages.idx(0);
+
+const body =
+    typeof message.data === "string"
+        ? JSON.parse(message.data)
+        : message.data;
+
+pm.test("Transaction status is TRANS_PROCESSING", function () {
+    pm.expect(body.transaction.status).to.equal("TRANS_PROCESSING");
+});`;
+
+function grpcResponse(response: unknown, overrides: Partial<ScriptResponseInfo> = {}): ScriptResponseInfo {
+  return {
+    code: 0,
+    codeName: "OK",
+    message: "",
+    durationMs: 42,
+    response,
+    metadata: { "content-type": "application/grpc" },
+    trailers: { "x-handled-by": "echo" },
+    ...overrides,
+  };
+}
+
+describe("runScript (post-response scripts)", () => {
+  it("givenRealTestScript_whenStatusMatches_thenTestPasses", () => {
+    const body = { return_code: "OK", transaction: { status: "TRANS_PROCESSING" } };
+    const { tests } = runFull(REAL_TEST_SCRIPT, new VariableStore(), grpcResponse(body));
+
+    expect(tests).toEqual([{ name: "Transaction status is TRANS_PROCESSING", status: "passed", error: undefined }]);
+  });
+
+  it("givenRealTestScript_whenStatusDiffers_thenTestFailsWithTheChaiMessage", () => {
+    const body = { return_code: "OK", transaction: { status: "TRANS_SUCCESS" } };
+    const { tests } = runFull(REAL_TEST_SCRIPT, new VariableStore(), grpcResponse(body));
+
+    expect(tests).toHaveLength(1);
+    expect(tests[0]?.status).toBe("failed");
+    expect(tests[0]?.error).toContain("TRANS_PROCESSING");
+    expect(tests[0]?.error).toContain("TRANS_SUCCESS");
+  });
+
+  it("givenStringMessageData_whenRealTestScriptParsesIt_thenTestPasses", () => {
+    const raw = JSON.stringify({ transaction: { status: "TRANS_PROCESSING" } });
+    const { tests } = runFull(REAL_TEST_SCRIPT, new VariableStore(), grpcResponse(raw));
+
+    expect(tests[0]?.status).toBe("passed");
+  });
+
+  it("givenResponse_whenScriptReadsIt_thenPostmanShapedFieldsAreAvailable", () => {
+    const logs = run2(
+      `console.log(pm.response.code, pm.response.status, pm.response.responseTime);
+       console.log(pm.response.metadata.get("Content-Type"), pm.response.metadata.has("nope"));
+       console.log(pm.response.headers.get("content-type"));
+       console.log(pm.response.trailers.has("x-handled-by"));
+       console.log(pm.response.messages.count(), pm.message.timestamp instanceof Date);
+       console.log(pm.response.responseSize > 0);`,
+      grpcResponse({ return_code: "OK" }),
+    );
+
+    expect(logs.map((line) => line.text)).toEqual([
+      "0 OK 42",
+      "application/grpc false",
+      "application/grpc",
+      "true",
+      "1 true",
+      "true",
+    ]);
+  });
+
+  it("givenCustomAssertions_whenUsed_thenTheyMatchTheDocumentedPostmanApi", () => {
+    const { tests } = runFull(
+      `pm.test("status by code", function () { pm.response.to.have.status(0); });
+       pm.test("status by name", function () { pm.response.to.have.status("ok"); });
+       pm.test("wrong status", function () { pm.response.to.have.status(5); });
+       pm.test("not that status", function () { pm.response.to.not.have.status(5); });
+       pm.test("metadata pair", function () { pm.response.to.have.metadata("content-type", "application/grpc"); });
+       pm.test("metadata mismatch", function () { pm.response.to.have.metadata("content-type", "text/plain"); });
+       pm.test("trailer present", function () { pm.response.to.have.trailer("x-handled-by"); });
+       pm.test("trailer absent", function () { pm.response.to.have.trailer("grpc-status-details-bin"); });
+       pm.test("messages include", function () { pm.response.messages.to.include({ return_code: "OK" }); });
+       pm.test("messages exclude", function () { pm.response.messages.to.include({ return_code: "NOPE" }); });`,
+      new VariableStore(),
+      grpcResponse({ return_code: "OK", transaction: { status: "TRANS_PROCESSING" } }),
+    );
+
+    expect(tests.map((test) => [test.name, test.status])).toEqual([
+      ["status by code", "passed"],
+      ["status by name", "passed"],
+      ["wrong status", "failed"],
+      ["not that status", "passed"],
+      ["metadata pair", "passed"],
+      ["metadata mismatch", "failed"],
+      ["trailer present", "passed"],
+      ["trailer absent", "failed"],
+      ["messages include", "passed"],
+      ["messages exclude", "failed"],
+    ]);
+  });
+
+  it("givenPlainChaiInclude_whenUsedOnOrdinaryValues_thenItStillBehavesNormally", () => {
+    const { tests } = runFull(
+      `pm.test("array include", function () { pm.expect([1, 2, 3]).to.include(2); });
+       pm.test("string include", function () { pm.expect("abc").to.include("b"); });
+       pm.test("object include", function () { pm.expect({ a: 1, b: 2 }).to.include({ a: 1 }); });
+       pm.test("include fails", function () { pm.expect([1]).to.include(9); });`,
+      new VariableStore(),
+      grpcResponse({}),
+    );
+
+    expect(tests.map((test) => test.status)).toEqual(["passed", "passed", "passed", "failed"]);
+  });
+
+  it("givenAsyncTests_whenRun_thenTheyFailLoudlyInsteadOfPassingSilently", () => {
+    const { tests } = runFull(
+      `pm.test("done callback", function (done) { done(); });
+       pm.test("promise", function () { return Promise.reject(new Error("late")); });`,
+      new VariableStore(),
+      grpcResponse({}),
+    );
+
+    expect(tests.map((test) => test.status)).toEqual(["failed", "failed"]);
+    expect(tests[0]?.error).toContain("async tests are not supported");
+    expect(tests[1]?.error).toContain("async tests are not supported");
+  });
+
+  it("givenSkippedAndInvalidTests_whenRun_thenRecordedAsSkipped", () => {
+    const { tests } = runFull(
+      `pm.test.skip("not now", function () { throw new Error("never runs"); });
+       pm.test.todo("later");
+       pm.test("no callback");`,
+      new VariableStore(),
+      grpcResponse({}),
+    );
+
+    expect(tests.map((test) => [test.name, test.status])).toEqual([
+      ["not now", "skipped"],
+      ["later", "skipped"],
+      ["no callback", "skipped"],
+    ]);
+  });
+
+  it("givenAFailingTest_whenMoreCodeFollows_thenTheScriptKeepsRunning", () => {
+    const store = new VariableStore({ environment: { last: "" } });
+    const { tests, logs } = runFull(
+      `pm.test("fails", function () { pm.expect(1).to.equal(2); });
+       console.log("still here");
+       pm.environment.set("last", "written");`,
+      store,
+      grpcResponse({}),
+    );
+
+    expect(tests[0]?.status).toBe("failed");
+    expect(logs.map((line) => line.text)).toEqual(["still here"]);
+    expect(store.changes("environment")).toEqual({ last: "written" });
+  });
+
+  it("givenScriptThrowingAfterATest_whenRun_thenTestResultsAreInTheErrorDetails", () => {
+    try {
+      runFull(
+        `pm.test("ran first", function () { pm.expect(1).to.equal(1); });
+         pm.response.nope.boom;`,
+        new VariableStore(),
+        grpcResponse({}),
+      );
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CliError);
+      const cliError = error as CliError;
+      expect(cliError.message).toContain('script "afterResponse" failed');
+      expect(cliError.details.join("\n")).toContain("test passed: ran first");
+    }
+  });
+
+  it("givenNoResponseBody_whenScriptReadsMessages_thenTheListIsEmpty", () => {
+    const logs = run2(`console.log(pm.response.messages.count(), pm.message === undefined);`, grpcResponse(undefined));
+    expect(logs[0]?.text).toBe("0 true");
+  });
+});
+
+function run2(code: string, response: ScriptResponseInfo) {
+  return runFull(code, new VariableStore(), response).logs;
+}

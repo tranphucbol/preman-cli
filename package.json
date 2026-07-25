@@ -1,0 +1,37 @@
+{
+  "name": "preman",
+  "version": "0.1.0",
+  "description": "Run Postman-format (filesystem) gRPC requests from the CLI",
+  "type": "module",
+  "bin": {
+    "preman": "dist/preman.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "build": "bun run scripts/build.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.5",
+    "@grpc/proto-loader": "^0.7.13",
+    "@inquirer/prompts": "^7.2.1",
+    "chai": "^5",
+    "picocolors": "^1.1.1",
+    "yaml": "^2.6.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/chai": "^5",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

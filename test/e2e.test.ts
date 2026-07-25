@@ -1,0 +1,928 @@
+import * as grpc from "@grpc/grpc-js";
+import * as protoLoader from "@grpc/proto-loader";
+import { readFileSync, rmSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { main } from "../src/cli.js";
+import { CliError, EXIT } from "../src/errors.js";
+import { LOAD_OPTIONS } from "../src/grpc/schema.js";
+import { extractReturnCode, isBusinessSuccess } from "../src/runner.js";
+import { loadEnvironment } from "../src/workspace/environments.js";
+import { cloneFixtureWorkspace, FIXTURE_INCLUDE_DIR, FIXTURE_PROTO, FIXTURE_WS } from "./helpers.js";
+
+interface EchoRequest {
+  text?: string;
+  amount?: string;
+  trans_id?: string;
+  mode?: string;
+}
+
+/** Every request the in-process server received, in order. */
+const received: Array<{ method: string; body: EchoRequest; metadata: Record<string, string> }> = [];
+
+let server: grpc.Server;
+let port: number;
+
+function flattenMetadata(metadata: grpc.Metadata): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, values] of Object.entries(metadata.getMap())) out[key] = String(values);
+  return out;
+}
+
+/**
+ * The handler's behaviour is driven by the request's `mode` field so a single
+ * server can exercise every exit-code path.
+ */
+function echo(
+  call: grpc.ServerUnaryCall<EchoRequest, unknown>,
+  callback: grpc.sendUnaryData<unknown>,
+  method: string,
+): void {
+  const body = call.request;
+  received.push({ method, body, metadata: flattenMetadata(call.metadata) });
+
+  const trailers = new grpc.Metadata();
+  trailers.set("x-handled-by", "test-server");
+
+  switch (body.mode) {
+    case "TRANSPORT_FAIL":
+      callback({ code: grpc.status.INTERNAL, details: "handler exploded", metadata: trailers });
+      return;
+    case "BUSINESS_FAIL":
+      callback(null, { return_code: "INVALID_ARGUMENT", message: "amount is not allowed", trans_id: body.trans_id });
+      return;
+    default:
+      callback(null, {
+        return_code: "OK",
+        message: "done",
+        echoed: body.text,
+        amount: body.amount,
+        trans_id: body.trans_id,
+      });
+  }
+}
+
+beforeAll(async () => {
+  const pkg = protoLoader.loadSync(FIXTURE_PROTO, { ...LOAD_OPTIONS, includeDirs: [FIXTURE_INCLUDE_DIR] });
+  const service = pkg["test.echo.EchoService"] as grpc.ServiceDefinition;
+
+  const handlers: grpc.UntypedServiceImplementation = {
+    Echo: ((call, cb) => echo(call, cb, "Echo")) satisfies grpc.handleUnaryCall<EchoRequest, unknown>,
+    Ping: ((call, cb) => echo(call, cb, "Ping")) satisfies grpc.handleUnaryCall<EchoRequest, unknown>,
+  };
+
+  server = new grpc.Server();
+  server.addService(service, handlers);
+
+  port = await new Promise<number>((resolve, reject) => {
+    server.bindAsync("127.0.0.1:0", grpc.ServerCredentials.createInsecure(), (error, boundPort) => {
+      if (error) reject(error);
+      else resolve(boundPort);
+    });
+  });
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.tryShutdown(() => resolve()));
+});
+
+afterEach(() => {
+  received.length = 0;
+  vi.restoreAllMocks();
+});
+
+/** Run the CLI, capturing stdout/stderr instead of letting it reach the terminal. */
+async function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  let stdout = "";
+  let stderr = "";
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    stdout += String(chunk);
+    return true;
+  });
+  vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    stderr += String(chunk);
+    return true;
+  });
+
+  try {
+    const code = await main(args);
+    return { code, stdout, stderr };
+  } finally {
+    vi.restoreAllMocks();
+  }
+}
+
+const target = () => `localhost:${port}`;
+
+describe("preman run (end to end against a real gRPC server)", () => {
+  it("givenSucceedingCall_whenRun_thenSendsInterpolatedPayloadAndExitsZero", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "Echo",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.OK);
+
+    const report = JSON.parse(stdout) as {
+      ok: boolean;
+      status: { name: string };
+      returnCode: string;
+      exitCode: number;
+      methodPath: string;
+      request: { path: string };
+      request_message: EchoRequest;
+      request_metadata: Record<string, string>;
+      response: Record<string, unknown>;
+    };
+    expect(report.ok).toBe(true);
+    expect(report.status.name).toBe("OK");
+    expect(report.returnCode).toBe("OK");
+    expect(report.exitCode).toBe(0);
+    expect(report.request.path).toBe("payment/Echo");
+    expect(report.methodPath).toBe("test.echo.EchoService.Echo");
+    // What preman reports as sent must match what the server actually received.
+    expect(report.request_message).toEqual(received[0]?.body);
+
+    // The server saw exactly one Echo call with the fully-interpolated payload.
+    expect(received).toHaveLength(1);
+    const sent = received[0]!;
+    expect(sent.method).toBe("Echo");
+    // greeting=hello comes from the environment, overriding the globals value.
+    expect(sent.body.text).toMatch(
+      /^hello [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(sent.body.mode).toBe("SUCCEED");
+    // 64-bit values survive as strings: 9007199254740993 > Number.MAX_SAFE_INTEGER.
+    expect(sent.body.amount).toBe("9007199254740993");
+    // trans_id was computed by the beforeInvoke script, not present in the env file.
+    expect(sent.body.trans_id).toMatch(/^\d{19}$/);
+    expect(sent.metadata["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+
+    // And the response round-tripped back through the same schema.
+    expect(report.response.echoed).toBe(sent.body.text);
+    expect(report.response.amount).toBe("9007199254740993");
+  });
+
+  it("givenBusinessFailure_whenRun_thenTransportIsOkButExitCodeIsThree", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "Echo",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--var",
+      "mode=BUSINESS_FAIL",
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.BUSINESS);
+    const report = JSON.parse(stdout) as { ok: boolean; status: { name: string }; returnCode: string };
+    expect(report.ok).toBe(true);
+    expect(report.status.name).toBe("OK");
+    expect(report.returnCode).toBe("INVALID_ARGUMENT");
+    expect(received[0]?.body.mode).toBe("BUSINESS_FAIL");
+  });
+
+  it("givenServerError_whenRun_thenExitCodeIsTwo", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "Echo",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--var",
+      "mode=TRANSPORT_FAIL",
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.TRANSPORT);
+    const report = JSON.parse(stdout) as {
+      ok: boolean;
+      status: { code: number; name: string; message: string };
+      trailers: Record<string, string>;
+    };
+    expect(report.ok).toBe(false);
+    expect(report.status.code).toBe(grpc.status.INTERNAL);
+    expect(report.status.name).toBe("INTERNAL");
+    expect(report.status.message).toContain("handler exploded");
+    expect(report.trailers["x-handled-by"]).toBe("test-server");
+  });
+
+  it("givenUnreachableTarget_whenRun_thenReportsUnavailableWithinTheDeadline", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "Echo",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      "localhost:1",
+      "--timeout",
+      "2000",
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.TRANSPORT);
+    const report = JSON.parse(stdout) as { ok: boolean; status: { name: string } };
+    expect(report.ok).toBe(false);
+    expect(["UNAVAILABLE", "DEADLINE_EXCEEDED"]).toContain(report.status.name);
+  });
+
+  it("givenSelectorPointingAtANestedRequest_whenRun_thenTheNestedRequestIsInvoked", async () => {
+    const { code } = await runCli([
+      "run",
+      "payment/nested/Deep Echo",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--json",
+    ]);
+    expect(code).toBe(EXIT.OK);
+    expect(received[0]?.body.text).toBe("deep");
+  });
+
+  it("givenVerboseHumanOutput_whenRun_thenShowsScriptLogsTargetAndStatus", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "Echo",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "-v",
+    ]);
+
+    expect(code).toBe(EXIT.OK);
+    expect(stdout).toContain("payment/Echo");
+    expect(stdout).toContain("test.echo.EchoService.Echo");
+    expect(stdout).toContain(target());
+    expect(stdout).toContain("plaintext");
+    expect(stdout).toContain("proto-file");
+    expect(stdout).toContain("generated trans_id");
+    expect(stdout).toContain("x-request-id");
+    expect(stdout).toContain("return_code");
+  });
+
+  it("givenSaveEnabled_whenScriptSetsAVariable_thenItIsPersistedWithCommentsIntact", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const before = readFileSync(clone.workspace.postmanDir + "/environments/LOCAL.environment.yaml", "utf8");
+      expect(before).toContain("# Local development environment.");
+
+      const { code, stdout } = await runCli(["run", "Echo", "-d", clone.root, "-e", "LOCAL", "--url", target(), "--json"]);
+      expect(code).toBe(EXIT.OK);
+
+      const report = JSON.parse(stdout) as { savedVars: Record<string, string>; savedTo: string };
+      // trans_id comes from the beforeInvoke script, last_return_code from afterResponse:
+      // the writeback has to happen after the post-response scripts to catch both.
+      expect(Object.keys(report.savedVars)).toEqual(["trans_id", "last_return_code"]);
+      expect(report.savedVars.last_return_code).toBe("OK");
+      expect(report.savedTo).toContain("LOCAL.environment.yaml");
+
+      const envPath = `${clone.workspace.postmanDir}/environments/LOCAL.environment.yaml`;
+      const after = readFileSync(envPath, "utf8");
+      expect(after).toContain("# Local development environment.");
+      expect(loadEnvironment(envPath).values.trans_id).toBe(report.savedVars.trans_id);
+      expect(report.savedVars.trans_id).toBe(received[0]?.body.trans_id);
+      // A key the environment file did not have before is appended.
+      expect(loadEnvironment(envPath).values.last_return_code).toBe("OK");
+      // Untouched keys keep their values.
+      expect(loadEnvironment(envPath).values.greeting).toBe("hello");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenNoSave_whenScriptSetsAVariable_thenTheFileIsUntouched", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const envPath = `${clone.workspace.postmanDir}/environments/LOCAL.environment.yaml`;
+      const before = readFileSync(envPath, "utf8");
+      const { code } = await runCli(["run", "Echo", "-d", clone.root, "-e", "LOCAL", "--url", target(), "--no-save", "--json"]);
+      expect(code).toBe(EXIT.OK);
+      expect(readFileSync(envPath, "utf8")).toBe(before);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenDescriptorOnlyRequest_whenRun_thenTheEmbeddedDescriptorIsUsed", async () => {
+    // The target does not serve pe.aev2, so the call fails at the transport level —
+    // but reaching that point proves the descriptor produced an invocable method.
+    const { code, stdout } = await runCli([
+      "run",
+      "Descriptor Only",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.TRANSPORT);
+    const report = JSON.parse(stdout) as { schemaSource: string; status: { name: string }; warnings: string[] };
+    expect(report.schemaSource).toBe("descriptor");
+    expect(report.status.name).toBe("UNIMPLEMENTED");
+    expect(report.warnings.join("\n")).toContain("stale or partial");
+  });
+});
+
+interface TestReport {
+  exitCode: number;
+  ok: boolean;
+  returnCode: string | null;
+  warnings: string[];
+  tests: Array<{ name: string; status: string; error: string | null }>;
+  testSummary: { total: number; passed: number; failed: number; skipped: number };
+}
+
+/** Base args for a single-request run against the live fixture server. */
+const runArgs = (selector: string, ...extra: string[]) => [
+  "run",
+  selector,
+  "-d",
+  FIXTURE_WS,
+  "-e",
+  "LOCAL",
+  "--url",
+  target(),
+  "--no-save",
+  ...extra,
+];
+
+describe("preman run (test scripts)", () => {
+  it("givenPassingAfterResponseTests_whenRun_thenReportedAndExitStaysZero", async () => {
+    const { code, stdout } = await runCli(runArgs("Echo", "--json"));
+
+    expect(code).toBe(EXIT.OK);
+    const report = JSON.parse(stdout) as TestReport;
+    expect(report.tests.map((t) => [t.name, t.status])).toEqual([
+      ["return_code is as expected", "passed"],
+      ["grpc status is OK", "passed"],
+    ]);
+    expect(report.testSummary).toEqual({ total: 2, passed: 2, failed: 0, skipped: 0 });
+  });
+
+  it("givenFailingAssertion_whenCallAndReturnCodeAreFine_thenExitCodeIsFour", async () => {
+    const { code, stdout } = await runCli(runArgs("Echo", "--var", "expected_code=NOPE", "--json"));
+
+    expect(code).toBe(EXIT.TEST);
+    const report = JSON.parse(stdout) as TestReport;
+    // The call itself was perfectly fine; only the assertion failed.
+    expect(report.ok).toBe(true);
+    expect(report.returnCode).toBe("OK");
+    expect(report.exitCode).toBe(EXIT.TEST);
+    expect(report.testSummary).toEqual({ total: 2, passed: 1, failed: 1, skipped: 0 });
+    const failed = report.tests.find((t) => t.status === "failed");
+    expect(failed?.name).toBe("return_code is as expected");
+    expect(failed?.error).toContain("NOPE");
+  });
+
+  it("givenFailingAssertion_whenHumanOutput_thenTheFailureIsVisibleWithoutVerbose", async () => {
+    const { stdout } = await runCli(runArgs("Echo", "--var", "expected_code=NOPE"));
+
+    expect(stdout).toContain("return_code is as expected");
+    expect(stdout).toContain("grpc status is OK");
+    expect(stdout).toContain("2 tests");
+    expect(stdout).toContain("1 passed");
+    expect(stdout).toContain("1 failed");
+  });
+
+  it("givenOnMessageScript_whenRun_thenItRunsWithPmMessageBound", async () => {
+    const { code, stdout } = await runCli(runArgs("Ping", "--json"));
+
+    expect(code).toBe(EXIT.OK);
+    const report = JSON.parse(stdout) as TestReport;
+    expect(report.tests).toEqual([
+      { name: "message echoes what we sent", status: "passed", error: null },
+    ]);
+  });
+
+  it("givenBusinessFailureAndFailingTest_whenRun_thenBusinessOutranksTheTestFailure", async () => {
+    const { code, stdout } = await runCli(runArgs("Echo", "--var", "mode=BUSINESS_FAIL", "--json"));
+
+    // return_code is INVALID_ARGUMENT, so the afterResponse assertion fails too —
+    // but the business failure is the more informative signal.
+    expect(code).toBe(EXIT.BUSINESS);
+    const report = JSON.parse(stdout) as TestReport;
+    expect(report.returnCode).toBe("INVALID_ARGUMENT");
+    expect(report.testSummary.failed).toBe(1);
+  });
+
+  it("givenTransportFailure_whenRun_thenPostResponseScriptsAreSkippedWithAWarning", async () => {
+    const { code, stdout } = await runCli(runArgs("Echo", "--var", "mode=TRANSPORT_FAIL", "--json"));
+
+    expect(code).toBe(EXIT.TRANSPORT);
+    const report = JSON.parse(stdout) as TestReport;
+    expect(report.tests).toEqual([]);
+    expect(report.testSummary).toEqual({ total: 0, passed: 0, failed: 0, skipped: 0 });
+    expect(report.warnings.join("\n")).toContain("afterResponse scripts skipped");
+  });
+});
+
+describe("preman run (error paths)", () => {
+  it("givenHttpRequest_whenRun_thenRejectedAsUnsupported", async () => {
+    await expect(runCli(["run", "Legacy Http", "-d", FIXTURE_WS, "-e", "LOCAL", "--json"])).rejects.toThrow(
+      /http-request, which preman does not support yet/,
+    );
+  });
+
+  it("givenUnknownSelector_whenRun_thenListsAvailableRequests", async () => {
+    try {
+      await runCli(["run", "does-not-exist", "-d", FIXTURE_WS, "-e", "LOCAL"]);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).details.join("\n")).toContain("payment/Echo");
+    }
+  });
+
+  it("givenUnknownEnvironment_whenRun_thenListsAvailableEnvironments", async () => {
+    await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, "-e", "NOPE"])).rejects.toThrow(
+      /environment "NOPE" not found/,
+    );
+  });
+
+  it("givenAmbiguousSelectorAndNoTty_whenRun_thenListsCandidatesInsteadOfGuessing", async () => {
+    // "Echo" matches payment/Echo exactly, so use a substring that hits several.
+    try {
+      await runCli(["run", "Ech", "-d", FIXTURE_WS, "-e", "LOCAL", "--url", target()]);
+      expect.unreachable("should have thrown instead of picking one");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CliError);
+      const details = (error as CliError).details.join("\n");
+      expect(details).toContain("payment/Echo");
+      expect(details).toContain("payment/nested/Deep Echo");
+    }
+    expect(received).toHaveLength(0);
+  });
+
+  it("givenNoEnvironmentAtAll_whenRun_thenMissingVariablesFailBeforeAnyCall", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      // Without the environment file, {{greeting}} and {{mode}} are undefined.
+      rmSync(`${clone.workspace.postmanDir}/environments`, { recursive: true, force: true });
+      await expect(runCli(["run", "Echo", "-d", clone.root, "--url", target()])).rejects.toThrow(
+        /could not resolve all variables in message body/,
+      );
+      expect(received).toHaveLength(0);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenMutuallyExclusiveTlsFlags_whenRun_thenRejected", async () => {
+    await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, "--tls", "--insecure"])).rejects.toThrow(
+      /mutually exclusive/,
+    );
+  });
+
+  it.each([
+    ["--timeout", "0"],
+    ["--timeout", "abc"],
+  ])("givenInvalidTimeout_whenRun_thenRejected: %s %s", async (flag, value) => {
+    await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, flag, value])).rejects.toThrow(/invalid --timeout/);
+  });
+
+  it("givenMalformedVar_whenRun_thenRejected", async () => {
+    await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, "--var", "novalue"])).rejects.toThrow(/expected key=value/);
+  });
+});
+
+describe("exit-code classification", () => {
+  it.each([
+    [{ return_code: "OK" }, "OK", true],
+    [{ returnCode: "OK" }, "OK", true],
+    [{ return_code: "1" }, "1", true],
+    [{ return_code: "INVALID_ARGUMENT" }, "INVALID_ARGUMENT", false],
+    [{ return_code: "RETURN_CODE_UNSPECIFIED" }, "RETURN_CODE_UNSPECIFIED", false],
+  ])("givenResponse_whenClassified_thenMatchesReturnCodeSemantics: %j", (response, expectedCode, success) => {
+    expect(extractReturnCode(response)).toBe(expectedCode);
+    expect(isBusinessSuccess(extractReturnCode(response))).toBe(success);
+  });
+
+  it("givenResponseWithoutReturnCode_whenClassified_thenTreatedAsNeutral", () => {
+    expect(extractReturnCode({ other: 1 })).toBeUndefined();
+    expect(extractReturnCode(null)).toBeUndefined();
+    expect(extractReturnCode("string")).toBeUndefined();
+    // A missing return_code must not by itself mark the run as a business failure.
+    expect(isBusinessSuccess(undefined)).toBe(false);
+  });
+});
+
+describe("preman list / env", () => {
+  it("givenFixtureWorkspace_whenListing_thenGroupsRequestsAndFlagsUnsupportedKinds", async () => {
+    const { code, stdout } = await runCli(["list", "-d", FIXTURE_WS, "-v"]);
+    expect(code).toBe(EXIT.OK);
+    expect(stdout).toContain("payment");
+    expect(stdout).toContain("Echo");
+    expect(stdout).toContain("http-request");
+    expect(stdout).toContain("LOCAL");
+    expect(stdout).toContain("echo.proto");
+  });
+
+  it("givenJsonList_whenListing_thenEmitsRequestsAndEnvironments", async () => {
+    const { stdout } = await runCli(["list", "-d", FIXTURE_WS, "--json"]);
+    const report = JSON.parse(stdout) as { requests: Array<{ path: string; kind: string }>; environments: unknown[] };
+    expect(report.requests.map((r) => r.path)).toEqual([
+      "payment/Ping",
+      "payment/Echo",
+      "payment/Legacy Http",
+      "payment/Descriptor Only",
+      "payment/nested/Deep Echo",
+    ]);
+    expect(report.environments).toHaveLength(1);
+  });
+
+  it("givenEnvShow_whenRun_thenPrintsResolvedValues", async () => {
+    const { code, stdout } = await runCli(["env", "show", "-d", FIXTURE_WS, "-e", "LOCAL", "--json"]);
+    expect(code).toBe(EXIT.OK);
+    const report = JSON.parse(stdout) as { values: Record<string, string> };
+    expect(report.values.greeting).toBe("hello");
+    // Disabled rows are not part of the resolved set.
+    expect(report.values.disabled_var).toBeUndefined();
+  });
+
+  it("givenEnvSet_whenRun_thenPersistsToTheClonedWorkspace", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const { code } = await runCli(["env", "set", "greeting", "howdy", "-d", clone.root, "-e", "LOCAL"]);
+      expect(code).toBe(EXIT.OK);
+      const envPath = `${clone.workspace.postmanDir}/environments/LOCAL.environment.yaml`;
+      expect(loadEnvironment(envPath).values.greeting).toBe("howdy");
+      expect(readFileSync(envPath, "utf8")).toContain("# Local development environment.");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenNoArgs_whenRun_thenPrintsHelpAndExitsOne", async () => {
+    const { code, stdout } = await runCli([]);
+    expect(code).toBe(EXIT.CLI);
+    expect(stdout).toContain("usage");
+  });
+
+  it("givenHelpFlag_whenRun_thenPrintsHelpAndExitsZero", async () => {
+    const { code, stdout } = await runCli(["--help"]);
+    expect(code).toBe(EXIT.OK);
+    expect(stdout).toContain("preman");
+  });
+
+  it("givenVersionFlag_whenRun_thenPrintsVersion", async () => {
+    const { stdout } = await runCli(["--version"]);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("givenUnknownCommand_whenRun_thenRejected", async () => {
+    await expect(runCli(["nope", "-d", FIXTURE_WS])).rejects.toThrow(/unknown command "nope"/);
+  });
+
+  it("givenUnknownFlag_whenRun_thenRejectedWithUsageHint", async () => {
+    await expect(runCli(["list", "--bogus"])).rejects.toThrow(CliError);
+  });
+});
+
+interface GroupReport {
+  group: string;
+  items: Array<{
+    request: { path: string; kind: string };
+    status: string;
+    error: { message: string; details: string[] } | null;
+    run: { request_message: EchoRequest; returnCode: string | null; status: { name: string } } | null;
+  }>;
+  bailed: boolean;
+  savedVars: Record<string, string>;
+  savedTo: string | null;
+  exitCode: number;
+}
+
+describe("preman run <collection> (whole-collection runs)", () => {
+  it("givenCollectionSelector_whenRun_thenEveryRequestRunsInOrder", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--json",
+    ]);
+
+    const report = JSON.parse(stdout) as GroupReport;
+    expect(report.group).toBe("payment");
+    expect(report.items.map((i) => i.request.path)).toEqual([
+      "payment/Ping",
+      "payment/Echo",
+      "payment/Legacy Http",
+      "payment/Descriptor Only",
+      "payment/nested/Deep Echo",
+    ]);
+
+    // Legacy Http is skipped as an unsupported kind and Descriptor Only targets a
+    // server that does not serve pe.aev2; neither stops the rest of the run.
+    expect(report.items.map((i) => i.status)).toEqual(["ok", "ok", "skipped", "transport", "ok"]);
+    expect(report.bailed).toBe(false);
+
+    // The transport failure is the worst outcome, so it decides the exit code.
+    expect(report.exitCode).toBe(EXIT.TRANSPORT);
+    expect(code).toBe(EXIT.TRANSPORT);
+
+    // Every runnable request actually hit the wire, in order.
+    expect(received.map((r) => r.method)).toEqual(["Ping", "Echo", "Echo"]);
+    expect(received[2]?.body.text).toBe("deep");
+  });
+
+  it("givenRequestThatCannotRun_whenInAGroup_thenItIsAnErrorItemAndOutranksTransport", async () => {
+    // `--descriptor` forces the embedded-descriptor path, which only one fixture
+    // request has — the others fail before reaching the wire.
+    const { code, stdout } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--descriptor",
+      "--no-save",
+      "--json",
+    ]);
+
+    const report = JSON.parse(stdout) as GroupReport;
+    expect(report.items.map((i) => i.status)).toEqual(["error", "error", "skipped", "transport", "error"]);
+    expect(report.items[0]?.error?.message).toContain("no usable schema");
+    // A hard error outranks a transport failure: the run itself is misconfigured.
+    expect(report.exitCode).toBe(EXIT.CLI);
+    expect(code).toBe(EXIT.CLI);
+    expect(received).toHaveLength(0);
+  });
+
+  it("givenFolderSelector_whenRun_thenOnlyThatFolderRuns", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "payment/nested",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.OK);
+    const report = JSON.parse(stdout) as GroupReport;
+    expect(report.group).toBe("payment/nested");
+    expect(report.items).toHaveLength(1);
+    expect(report.items[0]?.request.path).toBe("payment/nested/Deep Echo");
+    expect(received).toHaveLength(1);
+  });
+
+  it("givenBusinessFailureInGroup_whenRun_thenAggregateExitIsThree", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "nested",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--var",
+      "mode=BUSINESS_FAIL",
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.BUSINESS);
+    const report = JSON.parse(stdout) as GroupReport;
+    expect(report.items[0]?.status).toBe("business");
+    expect(report.items[0]?.run?.returnCode).toBe("INVALID_ARGUMENT");
+  });
+
+  it("givenBail_whenAnEarlyRequestFails_thenTheRestAreNotRun", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--bail",
+      "--no-save",
+      "--json",
+    ]);
+
+    expect(code).toBe(EXIT.TRANSPORT);
+    const report = JSON.parse(stdout) as GroupReport;
+    // Descriptor Only is the 4th request and the first failure, so Deep Echo,
+    // which follows it, is never attempted. A skip does not trip --bail.
+    expect(report.bailed).toBe(true);
+    expect(report.items.map((i) => i.status)).toEqual(["ok", "ok", "skipped", "transport"]);
+    expect(received.map((r) => r.method)).toEqual(["Ping", "Echo"]);
+  });
+
+  it("givenSkippedRequest_whenRun_thenItsKindIsReported", async () => {
+    const { stdout } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--json",
+    ]);
+
+    const report = JSON.parse(stdout) as GroupReport;
+    const skipped = report.items.find((i) => i.status === "skipped");
+    expect(skipped?.request.kind).toBe("http-request");
+    expect(skipped?.error?.message).toContain("not supported yet");
+    expect(skipped?.run).toBeNull();
+  });
+
+  it("givenCollectionRun_whenScriptsSetVariables_thenTheyCarryToLaterRequestsAndSaveOnce", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const envPath = `${clone.workspace.postmanDir}/environments/LOCAL.environment.yaml`;
+      const { stdout } = await runCli(["run", "payment", "-d", clone.root, "-e", "LOCAL", "--url", target(), "--json"]);
+
+      const report = JSON.parse(stdout) as GroupReport;
+      // Echo's script sets trans_id; Deep Echo runs later with the same store, so
+      // the value is written once, at the end, and matches what Echo sent.
+      expect(Object.keys(report.savedVars)).toEqual(["trans_id", "last_return_code"]);
+      // received[0] is Ping; received[1] is Echo, the request whose script ran.
+      expect(report.savedVars.trans_id).toBe(received[1]?.body.trans_id);
+      expect(report.savedTo).toContain("LOCAL.environment.yaml");
+      // Deep Echo ran after Echo with the same store, so it sent Echo's trans_id.
+      expect(received[2]?.body.trans_id).toBe(report.savedVars.trans_id);
+      expect(loadEnvironment(envPath).values.trans_id).toBe(report.savedVars.trans_id);
+      expect(readFileSync(envPath, "utf8")).toContain("# Local development environment.");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenCollectionRun_whenHuman_thenPrintsATableAndCounts", async () => {
+    const { stdout } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+    ]);
+
+    expect(stdout).toContain("payment");
+    expect(stdout).toContain("5 requests");
+    expect(stdout).toContain("payment/Echo");
+    expect(stdout).toContain("skipped");
+    expect(stdout).toContain("3 ok");
+    expect(stdout).toContain("1 failed");
+    expect(stdout).toContain("1 skipped");
+  });
+
+  it("givenVerboseCollectionRun_whenHuman_thenEachRequestGetsAFullReport", async () => {
+    const { stdout } = await runCli([
+      "run",
+      "payment/nested",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "-v",
+    ]);
+
+    expect(stdout).toContain("request body:");
+    expect(stdout).toContain("test.echo.EchoService.Echo");
+    expect(stdout).toContain("1 request");
+  });
+
+  it("givenFailingTestInGroup_whenRun_thenTheItemIsATestFailureAndTransportStillOutranksIt", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--var",
+      "expected_code=NOPE",
+      "--json",
+    ]);
+
+    const report = JSON.parse(stdout) as GroupReport;
+    expect(report.items.map((i) => i.status)).toEqual(["ok", "test", "skipped", "transport", "ok"]);
+    // Descriptor Only still fails at the transport level, which outranks a test failure.
+    expect(report.exitCode).toBe(EXIT.TRANSPORT);
+    expect(code).toBe(EXIT.TRANSPORT);
+  });
+
+  it("givenBail_whenATestFails_thenTheRunStopsAndExitsFour", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--var",
+      "expected_code=NOPE",
+      "--bail",
+      "--json",
+    ]);
+
+    const report = JSON.parse(stdout) as GroupReport;
+    // Ping passes, Echo's assertion fails, and nothing after it runs.
+    expect(report.items.map((i) => [i.request.path, i.status])).toEqual([
+      ["payment/Ping", "ok"],
+      ["payment/Echo", "test"],
+    ]);
+    expect(report.bailed).toBe(true);
+    expect(report.exitCode).toBe(EXIT.TEST);
+    expect(code).toBe(EXIT.TEST);
+    expect(received.map((r) => r.method)).toEqual(["Ping", "Echo"]);
+  });
+
+  it("givenFailingTestInGroup_whenHuman_thenTheFailedAssertionIsListedInline", async () => {
+    const { stdout } = await runCli([
+      "run",
+      "payment/nested",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+    ]);
+    // Sanity: the nested folder has no scripts, so no test suffix should appear.
+    expect(stdout).not.toContain("tests");
+
+    const { stdout: withTests } = await runCli([
+      "run",
+      "payment",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--no-save",
+      "--var",
+      "expected_code=NOPE",
+    ]);
+
+    expect(withTests).toContain("1 with failed tests");
+    expect(withTests).toContain("return_code is as expected");
+    expect(withTests).toContain("1/2 tests");
+  });
+});

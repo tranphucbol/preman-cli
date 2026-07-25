@@ -1,0 +1,52 @@
+$kind: grpc-request
+name: Echo
+url: "{{grpc_url}}"
+methodPath: test.echo.EchoService.Echo
+message:
+  content: |-
+    {
+      "text": "{{greeting}} {{$guid}}",
+      "amount": "9007199254740993",
+      "trans_id": "{{trans_id}}",
+      "mode": "{{mode}}"
+    }
+metadata:
+  - key: x-request-id
+    value: "{{$guid}}"
+settings: {}
+schema:
+  source: file
+  location: ../../../src/main/proto/echo/echo.proto
+scripts:
+  - type: beforeInvoke
+    language: text/javascript
+    code: |-
+      const now = new Date();
+      const yy = String(now.getFullYear()).slice(2);
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      let suffix = "";
+      for (let i = 0; i < 13; i++) suffix += Math.floor(Math.random() * 10);
+      const transId = yy + mm + dd + suffix;
+      console.log("generated trans_id", transId);
+      pm.environment.set("trans_id", transId);
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const message = pm.response.messages.idx(0);
+      const body =
+          typeof message.data === "string"
+              ? JSON.parse(message.data)
+              : message.data;
+
+      pm.environment.set("last_return_code", body.return_code);
+
+      pm.test("return_code is as expected", function () {
+          pm.expect(body.return_code).to.equal(pm.variables.get("expected_code") || "OK");
+      });
+
+      pm.test("grpc status is OK", function () {
+          pm.expect(pm.response.code).to.equal(0);
+          pm.response.to.have.status("OK");
+      });
+order: 20

@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package test.echo;
+
+option java_package = "test.echo";
+
+message ChatMessage {
+  string text = 1;
+}
+
+// Present only so preman's "streaming is not supported" guard can be tested.
+// The real repository has no streaming rpcs.
+service StreamService {
+  rpc Chat(stream ChatMessage) returns (stream ChatMessage);
+  rpc Upload(stream ChatMessage) returns (ChatMessage);
+  rpc Download(ChatMessage) returns (stream ChatMessage);
+}
