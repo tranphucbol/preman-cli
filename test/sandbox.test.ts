@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CliError } from "../src/errors.js";
+import { REQUEST_ORIGIN } from "../src/scripts/chain.js";
 import { runScript, type GrpcScriptResponse, type ScriptResponseInfo } from "../src/scripts/sandbox.js";
 import { VariableStore } from "../src/vars/store.js";
 
@@ -18,6 +19,7 @@ function runFull(code: string, store = new VariableStore(), response?: ScriptRes
     code,
     store,
     info: { requestName: "Long Chau", eventName: response === undefined ? "beforeInvoke" : "afterResponse" },
+    origin: REQUEST_ORIGIN,
     request: { url: "{{grpc_url}}", methodPath: "pe.aev2.ExchangeService.Exchange", body: '{"a":1}' },
     ...(response === undefined ? {} : { response }),
   });
@@ -50,9 +52,9 @@ describe("runScript", () => {
       console.error("boom");
     `);
     expect(logs).toEqual([
-      { level: "log", text: "plain 1 true" },
-      { level: "warn", text: '{"a":1}' },
-      { level: "error", text: "boom" },
+      { level: "log", text: "plain 1 true", origin: REQUEST_ORIGIN },
+      { level: "warn", text: '{"a":1}', origin: REQUEST_ORIGIN },
+      { level: "error", text: "boom", origin: REQUEST_ORIGIN },
     ]);
   });
 
@@ -132,6 +134,7 @@ describe("runScript", () => {
         code: `while (true) {}`,
         store: new VariableStore(),
         info: { requestName: "spin", eventName: "beforeInvoke" },
+        origin: REQUEST_ORIGIN,
         request: { url: "", methodPath: "", body: "" },
         timeoutMs: 50,
       }),
@@ -146,6 +149,7 @@ describe("runScript", () => {
         code: `await new Promise(() => {});`,
         store: new VariableStore(),
         info: { requestName: "hang", eventName: "beforeInvoke" },
+        origin: REQUEST_ORIGIN,
         request: { url: "", methodPath: "", body: "" },
         timeoutMs: 50,
       }),
@@ -200,7 +204,9 @@ describe("runScript (post-response scripts)", () => {
     const body = { return_code: "OK", transaction: { status: "TRANS_PROCESSING" } };
     const { tests } = await runFull(REAL_TEST_SCRIPT, new VariableStore(), grpcResponse(body));
 
-    expect(tests).toEqual([{ name: "Transaction status is TRANS_PROCESSING", status: "passed", error: undefined }]);
+    expect(tests).toEqual([
+      { name: "Transaction status is TRANS_PROCESSING", status: "passed", error: undefined, origin: REQUEST_ORIGIN },
+    ]);
   });
 
   it("givenRealTestScript_whenStatusDiffers_thenTestFailsWithTheChaiMessage", async () => {

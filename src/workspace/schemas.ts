@@ -21,26 +21,39 @@ export const resourcesFileSchema = z
   })
   .passthrough();
 
-export const collectionDefinitionSchema = z
-  .object({
-    $kind: z.literal("collection").optional(),
-    name: z.string().optional(),
-  })
-  .passthrough();
-
-export const folderDefinitionSchema = z
-  .object({
-    $kind: z.string().optional(),
-    name: z.string().optional(),
-  })
-  .passthrough();
-
 const scriptSchema = z
   .object({
     /** `beforeInvoke` for gRPC, `prerequest` for HTTP, `test`/`afterResponse` post-call. */
     type: z.string(),
     language: z.string().optional(),
     code: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * Shared by HTTP requests, gRPC requests and group definitions: the same `auth`
+ * block shape is legal at every level of a Postman tree.
+ */
+const authSchema = z
+  .object({
+    type: z.string(),
+    credentials: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
+/**
+ * `.resources/definition.yaml` for a collection *or* a folder. One schema for both:
+ * every folder in real workspaces writes `$kind: collection`, so `$kind` cannot
+ * discriminate and validating it by tree position would reject valid files.
+ */
+export const groupDefinitionSchema = z
+  .object({
+    $kind: z.string().optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    order: z.number().optional(),
+    scripts: z.array(scriptSchema).optional(),
+    auth: authSchema.optional(),
   })
   .passthrough();
 
@@ -67,7 +80,7 @@ export const grpcRequestSchema = z
     metadata: z
       .array(z.object({ key: z.string(), value: z.string().optional() }).passthrough())
       .optional(),
-    auth: z.unknown().optional(),
+    auth: authSchema.optional(),
     settings: z.record(z.unknown()).optional(),
     schema: requestSchemaRef.optional(),
     scripts: z.array(scriptSchema).optional(),
@@ -114,13 +127,7 @@ export const httpRequestSchema = z
       })
       .passthrough()
       .optional(),
-    auth: z
-      .object({
-        type: z.string(),
-        credentials: z.record(z.unknown()).optional(),
-      })
-      .passthrough()
-      .optional(),
+    auth: authSchema.optional(),
     settings: z.record(z.unknown()).optional(),
     scripts: z.array(scriptSchema).optional(),
     order: z.number().optional(),
@@ -165,3 +172,5 @@ export type KeyValueSource = z.infer<typeof keyValueSourceSchema>;
 export type OtherRequest = z.infer<typeof otherRequestSchema>;
 export type EnvironmentFile = z.infer<typeof environmentSchema>;
 export type RequestScript = z.infer<typeof scriptSchema>;
+export type RequestAuth = z.infer<typeof authSchema>;
+export type GroupDefinitionFile = z.infer<typeof groupDefinitionSchema>;

@@ -24,18 +24,43 @@ export function requestPath(...segments: string[]): string {
   return join(FIXTURE_WS, "postman/collections/payment", ...segments);
 }
 
-/**
- * Copy the fixture workspace into a temp dir so a test can mutate it.
- * Returns the copy's path plus a cleanup function.
- */
-export function cloneFixtureWorkspace(): { root: string; workspace: Workspace; cleanup: () => void } {
+export interface ClonedWorkspace {
+  root: string;
+  workspace: Workspace;
+  cleanup: () => void;
+}
+
+function cloneWorkspace(source: string): ClonedWorkspace {
   const root = mkdtempSync(join(tmpdir(), "preman-ws-"));
-  cpSync(FIXTURE_WS, root, { recursive: true });
+  cpSync(source, root, { recursive: true });
   return {
     root,
     workspace: requireWorkspace(root),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
+}
+
+/**
+ * Copy the fixture workspace into a temp dir so a test can mutate it.
+ * Returns the copy's path plus a cleanup function.
+ */
+export function cloneFixtureWorkspace(): ClonedWorkspace {
+  return cloneWorkspace(FIXTURE_WS);
+}
+
+/** The HTTP-only workspace, cloned so a test can mutate it. */
+export function cloneFixtureHttpWorkspace(): ClonedWorkspace {
+  return cloneWorkspace(FIXTURE_HTTP_WS);
+}
+
+/** `<root>/postman/collections/<segments...>`, for reaching into a clone. */
+export function collectionPath(root: string, ...segments: string[]): string {
+  return join(root, "postman/collections", ...segments);
+}
+
+/** `.resources/definition.yaml` of a collection or folder inside a clone. */
+export function definitionPath(root: string, ...segments: string[]): string {
+  return collectionPath(root, ...segments, ".resources/definition.yaml");
 }
 
 /** The only token `GET /profile` accepts. */

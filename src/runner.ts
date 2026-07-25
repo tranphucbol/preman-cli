@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import type { ZodError } from "zod";
 import { CliError, EXIT, type ExitCode } from "./errors.js";
+import { applyGrpcAuth } from "./grpc/auth.js";
 import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
 import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
 import { resolveTarget, type GrpcTarget } from "./grpc/target.js";
@@ -9,6 +10,16 @@ import { CookieJar } from "./http/cookies.js";
 import { invokeHttp, NO_RESPONSE_STATUS, type HttpInvokeResult } from "./http/invoke.js";
 import { buildHttpRequest } from "./http/request.js";
 import type { HttpTarget } from "./http/target.js";
+import {
+  hasScriptOf,
+  KNOWN_SCRIPT_TYPES,
+  MESSAGE_SCRIPT_TYPES,
+  POST_SCRIPT_TYPES,
+  PRE_SCRIPT_TYPES,
+  resolveScriptChain,
+  type OwnedScript,
+  type Protocol,
+} from "./scripts/chain.js";
 import {
   runScript,
   type ConsoleLine,
@@ -30,23 +41,8 @@ import {
 import { saveEnvironmentValues, type EnvironmentEntry } from "./workspace/environments.js";
 import type { RequestEntry } from "./workspace/collections.js";
 import type { Workspace } from "./workspace/discover.js";
+import { resolveAuth } from "./workspace/inherit.js";
 import type { Resources } from "./workspace/resources.js";
-
-/**
- * Script types executed before the call. `prerequest` is the HTTP-side alias, and
- * `beforeRequest` is what the Postman filesystem format actually writes for HTTP
- * requests, so it has to be recognised too.
- */
-const PRE_SCRIPT_TYPES = new Set(["beforeinvoke", "beforerequest", "prerequest", "pre-request"]);
-
-/** Fires once per received message; a unary call has exactly one. */
-const MESSAGE_SCRIPT_TYPES = new Set(["onmessage"]);
-
-/** Script types executed after the call, where `pm.test` assertions normally live. */
-const POST_SCRIPT_TYPES = new Set(["afterresponse", "test", "postresponse", "post-response"]);
-
-/** Every type that maps to a run stage. A script outside this set is reported, never dropped. */
-const KNOWN_SCRIPT_TYPES = new Set([...PRE_SCRIPT_TYPES, ...MESSAGE_SCRIPT_TYPES, ...POST_SCRIPT_TYPES]);
 
 export const GRPC_KIND = "grpc-request";
 export const HTTP_KIND = "http-request";
@@ -58,7 +54,7 @@ const RUNNABLE_KINDS = new Set<string>([GRPC_KIND, HTTP_KIND]);
 const RETURN_CODE_FIELDS = ["return_code", "returnCode"] as const;
 const RETURN_CODE_OK = "OK";
 
-export type Protocol = "grpc" | "http";
+export type { Protocol };
 
 export interface RunOptions {
   workspace: Workspace;
@@ -202,24 +198,6 @@ function parseRequest(entry: RequestEntry): ParsedRequest {
   });
 }
 
-function hasScriptOf(scripts: RequestScript[] | undefined, types: Set<string>): boolean {
-  return (scripts ?? []).some((s) => types.has(s.type.toLowerCase()));
-}
-
-/**
- * A script whose `type` matches no stage would otherwise be skipped in silence, which
- * looks exactly like a request that has no scripts at all - the author's login step
- * simply never runs. Naming it turns a silent no-op into something actionable.
- */
-function unknownScriptWarnings(scripts: RequestScript[] | undefined): string[] {
-  return (scripts ?? [])
-    .filter((s) => !KNOWN_SCRIPT_TYPES.has(s.type.toLowerCase()))
-    .map(
-      (s) =>
-        `script type "${s.type}" is not recognised, so it was not run (known types: ${[...KNOWN_SCRIPT_TYPES].join(", ")})`,
-    );
-}
-
 interface ScriptSink {
   consoleLines: ConsoleLine[];
   tests: TestResult[];
@@ -228,7 +206,7 @@ interface ScriptSink {
 }
 
 interface ScriptSinkOptions {
-  scripts: RequestScript[] | undefined;
+  scripts: OwnedScript[];
   requestName: string;
   store: VariableStore;
   cookies: CookieJar;
@@ -249,14 +227,15 @@ function scriptSink(options: ScriptSinkOptions): ScriptSink {
   const sideRequests: SideRequestRecord[] = [];
 
   const run = async (types: Set<string>, response?: ScriptResponseInfo): Promise<void> => {
-    for (const script of options.scripts ?? []) {
-      if (!types.has(script.type.toLowerCase())) continue;
-      if (!script.code || script.code.trim().length === 0) continue;
+    for (const script of options.scripts) {
+      if (!types.has(script.event)) continue;
       const result = await runScript({
         code: script.code,
         store: options.store,
         cookies: options.cookies,
-        info: { requestName: options.requestName, eventName: script.type },
+        // `rawType`, not `event`: `pm.info.eventName` must read what the file says.
+        info: { requestName: options.requestName, eventName: script.rawType },
+        origin: script.origin,
         request: options.request(),
         requestTimeoutMs: options.requestTimeoutMs,
         ...(response === undefined ? {} : { response }),
@@ -312,8 +291,14 @@ async function runGrpcRequest(
   const { entry, workspace, resources } = options;
   const rawBody = request.message?.content ?? "";
 
+  const chain = resolveScriptChain({
+    ancestors: entry.ancestors,
+    requestScripts: request.scripts,
+    protocol: "grpc",
+  });
+
   const sink = scriptSink({
-    scripts: request.scripts,
+    scripts: chain.scripts,
     requestName: request.name,
     store,
     cookies,
@@ -332,6 +317,14 @@ async function runGrpcRequest(
   const metadata: Record<string, string> = {};
   for (const item of request.metadata ?? []) {
     metadata[item.key] = interpolateStrict(item.value ?? "", store, `metadata.${item.key}`);
+  }
+
+  // After interpolation so `{{jwt_token}}` in a literal entry has resolved and is
+  // visible to the precedence check.
+  const auth = resolveAuth(entry, request.auth);
+  const authWarnings = applyGrpcAuth({ auth: auth?.auth, metadata, store });
+  if (auth !== undefined && auth.origin.level !== "request") {
+    authWarnings.unshift(`auth inherited from ${auth.origin.label}`);
   }
 
   let sentMessage: unknown = {};
@@ -371,7 +364,7 @@ async function runGrpcRequest(
   });
 
   // 5. Post-response scripts, where the `pm.test` assertions live.
-  const warnings = [...unknownScriptWarnings(request.scripts), ...method.warnings];
+  const warnings = [...chain.warnings, ...authWarnings, ...method.warnings];
   if (invoke.ok) {
     const response: ScriptResponseInfo = {
       protocol: "grpc",
@@ -385,7 +378,7 @@ async function runGrpcRequest(
     };
     await sink.run(MESSAGE_SCRIPT_TYPES, response);
     await sink.run(POST_SCRIPT_TYPES, response);
-  } else if (hasScriptOf(request.scripts, POST_SCRIPT_TYPES)) {
+  } else if (hasScriptOf(chain.scripts, POST_SCRIPT_TYPES)) {
     // Postman would run the script anyway and let it blow up on an absent message.
     // Reporting the transport failure is more useful than turning it into a
     // TypeError, so the scripts are skipped and the skip is surfaced.
@@ -437,10 +430,16 @@ async function runHttpRequest(
   // what actually went out.
   let info: ScriptRequestInfo = { url: request.url, method: request.method, body: rawBody };
 
+  const chain = resolveScriptChain({
+    ancestors: entry.ancestors,
+    requestScripts: request.scripts,
+    protocol: "http",
+  });
+
   // `HttpRequest.name` is optional and usually absent, so the entry's name (which
   // falls back to the filename) is the only reliable label.
   const sink = scriptSink({
-    scripts: request.scripts,
+    scripts: chain.scripts,
     requestName: entry.name,
     store,
     cookies,
@@ -454,6 +453,7 @@ async function runHttpRequest(
   // 2. Interpolate and assemble the request exactly as it will go out.
   const built = buildHttpRequest({
     request,
+    auth: resolveAuth(entry, request.auth),
     store,
     urlOverride: options.urlOverride,
     tlsOverride: options.tlsOverride,
@@ -478,9 +478,9 @@ async function runHttpRequest(
   };
 
   // 4. Post-response scripts, where the `pm.test` assertions live.
-  const warnings = [...unknownScriptWarnings(request.scripts), ...built.warnings, ...invoke.warnings];
+  const warnings = [...chain.warnings, ...built.warnings, ...invoke.warnings];
   if (invoke.statusCode === NO_RESPONSE_STATUS) {
-    if (hasScriptOf(request.scripts, POST_SCRIPT_TYPES)) {
+    if (hasScriptOf(chain.scripts, POST_SCRIPT_TYPES)) {
       warnings.push("afterResponse scripts skipped: no response was received");
     }
   } else {
@@ -551,11 +551,19 @@ export interface GroupRunOptions extends Omit<RunOptions, "entry" | "store" | "c
   bail: boolean;
 }
 
+/**
+ * Why a group run stopped before its last request. `bail-flag` is the user asking for it;
+ * `inherited-script` is decision 6 - a collection- or folder-level script threw, so the
+ * shared precondition every remaining request depends on is broken.
+ */
+export type BailReason = "bail-flag" | "inherited-script";
+
 export interface GroupRunOutcome {
   groupPath: string;
   items: GroupRunItem[];
-  /** True when `bail` cut the run short. */
+  /** True when the run stopped short; `bailReason` says who stopped it. */
   bailed: boolean;
+  bailReason: BailReason | undefined;
   savedVars: Record<string, string>;
   savedTo: string | undefined;
   durationMs: number;
@@ -614,7 +622,7 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
   const cookies = new CookieJar();
   const started = performance.now();
   const items: GroupRunItem[] = [];
-  let bailed = false;
+  let bailReason: BailReason | undefined;
 
   for (const entry of options.entries) {
     if (!RUNNABLE_KINDS.has(entry.kind)) {
@@ -632,11 +640,17 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
       items.push({ entry, status: statusOf(outcome), outcome, error: undefined });
     } catch (cause) {
       items.push({ entry, status: "error", outcome: undefined, error: toErrorInfo(cause) });
+      if (cause instanceof CliError && cause.abortsGroup) {
+        // Checked before `options.bail` so the reason names the real culprit rather
+        // than a flag the user may not even have passed.
+        bailReason = "inherited-script";
+        break;
+      }
     }
 
     const status = items[items.length - 1]!.status;
     if (options.bail && status !== "ok") {
-      bailed = true;
+      bailReason = "bail-flag";
       break;
     }
   }
@@ -646,7 +660,8 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
   return {
     groupPath: options.groupPath,
     items,
-    bailed,
+    bailed: bailReason !== undefined,
+    bailReason,
     savedVars,
     savedTo,
     durationMs: performance.now() - started,

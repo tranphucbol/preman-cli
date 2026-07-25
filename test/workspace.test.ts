@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,8 +7,14 @@ import { findWorkspace, requireWorkspace } from "../src/workspace/discover.js";
 import { findEnvironment, listEnvironments, loadGlobals, saveEnvironmentValues } from "../src/workspace/environments.js";
 import { deriveIncludeDirs, loadResources } from "../src/workspace/resources.js";
 import { CliError } from "../src/errors.js";
-import { cloneFixtureWorkspace, FIXTURE_WS, fixtureWorkspace } from "./helpers.js";
-import { readFileSync } from "node:fs";
+import {
+  cloneFixtureWorkspace,
+  collectionPath,
+  definitionPath,
+  FIXTURE_WS,
+  fixtureWorkspace,
+  type ClonedWorkspace,
+} from "./helpers.js";
 
 describe("discover", () => {
   it("givenNestedDirectory_whenFindWorkspace_thenWalksUpToPostmanRoot", () => {
@@ -82,6 +88,90 @@ describe("collections", () => {
     const result = resolveRequest(listRequests(fixtureWorkspace()), "o");
     expect(result.match).toBeUndefined();
     expect(result.candidates.length).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * Ordering and malformed-definition cases run against a clone: several suites
+ * assert the shared fixture's exact 5-request list.
+ */
+describe("collection tree ordering", () => {
+  function writeDefinition(clone: ClonedWorkspace, group: string[], body: string): void {
+    writeFileSync(definitionPath(clone.root, ...group), body);
+  }
+
+  function addFolder(clone: ClonedWorkspace, name: string, order: number, requestName: string): void {
+    const dir = collectionPath(clone.root, "payment", name);
+    mkdirSync(join(dir, ".resources"), { recursive: true });
+    writeFileSync(join(dir, ".resources/definition.yaml"), `$kind: collection\nname: ${name}\norder: ${order}\n`);
+    writeFileSync(join(dir, `${requestName}.request.yaml`), `$kind: http-request\nname: ${requestName}\n`);
+  }
+
+  it("givenFoldersWithOrder_whenListing_thenPostmanOrderNotAlphabetical", () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      addFolder(clone, "zeta", 1, "Zeta One");
+      writeDefinition(clone, ["payment", "nested"], "$kind: collection\nname: nested\norder: 2\n");
+
+      const folders = listRequests(clone.workspace)
+        .filter((request) => request.folders.length > 0)
+        .map((request) => request.path);
+
+      // Alphabetically `nested` precedes `zeta`; `order` says otherwise and wins.
+      expect(folders).toEqual(["payment/zeta/Zeta One", "payment/nested/Deep Echo"]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenFolderAndRequestSiblings_whenListing_thenTheyInterleaveByOrder", () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      // Between Echo (20) and Legacy Http (30).
+      writeDefinition(clone, ["payment", "nested"], "$kind: collection\nname: nested\norder: 25\n");
+
+      expect(listRequests(clone.workspace).map((request) => request.path)).toEqual([
+        "payment/Ping",
+        "payment/Echo",
+        "payment/nested/Deep Echo",
+        "payment/Legacy Http",
+        "payment/Descriptor Only",
+      ]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenMalformedDefinitionYaml_whenListing_thenCliErrorNamesTheFile", () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(clone, ["payment"], "$kind: collection\nname: [unclosed\n");
+
+      // A file that may carry auth and scripts must never be silently ignored.
+      expect(() => listRequests(clone.workspace)).toThrow(CliError);
+      expect(() => listRequests(clone.workspace)).toThrow(definitionPath(clone.root, "payment"));
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenDefinitionYamlWithWrongTypes_whenListing_thenCliErrorListsTheZodIssue", () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(clone, ["payment"], "$kind: collection\nname: payment\norder: soon\n");
+
+      try {
+        listRequests(clone.workspace);
+        expect.unreachable("listRequests should have thrown");
+      } catch (cause) {
+        expect(cause).toBeInstanceOf(CliError);
+        const error = cause as CliError;
+        expect(error.message).toContain(definitionPath(clone.root, "payment"));
+        expect(error.details.join("\n")).toContain("order");
+      }
+    } finally {
+      clone.cleanup();
+    }
   });
 });
 

@@ -60,7 +60,9 @@ only to requests, so a partial name cannot unexpectedly start a group run.
 
 ## Collection and folder runs
 
-Requests run in Postman `order`: root requests first, followed by each folder's contents.
+Requests run in Postman `order`. At every level of the tree, requests and subfolders are one
+sorted list: they interleave by `order`, entries without an `order` come last, and ties are broken
+by name. A folder's `order` lives in its `.resources/definition.yaml`.
 
 ```text
 $ preman run payment
@@ -83,8 +85,16 @@ An unsupported request kind is skipped and does not fail the run. A request that
 supported but cannot be prepared, such as one with a missing schema or unresolved variable, is an
 error. `--bail` stops after the first non-successful request; skipped requests do not trigger it.
 
-With `--json`, a group emits an object containing `group`, `items`, `bailed`, `savedVars`, and
-`exitCode`.
+A group also stops early when an *inherited* script throws, even without `--bail`, because a shared
+precondition is broken and rerunning the same failing login for every remaining request only
+produces noise. The summary says which script aborted the run:
+
+```text
+aborted: folder ZAS script "http:beforeRequest" failed: login returned 500
+```
+
+With `--json`, a group emits an object containing `group`, `items`, `bailed`, `bailReason`,
+`savedVars`, and `exitCode`. `bailReason` is `"bail-flag"`, `"inherited-script"`, or `null`.
 
 ## Exit codes
 
@@ -130,6 +140,16 @@ The target is selected in this order:
 TLS is inferred from a `grpcs` or `https` scheme, port `443`, or a `.zalopay.vn` hostname. Use
 `--tls` or `--insecure` to override the inference.
 
+### Authentication
+
+gRPC uses the same `auth` block and the same supported types as HTTP, rendered into call metadata.
+`bearer` and `basic` become an `authorization` entry; `apikey` becomes an entry named after its key.
+Metadata keys are lowercased, since gRPC treats them case-insensitively.
+
+gRPC has no query string, so `apikey` with `in: query` is skipped with a warning. An `authorization`
+entry written directly in the request's `metadata` wins over the `auth` block and produces a
+warning, mirroring the HTTP header rule.
+
 ## HTTP
 
 HTTP requests use the same selectors, variables, scripts, cookie jar, output, and exit codes as
@@ -163,6 +183,11 @@ Supported authentication types are:
 
 An explicit `authorization` header takes precedence over the `auth` block and produces a warning.
 Unsupported authentication types are errors.
+
+Authentication is inherited, following Postman v2.1. A request with no `auth` key inherits from the
+nearest ancestor that declares one; a request that must be unauthenticated writes
+`auth: {type: noauth}` explicitly. Inherited authentication produces a warning naming its origin,
+because silent authentication is how a stale token turns into an unexplained `401`.
 
 ### Bodies, cookies, redirects, and compression
 
@@ -210,6 +235,46 @@ Scripts run in a `node:vm` sandbox in this order:
 | `beforeInvoke`, `prerequest`, `pre-request` | Before the request |
 | `onMessage` | Once for the unary gRPC response message |
 | `afterResponse`, `test`, `postResponse`, `post-response` | After the response |
+
+### Collection and folder scripts
+
+A collection or folder declares scripts in its `.resources/definition.yaml`, and every descendant
+request inherits them — including when that request is run on its own, not as part of a group.
+
+Above the request level the event type must be prefixed with the protocol it applies to, because a
+group usually holds both gRPC and HTTP requests:
+
+| Group event type | Equivalent request event |
+| --- | --- |
+| `grpc:beforeInvoke` | `beforeInvoke` |
+| `grpc:onMessage` | `onMessage` |
+| `grpc:afterResponse` | `afterResponse` |
+| `http:beforeRequest` | `prerequest` |
+| `http:afterResponse` | `afterResponse` |
+
+A prefix that names the other protocol is skipped silently — that is the point of the prefix. An
+*unprefixed* type at group level is skipped with a warning, since it cannot be attributed to either
+protocol. Request-level types stay unprefixed, and additionally tolerate a prefix.
+
+Within each stage, scripts run outermost first: collection, then each folder from outermost to
+innermost, then the request. The chain is not unwound on the way back out.
+
+A throw from an inherited script aborts the whole group, as described in
+[collection and folder runs](#collection-and-folder-runs). A throw from a request-level script fails
+only that request. A failing `pm.test` never aborts anything, at any level — it is a result, not an
+error.
+
+Console lines, test results, and warnings from an inherited script carry their origin, in
+`--verbose` and in `--json`:
+
+```text
+script log [folder ZAS]: logged in as admin
+✓ token is present [collection Admin]
+```
+
+Request-level output is untagged.
+
+### Sandbox
 
 The sandbox provides `pm.environment`, `pm.globals`, `pm.collectionVariables`, `pm.variables`,
 `pm.info`, `pm.request`, `pm.expect`, `pm.test`, `pm.cookies`, `pm.sendRequest`, and the legacy

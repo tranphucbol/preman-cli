@@ -10,6 +10,7 @@ import {
   type ItemStatus,
   type RunOutcome,
 } from "../runner.js";
+import type { ScriptOrigin } from "../scripts/chain.js";
 import type { TestResult } from "../scripts/sandbox.js";
 
 const TEST_MARK: Record<TestResult["status"], { mark: string; paint: (s: string) => string }> = {
@@ -91,6 +92,14 @@ function statusLabel(outcome: RunOutcome): string {
   return outcome.protocol === "grpc" ? grpcStatusLabel(outcome, ms) : httpStatusLabel(outcome, ms);
 }
 
+/**
+ * Decision 8: only a non-request origin is named. Inheritance must not reformat the output
+ * of the request-level scripts that were the only kind preman used to run.
+ */
+function originTag(origin: ScriptOrigin): string {
+  return origin.level === "request" ? "" : ` [${origin.label}]`;
+}
+
 /** Per-test lines plus a one-line tally. Always shown: a silent test is a useless test. */
 function renderTests(tests: TestResult[], out: string[]): void {
   if (tests.length === 0) return;
@@ -99,7 +108,7 @@ function renderTests(tests: TestResult[], out: string[]): void {
   out.push("");
   for (const test of tests) {
     const style = TEST_MARK[test.status];
-    out.push(`${style.paint(style.mark)} ${test.name}`);
+    out.push(`${style.paint(style.mark)} ${test.name}${pc.dim(originTag(test.origin))}`);
     if (test.error !== undefined) out.push(pc.red(`  ${test.error}`));
   }
 
@@ -196,7 +205,9 @@ export function renderOutcome(outcome: RunOutcome, options: RenderOptions): stri
   for (const warning of outcome.warnings) lines.push(pc.yellow(`warn: ${warning}`));
 
   if (options.verbose) {
-    for (const line of outcome.consoleLines) lines.push(pc.dim(`script ${line.level}: ${line.text}`));
+    for (const line of outcome.consoleLines) {
+      lines.push(pc.dim(`script ${line.level}${originTag(line.origin)}: ${line.text}`));
+    }
     for (const side of outcome.sideRequests) {
       const status = side.statusCode === NO_RESPONSE_STATUS ? NO_RESPONSE_LABEL : `${side.statusCode} ${side.statusMessage}`;
       lines.push(pc.dim(`script request ${side.method} ${side.url} → ${status} ${side.durationMs}ms`));
@@ -288,6 +299,20 @@ function countsLine(outcome: GroupRunOutcome): string {
   return parts.join(pc.dim(" · "));
 }
 
+const BAIL_FLAG_LINE = "stopped early: --bail";
+const ABORT_FALLBACK = "an inherited script failed";
+
+/**
+ * Explains why a group run stopped short. `--bail` is the user's own doing; an
+ * inherited-script abort is not, so it names the script that broke the group.
+ */
+function stoppedLine(outcome: GroupRunOutcome): string | undefined {
+  if (outcome.bailReason === "bail-flag") return pc.yellow(BAIL_FLAG_LINE);
+  if (outcome.bailReason !== "inherited-script") return undefined;
+  const cause = outcome.items[outcome.items.length - 1]?.error?.message ?? ABORT_FALLBACK;
+  return pc.red(`aborted: ${cause}`);
+}
+
 /** The human-facing report for a collection or folder run. */
 export function renderGroupOutcome(outcome: GroupRunOutcome, options: RenderOptions): string {
   if (options.json) return JSON.stringify(toGroupJsonReport(outcome), null, 2);
@@ -321,7 +346,8 @@ export function renderGroupOutcome(outcome: GroupRunOutcome, options: RenderOpti
   }
 
   lines.push(countsLine(outcome));
-  if (outcome.bailed) lines.push(pc.yellow("stopped early: --bail"));
+  const stopped = stoppedLine(outcome);
+  if (stopped) lines.push(stopped);
 
   const savedKeys = Object.keys(outcome.savedVars);
   if (savedKeys.length > 0 && outcome.savedTo) {
@@ -343,6 +369,7 @@ export function toGroupJsonReport(outcome: GroupRunOutcome) {
       run: item.outcome ? toJsonReport(item.outcome) : null,
     })),
     bailed: outcome.bailed,
+    bailReason: outcome.bailReason ?? null,
     savedVars: outcome.savedVars,
     savedTo: outcome.savedTo ?? null,
     durationMs: Number(outcome.durationMs.toFixed(3)),
@@ -358,7 +385,7 @@ function commonJsonReport(outcome: RunOutcome) {
     warnings: outcome.warnings,
     console: outcome.consoleLines,
     sideRequests: outcome.sideRequests,
-    tests: outcome.tests.map((t) => ({ name: t.name, status: t.status, error: t.error ?? null })),
+    tests: outcome.tests.map((t) => ({ name: t.name, status: t.status, error: t.error ?? null, origin: t.origin })),
     testSummary: countTests(outcome.tests),
     savedVars: outcome.savedVars,
     savedTo: outcome.savedTo ?? null,

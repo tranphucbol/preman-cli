@@ -1,7 +1,11 @@
+import { writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
 import { EXIT } from "../src/errors.js";
 import {
+  cloneFixtureHttpWorkspace,
+  collectionPath,
+  definitionPath,
   FIXTURE_HTTP_WS,
   HTTP_COOKIE,
   HTTP_COOKIE_VALUE,
@@ -15,6 +19,7 @@ interface HttpReport {
   protocol: string;
   target: { origin: string; tls: boolean; source: string };
   warnings: string[];
+  console: Array<{ level: string; text: string; origin: { level: string; label: string } }>;
   sideRequests: Array<{ method: string; url: string; statusCode: number; ok: boolean }>;
   method: string;
   url: string;
@@ -267,5 +272,137 @@ describe("preman run (end to end against a real HTTP server)", () => {
     expect(code).toBe(EXIT.OK);
     expect(report.target.source).toBe("--url");
     expect(http.received[0]?.url).toBe("/echo");
+  });
+});
+
+/** `args()` against a clone rather than the shared fixture. */
+function clonedArgs(root: string, selector: string, ...extra: string[]): string[] {
+  return [
+    "run",
+    selector,
+    "-d",
+    root,
+    "-e",
+    "QC",
+    "--var",
+    `http_url=${http.origin}`,
+    "--no-save",
+    "--json",
+    ...extra,
+  ];
+}
+
+/** The whole `admin` definition, so the caller controls every inherited key. */
+function adminDefinition(body: string): string {
+  return `$kind: collection\nname: admin\n${body}`;
+}
+
+function writeAdminDefinition(root: string, body: string): void {
+  writeFileSync(definitionPath(root, "admin"), adminDefinition(body));
+}
+
+/**
+ * `Echo Get Body` is the only request that reaches an endpoint which echoes what
+ * it received, and every fixture request declares `auth` — so inheritance can
+ * only be observed after its own block is removed.
+ */
+function stripRequestAuth(root: string): void {
+  writeFileSync(
+    `${collectionPath(root, "admin", "Echo Get Body")}.request.yaml`,
+    [
+      "$kind: http-request",
+      "name: Echo Get Body",
+      `url: "{{http_url}}/echo"`,
+      "method: GET",
+      "order: 40",
+      "",
+    ].join("\n"),
+  );
+}
+
+const BEARER_TOKEN_AUTH = ["auth:", "  type: bearer", "  credentials:", `    token: "{{token}}"`].join("\n");
+
+describe("group-level scripts and auth (HTTP)", () => {
+  it("givenFolderAuth_whenRequestHasNone_thenInherited", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeAdminDefinition(ws.root, BEARER_TOKEN_AUTH);
+      stripRequestAuth(ws.root);
+
+      const { code, stdout } = await runCli(
+        clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`),
+      );
+      const report = JSON.parse(stdout) as HttpReport;
+
+      expect(code).toBe(EXIT.OK);
+      expect(report.request_headers.Authorization).toBe(`Bearer ${HTTP_TOKEN}`);
+      expect(http.received[0]?.headers.authorization).toBe(`Bearer ${HTTP_TOKEN}`);
+      // Inherited auth is announced: a stale token is otherwise an unexplained 401.
+      expect(report.warnings).toContain("auth inherited from collection admin");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenFolderAuth_whenRequestDeclaresNoauth_thenUnauthenticated", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      // The request keeps its own `auth: {type: noauth}`, which must win.
+      writeAdminDefinition(ws.root, BEARER_TOKEN_AUTH);
+
+      const { code, stdout } = await runCli(
+        clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`),
+      );
+      const report = JSON.parse(stdout) as HttpReport;
+
+      expect(code).toBe(EXIT.OK);
+      expect(report.request_headers.Authorization).toBeUndefined();
+      expect(http.received[0]?.headers.authorization).toBeUndefined();
+      expect(report.warnings.join("\n")).not.toContain("auth inherited");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenCollectionScriptWithHttpPrefix_whenRun_thenItRunsWithOriginTagged", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeAdminDefinition(
+        ws.root,
+        ["scripts:", "  - type: http:beforeRequest", "    code: |", `      console.log("from the collection");`].join(
+          "\n",
+        ),
+      );
+
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      const report = JSON.parse(stdout) as HttpReport;
+
+      expect(code).toBe(EXIT.OK);
+      expect(report.console).toEqual([
+        { level: "log", text: "from the collection", origin: { level: "collection", label: "collection admin" } },
+      ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenGrpcPrefixedScript_whenHttpRequestRuns_thenSkippedSilently", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeAdminDefinition(
+        ws.root,
+        ["scripts:", "  - type: grpc:beforeInvoke", "    code: |", `      console.log("wrong protocol");`].join("\n"),
+      );
+
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      const report = JSON.parse(stdout) as HttpReport;
+
+      expect(code).toBe(EXIT.OK);
+      // The prefix exists precisely so a mixed folder does not warn on every request.
+      expect(report.warnings).toEqual([]);
+      expect(report.console).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
   });
 });

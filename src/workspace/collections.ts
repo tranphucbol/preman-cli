@@ -2,12 +2,13 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { CliError } from "../errors.js";
-import { collectionDefinitionSchema, folderDefinitionSchema } from "./schemas.js";
+import { readGroupDefinition } from "./definitions.js";
+import type { GroupDefinition } from "./definitions.js";
 import type { Workspace } from "./discover.js";
 
 const REQUEST_SUFFIX = ".request.yaml";
 const RESOURCES_DIR = ".resources";
-const DEFINITION_FILE = "definition.yaml";
+const COLLECTIONS_DIR = "collections";
 
 export interface RequestEntry {
   /** Absolute path of the `*.request.yaml` file. */
@@ -24,21 +25,8 @@ export interface RequestEntry {
   folders: string[];
   /** Slash-joined `collection/folders.../name`, used for lookup and display. */
   path: string;
-}
-
-/** Reads a `.resources/definition.yaml` display name, falling back to the dir name. */
-function readDisplayName(dir: string, isCollection: boolean): string {
-  const defPath = join(dir, RESOURCES_DIR, DEFINITION_FILE);
-  if (!existsSync(defPath)) return basename(dir);
-  try {
-    const raw = parseYaml(readFileSync(defPath, "utf8")) ?? {};
-    const schema = isCollection ? collectionDefinitionSchema : folderDefinitionSchema;
-    const parsed = schema.safeParse(raw);
-    const name = parsed.success ? parsed.data.name : undefined;
-    return name && name.length > 0 ? name : basename(dir);
-  } catch {
-    return basename(dir);
-  }
+  /** Collection first, then each folder outermost to innermost. Never empty. */
+  ancestors: GroupDefinition[];
 }
 
 function readRequestHeader(filePath: string): { name: string; kind: string; order: number | undefined } {
@@ -56,55 +44,91 @@ function readRequestHeader(filePath: string): { name: string; kind: string; orde
   };
 }
 
-function walk(dir: string, collection: string, folders: string[], out: RequestEntry[]): void {
-  const entries = readdirSync(dir, { withFileTypes: true });
+/**
+ * One entry at a level of the tree: a request, or a folder to descend into.
+ * Both carry the two keys Postman sorts siblings by.
+ */
+interface Sibling {
+  order: number | undefined;
+  name: string;
+  emit: (out: RequestEntry[]) => void;
+}
 
-  for (const entry of entries) {
+/** Postman sibling order: `order` ascending with missing last, then name. */
+function compareSiblings(a: Sibling, b: Sibling): number {
+  const ao = a.order ?? Number.POSITIVE_INFINITY;
+  const bo = b.order ?? Number.POSITIVE_INFINITY;
+  if (ao !== bo) return ao - bo;
+  return a.name.localeCompare(b.name);
+}
+
+function walk(dir: string, ancestors: GroupDefinition[], out: RequestEntry[]): void {
+  const parent = ancestors[ancestors.length - 1]!;
+  const siblings: Sibling[] = [];
+
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === RESOURCES_DIR || entry.name.startsWith(".")) continue;
     const full = join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      walk(full, collection, [...folders, readDisplayName(full, false)], out);
+      // Depth decides `kind`, not `$kind`: real workspaces write `$kind: collection`
+      // on folders too, so the file cannot discriminate.
+      const definition = readGroupDefinition(full, parent.path, "folder");
+      siblings.push({
+        order: definition.order,
+        name: definition.name,
+        emit: (target) => walk(full, [...ancestors, definition], target),
+      });
       continue;
     }
     if (!entry.isFile() || !entry.name.endsWith(REQUEST_SUFFIX)) continue;
 
     const header = readRequestHeader(full);
-    out.push({
+    const [collection, ...folders] = ancestors;
+    const request: RequestEntry = {
       filePath: full,
       name: header.name,
       kind: header.kind,
       order: header.order,
-      collection,
-      folders,
-      path: [collection, ...folders, header.name].join("/"),
-    });
+      collection: collection!.name,
+      folders: folders.map((folder) => folder.name),
+      path: `${parent.path}/${header.name}`,
+      ancestors,
+    };
+    siblings.push({ order: header.order, name: header.name, emit: (target) => target.push(request) });
   }
+
+  siblings.sort(compareSiblings);
+  for (const sibling of siblings) sibling.emit(out);
 }
 
-/** All requests in the workspace, sorted by collection, folder depth, then Postman `order`. */
+/**
+ * All requests in the workspace, in Postman run order.
+ *
+ * Run order is a tree walk, not a flat sort: at every level requests and
+ * subfolders interleave by `order`, so a folder with `order: 1000` runs before a
+ * sibling request with `order: 3000`.
+ */
 export function listRequests(ws: Workspace): RequestEntry[] {
-  const collectionsDir = join(ws.postmanDir, "collections");
+  const collectionsDir = join(ws.postmanDir, COLLECTIONS_DIR);
   if (!existsSync(collectionsDir)) return [];
 
-  const out: RequestEntry[] = [];
+  const collections: Sibling[] = [];
   for (const entry of readdirSync(collectionsDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
     const dir = join(collectionsDir, entry.name);
-    walk(dir, readDisplayName(dir, true), [], out);
+    const definition = readGroupDefinition(dir, undefined, "collection");
+    collections.push({
+      order: definition.order,
+      name: definition.name,
+      emit: (target) => walk(dir, [definition], target),
+    });
   }
 
-  return out.sort((a, b) => {
-    if (a.collection !== b.collection) return a.collection.localeCompare(b.collection);
-    const af = a.folders.join("/");
-    const bf = b.folders.join("/");
-    if (af !== bf) return af.localeCompare(bf);
-    // Missing `order` sorts last, then fall back to name for stability.
-    const ao = a.order ?? Number.POSITIVE_INFINITY;
-    const bo = b.order ?? Number.POSITIVE_INFINITY;
-    if (ao !== bo) return ao - bo;
-    return a.name.localeCompare(b.name);
-  });
+  collections.sort(compareSiblings);
+  const out: RequestEntry[] = [];
+  for (const collection of collections) collection.emit(out);
+  return out;
 }
 
 export interface RequestGroup {
@@ -113,6 +137,8 @@ export interface RequestGroup {
   /** Display name of the deepest segment. */
   name: string;
   kind: "collection" | "folder";
+  /** The group's own `.resources/definition.yaml`: scripts, auth and `order`. */
+  definition: GroupDefinition;
   /** Every request beneath the group, nested folders included, in run order. */
   requests: RequestEntry[];
 }
@@ -128,13 +154,17 @@ export function listGroups(requests: RequestEntry[]): RequestGroup[] {
   const byPath = new Map<string, RequestGroup>();
 
   for (const request of requests) {
-    const segments = [request.collection, ...request.folders];
-    for (let depth = 1; depth <= segments.length; depth += 1) {
-      const path = segments.slice(0, depth).join("/");
-      let group = byPath.get(path);
+    for (const ancestor of request.ancestors) {
+      let group = byPath.get(ancestor.path);
       if (group === undefined) {
-        group = { path, name: segments[depth - 1]!, kind: depth === 1 ? "collection" : "folder", requests: [] };
-        byPath.set(path, group);
+        group = {
+          path: ancestor.path,
+          name: ancestor.name,
+          kind: ancestor.kind,
+          definition: ancestor,
+          requests: [],
+        };
+        byPath.set(ancestor.path, group);
       }
       group.requests.push(request);
     }

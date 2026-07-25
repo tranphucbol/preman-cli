@@ -1,3 +1,8 @@
 $kind: collection
 name: admin
 description: HTTP-only collection. This workspace has no .postman/ on purpose.
+scripts:
+  - type: http:beforeRequest
+    language: javascript
+    code: |
+      pm.variables.set("admin_marker", "from-admin-collection");

@@ -92,6 +92,8 @@ Run `preman --help` for every option.
 - Collections and folders in Postman order
 - Postman environments, globals, collection variables, and dynamic variables
 - Pre-request, post-response, and gRPC `onMessage` scripts
+- Collection- and folder-level scripts and authentication, inherited by descendant requests
+- `bearer`, `basic`, and `apikey` authentication for both HTTP and gRPC
 - `pm.test`, `pm.expect`, cookies, and `pm.sendRequest`
 - Environment writeback and JSON output for CI
 

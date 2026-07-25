@@ -1,13 +1,20 @@
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
-import { readFileSync, rmSync } from "node:fs";
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
 import { CliError, EXIT } from "../src/errors.js";
 import { LOAD_OPTIONS } from "../src/grpc/schema.js";
 import { extractReturnCode, isBusinessSuccess } from "../src/runner.js";
 import { loadEnvironment } from "../src/workspace/environments.js";
-import { cloneFixtureWorkspace, FIXTURE_INCLUDE_DIR, FIXTURE_PROTO, FIXTURE_WS } from "./helpers.js";
+import {
+  cloneFixtureWorkspace,
+  collectionPath,
+  definitionPath,
+  FIXTURE_INCLUDE_DIR,
+  FIXTURE_PROTO,
+  FIXTURE_WS,
+} from "./helpers.js";
 
 interface EchoRequest {
   text?: string;
@@ -421,7 +428,7 @@ describe("preman run (test scripts)", () => {
     expect(code).toBe(EXIT.OK);
     const report = JSON.parse(stdout) as TestReport;
     expect(report.tests).toEqual([
-      { name: "message echoes what we sent", status: "passed", error: null },
+      { name: "message echoes what we sent", status: "passed", error: null, origin: { level: "request", label: "request" } },
     ]);
   });
 
@@ -618,6 +625,7 @@ interface GroupReport {
     run: { request_message: EchoRequest; returnCode: string | null; status: { name: string } } | null;
   }>;
   bailed: boolean;
+  bailReason: string | null;
   savedVars: Record<string, string>;
   savedTo: string | null;
   exitCode: number;
@@ -904,7 +912,8 @@ describe("preman run <collection> (whole-collection runs)", () => {
       target(),
       "--no-save",
     ]);
-    // Sanity: the nested folder has no scripts, so no test suffix should appear.
+    // Sanity: the nested folder's inherited script only sets a variable, so no
+    // test suffix should appear.
     expect(stdout).not.toContain("tests");
 
     const { stdout: withTests } = await runCli([
@@ -924,5 +933,514 @@ describe("preman run <collection> (whole-collection runs)", () => {
     expect(withTests).toContain("1 with failed tests");
     expect(withTests).toContain("return_code is as expected");
     expect(withTests).toContain("1/2 tests");
+  });
+});
+
+interface RunReport {
+  warnings: string[];
+  console: Array<{ level: string; text: string; origin: { level: string; label: string } }>;
+  tests: Array<{ name: string; status: string; origin: { level: string; label: string } }>;
+  request_metadata: Record<string, string>;
+  request_message: EchoRequest;
+}
+
+/** Overwrite a group's `definition.yaml` inside a clone. */
+function writeDefinition(root: string, group: string, body: string): void {
+  writeFileSync(definitionPath(root, ...group.split("/")), body);
+}
+
+/** A group definition carrying nothing but the given script. */
+function definitionWithScript(name: string, type: string, code: string): string {
+  const indented = code
+    .trimEnd()
+    .split("\n")
+    .map((line) => `      ${line}`)
+    .join("\n");
+  return `$kind: collection\nname: ${name}\nscripts:\n  - type: ${type}\n    code: |\n${indented}\n`;
+}
+
+/** A group definition carrying nothing but the given `auth:` block. */
+function definitionWithAuth(name: string, auth: string): string {
+  return `$kind: collection\nname: ${name}\nauth:\n${auth}`;
+}
+
+/** Append extra top-level YAML keys to a request file inside a clone. */
+function appendToRequest(root: string, request: string, yaml: string): void {
+  appendFileSync(collectionPath(root, ...request.split("/")) + ".request.yaml", yaml);
+}
+
+const deepEcho = (root: string, extra: string[] = []) => [
+  "run",
+  "Deep Echo",
+  "-d",
+  root,
+  "-e",
+  "LOCAL",
+  "--url",
+  target(),
+  "--no-save",
+  "--json",
+  ...extra,
+];
+
+const paymentGroup = (root: string, extra: string[] = []) => [
+  "run",
+  "payment",
+  "-d",
+  root,
+  "-e",
+  "LOCAL",
+  "--url",
+  target(),
+  "--no-save",
+  "--json",
+  ...extra,
+];
+
+describe("group-level scripts (gRPC)", () => {
+  it("givenFolderScript_whenRequestRunsAlone_thenInheritedScriptStillRuns", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithScript("nested", "grpc:beforeInvoke", 'pm.environment.set("trans_id", "from-folder");'),
+      );
+
+      const { code } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      // Postman runs a folder script for a single-request run too (decision 1).
+      expect(received[0]?.body.trans_id).toBe("from-folder");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenCollectionAndFolderAndRequestScripts_whenRun_thenOrderIsOuterToInner", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment",
+        definitionWithScript("payment", "grpc:beforeInvoke", 'console.log("mark:collection");'),
+      );
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithScript("nested", "grpc:beforeInvoke", 'console.log("mark:folder");'),
+      );
+      appendToRequest(
+        clone.root,
+        "payment/nested/Deep Echo",
+        'scripts:\n  - type: beforeInvoke\n    code: |\n      console.log("mark:request");\n',
+      );
+
+      const { stdout } = await runCli(deepEcho(clone.root));
+
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.console.map((line) => line.text)).toEqual(["mark:collection", "mark:folder", "mark:request"]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenInheritedScriptLogs_whenJson_thenOriginIsReported", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithScript("nested", "grpc:beforeInvoke", 'console.log("from the folder");'),
+      );
+
+      const { stdout } = await runCli(deepEcho(clone.root));
+
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.console[0]?.origin).toEqual({ level: "folder", label: "folder nested" });
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenInheritedScriptLogs_whenVerbose_thenLineIsTaggedWithOrigin", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithScript("nested", "grpc:beforeInvoke", 'console.log("from the folder");'),
+      );
+
+      const { stdout } = await runCli([
+        "run",
+        "Deep Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "-v",
+      ]);
+
+      expect(stdout).toContain("script log [folder nested]: from the folder");
+      // Decision 8: request-level lines keep the untagged format.
+      expect(stdout).not.toContain("script log [request]");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenUnprefixedGroupScript_whenRun_thenWarnsAndSkips", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithScript("nested", "beforeInvoke", 'console.log("never runs");'),
+      );
+
+      const { code, stdout } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.warnings).toEqual([
+        'folder nested script type "beforeInvoke" has no protocol prefix, so it was not run ' +
+          '(expected "grpc:<event>" or "http:<event>")',
+      ]);
+      expect(report.console).toEqual([]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenUnknownEventInGroupScript_whenRun_thenWarnsAndSkips", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithScript("nested", "grpc:onLunarEclipse", 'console.log("never runs");'),
+      );
+
+      const { code, stdout } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.warnings[0]).toMatch(/^folder nested script type "grpc:onLunarEclipse" is not recognised/);
+      expect(report.console).toEqual([]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenInheritedPreScriptThrows_whenGroupRuns_thenGroupAbortsImmediately", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment",
+        definitionWithScript("payment", "grpc:beforeInvoke", 'throw new Error("shared login broke");'),
+      );
+
+      const { code, stdout } = await runCli(paymentGroup(clone.root));
+
+      const report = JSON.parse(stdout) as GroupReport;
+      // Decision 6: a broken shared precondition stops the group at the first request
+      // instead of printing the same failure once per request.
+      expect(report.items.map((i) => [i.request.path, i.status])).toEqual([["payment/Ping", "error"]]);
+      expect(report.items[0]?.error?.message).toContain("collection payment script");
+      expect(report.items[0]?.error?.message).toContain("shared login broke");
+      expect(report.bailed).toBe(true);
+      expect(report.bailReason).toBe("inherited-script");
+      expect(report.exitCode).toBe(EXIT.CLI);
+      expect(code).toBe(EXIT.CLI);
+      expect(received).toHaveLength(0);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenInheritedAbort_whenHuman_thenTheSummaryExplainsItWasNotBail", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment",
+        definitionWithScript("payment", "grpc:beforeInvoke", 'throw new Error("shared login broke");'),
+      );
+
+      const { stdout } = await runCli([
+        "run",
+        "payment",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+      ]);
+
+      expect(stdout).toContain("aborted: collection payment script");
+      expect(stdout).not.toContain("stopped early: --bail");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenInheritedTestFails_whenGroupRuns_thenRemainingRequestsStillRun", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment",
+        definitionWithScript(
+          "payment",
+          "grpc:afterResponse",
+          'pm.test("shared assertion", function () { pm.expect(1).to.equal(2); });',
+        ),
+      );
+
+      const { stdout } = await runCli(paymentGroup(clone.root));
+
+      const report = JSON.parse(stdout) as GroupReport;
+      // Decision 7: a failing assertion is a result, not a broken precondition.
+      expect(report.items.map((i) => i.status)).toEqual(["test", "test", "skipped", "transport", "test"]);
+      expect(report.bailed).toBe(false);
+      expect(report.bailReason).toBeNull();
+      expect(received.map((r) => r.method)).toEqual(["Ping", "Echo", "Echo"]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenRequestScriptThrows_whenGroupRuns_thenOnlyThatRequestErrors", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      // Ping already declares an `onMessage` script, so the file is rewritten rather
+      // than appended to — a second `scripts:` key would be invalid YAML.
+      writeFileSync(
+        collectionPath(clone.root, "payment", "Ping.request.yaml"),
+        [
+          "$kind: grpc-request",
+          "name: Ping",
+          'url: "{{grpc_url}}"',
+          "methodPath: test.echo.EchoService.Ping",
+          "message:",
+          "  content: |-",
+          '    { "text": "ping" }',
+          "schema:",
+          "  source: file",
+          "  location: ../../../src/main/proto/echo/echo.proto",
+          "scripts:",
+          "  - type: beforeInvoke",
+          "    code: |",
+          '      throw new Error("just this one");',
+          "order: 10",
+          "",
+        ].join("\n"),
+      );
+
+      const { code, stdout } = await runCli(paymentGroup(clone.root));
+
+      const report = JSON.parse(stdout) as GroupReport;
+      expect(report.items.map((i) => i.status)).toEqual(["error", "ok", "skipped", "transport", "ok"]);
+      expect(report.items[0]?.error?.message).toBe('script "beforeInvoke" failed: just this one');
+      expect(report.bailed).toBe(false);
+      expect(code).toBe(EXIT.CLI);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenTransportFailure_whenInheritedAfterResponseExists_thenSkipWarningMentionsIt", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment",
+        definitionWithScript("payment", "grpc:afterResponse", 'console.log("never reached");'),
+      );
+
+      const { code, stdout } = await runCli([
+        "run",
+        "Descriptor Only",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "--json",
+      ]);
+
+      expect(code).toBe(EXIT.TRANSPORT);
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.warnings).toContain("afterResponse scripts skipped: the call failed at the transport level");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenPingRequestScript_whenGrpcPrefixedAtGroupLevel_thenBothStagesInherit", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        `$kind: collection\nname: nested\nscripts:\n` +
+          `  - type: grpc:beforeInvoke\n    code: |\n      console.log("pre");\n` +
+          `  - type: grpc:afterResponse\n    code: |\n      pm.test("post ran", function () { pm.expect(true).to.be.true; });\n`,
+      );
+
+      const { code, stdout } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.console.map((l) => l.text)).toEqual(["pre"]);
+      expect(report.tests).toEqual([
+        { name: "post ran", status: "passed", error: null, origin: { level: "folder", label: "folder nested" } },
+      ]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+});
+
+describe("group-level auth (gRPC)", () => {
+  it("givenGrpcBearerAuth_whenRun_thenAuthorizationMetadataOnTheWire", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithAuth("nested", "  type: bearer\n  credentials:\n    token: folder-token\n"),
+      );
+
+      const { code, stdout } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.metadata.authorization).toBe("Bearer folder-token");
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.warnings).toContain("auth inherited from folder nested");
+      expect(report.request_metadata.authorization).toBe("Bearer folder-token");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcBasicAuth_whenRun_thenCredentialsAreBase64Encoded", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithAuth("nested", "  type: basic\n  credentials:\n    username: bob\n    password: s3cret\n"),
+      );
+
+      const { code } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      const expected = `Basic ${Buffer.from("bob:s3cret").toString("base64")}`;
+      expect(received[0]?.metadata.authorization).toBe(expected);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenRequestNoauth_whenFolderDeclaresAuth_thenUnauthenticated", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithAuth("nested", "  type: bearer\n  credentials:\n    token: folder-token\n"),
+      );
+      appendToRequest(clone.root, "payment/nested/Deep Echo", "auth:\n  type: noauth\n");
+
+      const { code } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.metadata.authorization).toBeUndefined();
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcExplicitAuthorizationMetadata_whenAuthBlockPresent_thenMetadataWinsWithWarning", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithAuth("nested", "  type: bearer\n  credentials:\n    token: folder-token\n"),
+      );
+      appendToRequest(clone.root, "payment/nested/Deep Echo", "metadata:\n  - key: authorization\n    value: Bearer explicit\n");
+
+      const { code, stdout } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.metadata.authorization).toBe("Bearer explicit");
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.warnings).toContain('request metadata "authorization" overrides the bearer auth block');
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcApikeyInQuery_whenRun_thenWarnsAndSkips", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithAuth("nested", '  type: apikey\n  credentials:\n    key: X-Api-Key\n    value: abc\n    in: query\n'),
+      );
+
+      const { code, stdout } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.metadata["x-api-key"]).toBeUndefined();
+      const report = JSON.parse(stdout) as RunReport;
+      expect(report.warnings).toContain(
+        "apikey auth targets the query string, which gRPC has none of; sending the call unauthenticated",
+      );
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcApikeyInHeader_whenRun_thenLowercasedMetadataEntry", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithAuth("nested", "  type: apikey\n  credentials:\n    key: X-Api-Key\n    value: abc\n"),
+      );
+
+      const { code } = await runCli(deepEcho(clone.root));
+
+      expect(code).toBe(EXIT.OK);
+      // gRPC metadata keys are case-insensitive, and @grpc/grpc-js normalises them anyway.
+      expect(received[0]?.metadata["x-api-key"]).toBe("abc");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenUnsupportedAuthType_whenInherited_thenCliErrorListsTheSupportedSet", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(clone.root, "payment/nested", definitionWithAuth("nested", "  type: oauth2\n"));
+
+      await expect(runCli(deepEcho(clone.root))).rejects.toThrow(/auth type "oauth2" is not supported/);
+    } finally {
+      clone.cleanup();
+    }
   });
 });

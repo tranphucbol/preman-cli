@@ -3,12 +3,15 @@ import { CliError } from "../errors.js";
 import type { Scope, VariableStore } from "../vars/store.js";
 import { CookieJar } from "../http/cookies.js";
 import { NO_RESPONSE_STATUS } from "../http/invoke.js";
+import type { ScriptOrigin } from "./chain.js";
 import { expect, makeHeaderList, makeMessageList, type MessageList, type ResponseLike } from "./expect.js";
 import { sendScriptRequest } from "./send-request.js";
 
 export interface ConsoleLine {
   level: "log" | "info" | "warn" | "error" | "debug";
   text: string;
+  /** Which collection / folder / request declared the script that logged this. */
+  origin: ScriptOrigin;
 }
 
 export interface ScriptContextInfo {
@@ -64,6 +67,8 @@ export interface TestResult {
   status: "passed" | "failed" | "skipped";
   /** Assertion message for `failed`, otherwise `undefined`. */
   error: string | undefined;
+  /** Which collection / folder / request declared the script that ran this test. */
+  origin: ScriptOrigin;
 }
 
 /** One `pm.sendRequest` call, kept so the report can show what a script did. */
@@ -87,6 +92,8 @@ export interface RunScriptOptions {
   code: string;
   store: VariableStore;
   info: ScriptContextInfo;
+  /** Where the script was declared; stamped onto every log line and test result. */
+  origin: ScriptOrigin;
   request: ScriptRequestInfo;
   /** Present for `onMessage` / `afterResponse` scripts; absent for pre-request ones. */
   response?: ScriptResponseInfo;
@@ -230,14 +237,14 @@ function makeHttpResponse(info: HttpScriptResponse): ResponseLike {
  * the rest.
  */
 export async function runScript(options: RunScriptOptions): Promise<ScriptRunResult> {
-  const { code, store, info, request } = options;
+  const { code, store, info, request, origin } = options;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cookies = options.cookies ?? new CookieJar();
   const logs: ConsoleLine[] = [];
   const tests: TestResult[] = [];
 
   const record = (level: ConsoleLine["level"]) => (...args: unknown[]) => {
-    logs.push({ level, text: args.map(formatArg).join(" ") });
+    logs.push({ level, text: args.map(formatArg).join(" "), origin });
   };
 
   /**
@@ -252,6 +259,26 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
 
   const sideRequests: SideRequestRecord[] = [];
 
+  /** The logs and tests gathered so far, as `CliError` details. */
+  const gathered = (): string[] => [
+    ...logs.map((l) => `${l.level}: ${l.text}`),
+    ...tests.map((t) => `test ${t.status}: ${t.name}${t.error === undefined ? "" : ` — ${t.error}`}`),
+  ];
+
+  /**
+   * Decision 6: a throw from an inherited script means a shared precondition is broken, so
+   * the whole group stops and the message names the owner. A request's own throw keeps its
+   * existing wording and its per-request `status: "error"`.
+   */
+  const inherited = origin.level !== "request";
+  const scriptError = (message: string, details: string[] = gathered()): CliError =>
+    new CliError(inherited ? `${origin.label} ${message}` : message, {
+      details,
+      abortsGroup: inherited,
+    });
+  const failure = (cause: unknown): CliError =>
+    scriptError(`script "${info.eventName}" failed: ${messageOf(cause)}`);
+
   /**
    * Postman's `pm.sendRequest`, in both the callback and the awaited form. It
    * shares the run's cookie jar and variable store, so a login done here is
@@ -259,9 +286,9 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
    */
   const performSend = async (input: unknown, callback?: unknown): Promise<ResponseLike | undefined> => {
     if (sideRequests.length >= MAX_SIDE_REQUESTS) {
-      throw new CliError(`pm.sendRequest was called more than ${MAX_SIDE_REQUESTS} times in one script`, {
-        details: ["move the loop out of the script, or split the work across requests"],
-      });
+      throw scriptError(`pm.sendRequest was called more than ${MAX_SIDE_REQUESTS} times in one script`, [
+        "move the loop out of the script, or split the work across requests",
+      ]);
     }
 
     const result = await sendScriptRequest({
@@ -365,13 +392,13 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   const test = (name: unknown, fn?: () => unknown): void => {
     const label = String(name);
     if (typeof fn !== "function") {
-      tests.push({ name: label, status: "skipped", error: undefined });
+      tests.push({ name: label, status: "skipped", error: undefined, origin });
       return;
     }
     // `done => ...` and `async () => ...` would both report a false pass, because
     // nothing here waits for them. Fail loudly instead.
     if (fn.length > 0) {
-      tests.push({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE });
+      tests.push({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE, origin });
       return;
     }
     try {
@@ -381,17 +408,17 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
           () => undefined,
           () => undefined,
         );
-        tests.push({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE });
+        tests.push({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE, origin });
         return;
       }
-      tests.push({ name: label, status: "passed", error: undefined });
+      tests.push({ name: label, status: "passed", error: undefined, origin });
     } catch (cause) {
-      tests.push({ name: label, status: "failed", error: messageOf(cause) });
+      tests.push({ name: label, status: "failed", error: messageOf(cause), origin });
     }
   };
 
   const skip = (name: unknown): void => {
-    tests.push({ name: String(name), status: "skipped", error: undefined });
+    tests.push({ name: String(name), status: "skipped", error: undefined, origin });
   };
 
   const pm = {
@@ -465,7 +492,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
         try {
           (fn as (...rest: unknown[]) => unknown)(...args);
         } catch (cause) {
-          logs.push({ level: "error", text: messageOf(cause) });
+          logs.push({ level: "error", text: messageOf(cause), origin });
         }
       }, ms);
       pending.add(handle);
@@ -476,14 +503,6 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       clearTimeout(handle);
     },
   };
-
-  /** The logs and tests gathered so far, as `CliError` details. */
-  const gathered = (): string[] => [
-    ...logs.map((l) => `${l.level}: ${l.text}`),
-    ...tests.map((t) => `test ${t.status}: ${t.name}${t.error === undefined ? "" : ` — ${t.error}`}`),
-  ];
-  const failure = (cause: unknown): CliError =>
-    new CliError(`script "${info.eventName}" failed: ${messageOf(cause)}`, { details: gathered() });
 
   let completion: Promise<unknown>;
   try {
@@ -503,7 +522,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   let deadlineHandle: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     deadlineHandle = setTimeout(() => {
-      reject(new CliError(`script "${info.eventName}" timed out after ${timeoutMs}ms`, { details: gathered() }));
+      reject(scriptError(`script "${info.eventName}" timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
 

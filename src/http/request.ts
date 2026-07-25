@@ -1,6 +1,7 @@
 import { CliError } from "../errors.js";
 import { interpolateStrict } from "../vars/interpolate.js";
 import type { VariableStore } from "../vars/store.js";
+import type { ResolvedAuth } from "../workspace/inherit.js";
 import type { HttpRequest } from "../workspace/schemas.js";
 import { applyAuth } from "./auth.js";
 import { dropEmptyValues, normalizeKeyValues, setHeaderIfAbsent, type KeyValue } from "./headers.js";
@@ -9,6 +10,8 @@ import { pathPortion, resolveHttpUrl, type HttpTarget } from "./target.js";
 
 export interface BuildHttpRequestOptions {
   request: HttpRequest;
+  /** Already walked up the tree; absent means unauthenticated. */
+  auth: ResolvedAuth | undefined;
   store: VariableStore;
   /** `--url`; replaces the origin only. */
   urlOverride?: string | undefined;
@@ -87,7 +90,13 @@ export function buildHttpRequest(options: BuildHttpRequestOptions): BuiltHttpReq
     warnings.push(`query params already in the url were not appended twice: ${duplicated.join(", ")}`);
   }
 
-  warnings.push(...applyAuth({ auth: request.auth, headers, url, store }));
+  const auth = options.auth;
+  const authWarnings = applyAuth({ auth: auth?.auth, headers, url, store });
+  // Silent inherited auth is exactly how a stale token turns into an unexplained 401.
+  if (auth !== undefined && auth.origin.level !== "request") {
+    warnings.push(`auth inherited from ${auth.origin.label}`);
+  }
+  warnings.push(...authWarnings);
 
   const rawBody = request.body?.content ?? "";
   // Sent verbatim: round-tripping through JSON.parse would reformat the payload and

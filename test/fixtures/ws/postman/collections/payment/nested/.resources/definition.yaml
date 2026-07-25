@@ -1,2 +1,9 @@
-$kind: folder
+# Real Postman workspaces write `$kind: collection` on folders too, so preman derives
+# the kind from tree position and this value is deliberately not discriminating.
+$kind: collection
 name: nested
+scripts:
+  - type: grpc:beforeInvoke
+    language: javascript
+    code: |
+      pm.variables.set("nested_marker", "from-nested-folder");

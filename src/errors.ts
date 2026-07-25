@@ -18,11 +18,20 @@ export class CliError extends Error {
   readonly exitCode: ExitCode;
   /** Extra lines printed under the message, e.g. a list of available methods. */
   readonly details: string[];
+  /**
+   * Set when the failure is a broken shared precondition (a collection- or folder-level
+   * script), so a group run stops instead of reporting the same failure once per request.
+   */
+  readonly abortsGroup: boolean;
 
-  constructor(message: string, options: { exitCode?: ExitCode; details?: string[] } = {}) {
+  constructor(
+    message: string,
+    options: { exitCode?: ExitCode; details?: string[]; abortsGroup?: boolean } = {},
+  ) {
     super(message);
     this.name = "CliError";
     this.exitCode = options.exitCode ?? EXIT.CLI;
     this.details = options.details ?? [];
+    this.abortsGroup = options.abortsGroup ?? false;
   }
 }
