@@ -1,0 +1,8 @@
+$kind: http-request
+name: Round And Round
+# /loop redirects forever: the run must stop at the redirect cap and say so.
+url: "{{http_url}}/loop"
+method: GET
+auth:
+  type: noauth
+order: 60

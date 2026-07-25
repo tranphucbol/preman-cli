@@ -1,0 +1,297 @@
+import { describe, expect, it } from "vitest";
+
+import { CliError } from "../src/errors.js";
+import { applyAuth } from "../src/http/auth.js";
+import { CookieJar } from "../src/http/cookies.js";
+import {
+  dropEmptyValues,
+  findHeader,
+  normalizeKeyValues,
+  setHeaderIfAbsent,
+  toOutgoingHeaders,
+  type KeyValue,
+} from "../src/http/headers.js";
+import { mergeQuery } from "../src/http/query.js";
+import { pathPortion, resolveHttpUrl } from "../src/http/target.js";
+import { VariableStore } from "../src/vars/store.js";
+
+function pairs(headers: readonly KeyValue[]): Record<string, string> {
+  return Object.fromEntries(headers.map((header) => [header.key, header.value]));
+}
+
+describe("normalizeKeyValues", () => {
+  it("givenAMap_whenNormalized_thenEveryEntryIsKept", () => {
+    expect(normalizeKeyValues({ "X-Trace": "abc", page: 2, exact: true }, "headers")).toEqual([
+      { key: "X-Trace", value: "abc" },
+      { key: "page", value: "2" },
+      { key: "exact", value: "true" },
+    ]);
+  });
+
+  it("givenAnArray_whenNormalized_thenDisabledEntriesAreDropped", () => {
+    const source = [
+      { key: "transaction_id", value: "1", disabled: true },
+      { key: "start_time", value: "2" },
+      { key: "no_value" },
+    ];
+    expect(normalizeKeyValues(source, "query params")).toEqual([
+      { key: "start_time", value: "2" },
+      { key: "no_value", value: "" },
+    ]);
+  });
+
+  it("givenANullValue_whenNormalized_thenItBecomesAnEmptyString", () => {
+    expect(normalizeKeyValues({ authorization: null }, "headers")).toEqual([{ key: "authorization", value: "" }]);
+  });
+
+  it("givenAnUnreadableSource_whenNormalized_thenCliErrorExplainsBothShapes", () => {
+    expect(() => normalizeKeyValues("nope" as never, "headers")).toThrow(CliError);
+    try {
+      normalizeKeyValues(7 as never, "headers");
+    } catch (cause) {
+      const error = cause as CliError;
+      expect(error.message).toContain("could not read headers");
+      expect(error.details.join(" ")).toContain("list of {key, value}");
+    }
+  });
+
+  it("givenUndefined_whenNormalized_thenTheListIsEmpty", () => {
+    expect(normalizeKeyValues(undefined, "headers")).toEqual([]);
+  });
+});
+
+describe("header helpers", () => {
+  const headers: KeyValue[] = [
+    { key: "Content-Type", value: "application/json" },
+    { key: "authorization", value: "" },
+  ];
+
+  it("givenMixedCase_whenLookedUp_thenTheMatchIsCaseInsensitive", () => {
+    expect(findHeader(headers, "content-type")?.value).toBe("application/json");
+    expect(findHeader(headers, "missing")).toBeUndefined();
+  });
+
+  it("givenABlankValue_whenDropped_thenTheHeaderIsUnset", () => {
+    expect(dropEmptyValues(headers)).toEqual([{ key: "Content-Type", value: "application/json" }]);
+  });
+
+  it("givenAnExistingHeader_whenSetIfAbsent_thenTheAuthorsValueWins", () => {
+    const list: KeyValue[] = [{ key: "Content-Type", value: "text/plain" }];
+    setHeaderIfAbsent(list, "content-type", "application/json");
+    setHeaderIfAbsent(list, "accept", "application/json");
+    expect(pairs(list)).toEqual({ "Content-Type": "text/plain", accept: "application/json" });
+  });
+
+  it("givenRepeatedKeys_whenSentOut_thenTheyBecomeAnArray", () => {
+    const list: KeyValue[] = [
+      { key: "x-tag", value: "a" },
+      { key: "X-Tag", value: "b" },
+      { key: "accept", value: "*/*" },
+    ];
+    expect(toOutgoingHeaders(list)).toEqual({ "x-tag": ["a", "b"], accept: "*/*" });
+  });
+});
+
+describe("mergeQuery", () => {
+  it("givenAParamAlreadyInTheUrl_whenMerged_thenItIsNotSentTwice", () => {
+    const url = new URL("http://host/api?error_code=20&exact=true");
+    const skipped = mergeQuery(url, [
+      { key: "error_code", value: "20" },
+      { key: "exact", value: "true" },
+      { key: "page", value: "2" },
+    ]);
+    expect(skipped).toEqual(["error_code", "exact"]);
+    expect(url.search).toBe("?error_code=20&exact=true&page=2");
+  });
+
+  it("givenNoParams_whenMerged_thenTheUrlIsUntouched", () => {
+    const url = new URL("http://host/api?a=1");
+    expect(mergeQuery(url, [])).toEqual([]);
+    expect(url.search).toBe("?a=1");
+  });
+});
+
+describe("resolveHttpUrl", () => {
+  it("givenAnAbsoluteUrl_whenResolved_thenTheOriginComesFromTheRequest", () => {
+    const resolved = resolveHttpUrl({ rawUrl: "https://api.example.com/v1/users?a=1" });
+    expect(resolved.url.href).toBe("https://api.example.com/v1/users?a=1");
+    expect(resolved.target).toEqual({ origin: "https://api.example.com", tls: true, source: "request url" });
+  });
+
+  it("givenNoScheme_whenResolved_thenHttpIsAssumed", () => {
+    expect(resolveHttpUrl({ rawUrl: "localhost:8080/health" }).url.href).toBe("http://localhost:8080/health");
+  });
+
+  it("givenAnUnresolvedBaseVariable_whenResolved_thenTheErrorNamesTheWayOut", () => {
+    try {
+      resolveHttpUrl({ rawUrl: "/api/v1/login" });
+      throw new Error("expected a CliError");
+    } catch (cause) {
+      const error = cause as CliError;
+      expect(error.message).toContain("could not determine an HTTP origin");
+      expect(error.details.join(" ")).toContain("--url <origin>");
+    }
+  });
+
+  it("givenAnOverride_whenResolved_thenOnlyTheOriginIsReplaced", () => {
+    const resolved = resolveHttpUrl({ rawUrl: "{{admin_http_url}}/api/v1/login?a=1", override: "127.0.0.1:3000" });
+    expect(resolved.url.href).toBe("http://127.0.0.1:3000/api/v1/login?a=1");
+    expect(resolved.target.source).toBe("--url");
+  });
+
+  it("givenAnOverrideWithAPath_whenResolved_thenThePathIsIgnoredWithAWarning", () => {
+    const resolved = resolveHttpUrl({ rawUrl: "http://old/api/v1/login", override: "http://new/ignored" });
+    expect(resolved.url.href).toBe("http://new/api/v1/login");
+    expect(resolved.warnings.join(" ")).toContain("ignored");
+  });
+
+  it("givenATlsOverride_whenResolved_thenTheSchemeIsForced", () => {
+    expect(resolveHttpUrl({ rawUrl: "http://host/x", tlsOverride: true }).url.protocol).toBe("https:");
+    expect(resolveHttpUrl({ rawUrl: "https://host/x", tlsOverride: false }).url.protocol).toBe("http:");
+  });
+
+  it("givenANonHttpScheme_whenResolved_thenItIsRejected", () => {
+    expect(() => resolveHttpUrl({ rawUrl: "ws://host/socket" })).toThrow(CliError);
+  });
+
+  it("givenAnyUrl_whenOnlyThePathIsWanted_thenTheOriginIsStripped", () => {
+    expect(pathPortion("https://host:8443/api/v1/login?a=1")).toBe("/api/v1/login?a=1");
+    expect(pathPortion("{{base}}/api")).toBe("/api");
+    expect(pathPortion("http://host")).toBe("/");
+  });
+});
+
+describe("applyAuth", () => {
+  const store = () => new VariableStore({ environment: { jwt_token: "tok-1", user: "admin", pass: "s3cret" } });
+
+  it("givenBearerAuth_whenApplied_thenTheHeaderCarriesTheToken", () => {
+    const headers: KeyValue[] = [];
+    const warnings = applyAuth({
+      auth: { type: "bearer", credentials: { token: "{{jwt_token}}" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(pairs(headers)).toEqual({ Authorization: "Bearer tok-1" });
+    expect(warnings).toEqual([]);
+  });
+
+  it("givenBasicAuth_whenApplied_thenTheCredentialsAreBase64", () => {
+    const headers: KeyValue[] = [];
+    applyAuth({
+      auth: { type: "basic", credentials: { username: "{{user}}", password: "{{pass}}" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(findHeader(headers, "authorization")?.value).toBe(`Basic ${Buffer.from("admin:s3cret").toString("base64")}`);
+  });
+
+  it("givenApiKeyInQuery_whenApplied_thenTheUrlCarriesIt", () => {
+    const url = new URL("http://host/x");
+    applyAuth({
+      auth: { type: "apikey", credentials: { key: "api_key", value: "{{jwt_token}}", in: "query" } },
+      headers: [],
+      url,
+      store: store(),
+    });
+    expect(url.search).toBe("?api_key=tok-1");
+  });
+
+  it("givenAnExplicitAuthorizationHeader_whenAuthBlockPresent_thenTheHeaderWinsWithAWarning", () => {
+    const headers: KeyValue[] = [{ key: "authorization", value: "Bearer mine" }];
+    const warnings = applyAuth({
+      auth: { type: "bearer", credentials: { token: "{{jwt_token}}" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(pairs(headers)).toEqual({ authorization: "Bearer mine" });
+    expect(warnings.join(" ")).toContain("overrides the bearer auth block");
+  });
+
+  it("givenNoauthOrNothing_whenApplied_thenNoHeaderIsAdded", () => {
+    const headers: KeyValue[] = [];
+    expect(applyAuth({ auth: { type: "noauth" }, headers, url: new URL("http://host/x"), store: store() })).toEqual([]);
+    expect(applyAuth({ auth: undefined, headers, url: new URL("http://host/x"), store: store() })).toEqual([]);
+    expect(headers).toEqual([]);
+  });
+
+  it("givenAnEmptyBearerToken_whenApplied_thenItWarnsInsteadOfSendingBearer", () => {
+    const headers: KeyValue[] = [];
+    const warnings = applyAuth({
+      auth: { type: "bearer", credentials: { token: "" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(headers).toEqual([]);
+    expect(warnings.join(" ")).toContain("bearer token is empty");
+  });
+
+  it("givenAnUnknownAuthType_whenApplied_thenTheErrorListsTheSupportedOnes", () => {
+    try {
+      applyAuth({ auth: { type: "oauth2" }, headers: [], url: new URL("http://host/x"), store: store() });
+      throw new Error("expected a CliError");
+    } catch (cause) {
+      const error = cause as CliError;
+      expect(error.message).toContain('auth type "oauth2" is not supported');
+      expect(error.details.join(" ")).toContain("noauth, bearer, basic, apikey");
+    }
+  });
+});
+
+describe("CookieJar", () => {
+  it("givenADeleteThenSetPair_whenStored_thenTheLiveValueIsKept", () => {
+    // The admin backend clears the cookie at a legacy path before setting the real one.
+    const jar = new CookieJar();
+    jar.storeFrom(new URL("http://host/api/v1/login"), [
+      "admin_csrf_token=; Path=/legacy; Max-Age=0",
+      "admin_csrf_token=real-value; Path=/api/v1; HttpOnly",
+    ]);
+    expect(jar.get("admin_csrf_token")).toBe("real-value");
+    expect(jar.headerFor(new URL("http://host/api/v1/auth/refresh"))).toBe("admin_csrf_token=real-value");
+  });
+
+  it("givenAPathScopedCookie_whenAnotherPathIsRequested_thenItIsNotSent", () => {
+    const jar = new CookieJar();
+    jar.storeFrom(new URL("http://host/api/v1/login"), ["sid=abc; Path=/api/v1"]);
+    expect(jar.headerFor(new URL("http://host/other"))).toBeUndefined();
+    expect(jar.headerFor(new URL("http://host/api/v1/users"))).toBe("sid=abc");
+  });
+
+  it("givenNoExplicitPath_whenStored_thenTheDefaultIsTheDirectory", () => {
+    const jar = new CookieJar();
+    jar.storeFrom(new URL("http://host/api/v1/login"), ["sid=abc"]);
+    expect(jar.headerFor(new URL("http://host/api/v1/users"))).toBe("sid=abc");
+    expect(jar.headerFor(new URL("http://host/"))).toBeUndefined();
+  });
+
+  it("givenCookiesAtDifferentPaths_whenSent_thenTheLongerPathComesFirst", () => {
+    const jar = new CookieJar();
+    jar.storeFrom(new URL("http://host/"), ["a=root; Path=/"]);
+    jar.storeFrom(new URL("http://host/api/v1/x"), ["b=deep; Path=/api/v1"]);
+    expect(jar.headerFor(new URL("http://host/api/v1/x"))).toBe("b=deep; a=root");
+  });
+
+  it("givenAnotherHost_whenRequested_thenHostOnlyCookiesStayHome", () => {
+    const jar = new CookieJar();
+    jar.storeFrom(new URL("http://host/x"), ["sid=abc; Path=/"]);
+    expect(jar.headerFor(new URL("http://elsewhere/x"))).toBeUndefined();
+  });
+
+  it("givenAnExpiredCookie_whenRead_thenItIsGone", () => {
+    const jar = new CookieJar();
+    jar.storeFrom(new URL("http://host/"), ["sid=abc; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"]);
+    expect(jar.has("sid")).toBe(false);
+    expect(jar.toObject()).toEqual({});
+  });
+
+  it("givenSeveralCookies_whenExposedToScripts_thenHttpOnlyIsStillVisible", () => {
+    const jar = new CookieJar();
+    jar.storeFrom(new URL("http://host/"), ["sid=abc; Path=/; HttpOnly", "theme=dark; Path=/"]);
+    expect(jar.toObject()).toEqual({ sid: "abc", theme: "dark" });
+    expect(jar.has("sid")).toBe(true);
+    expect(jar.get("nope")).toBeUndefined();
+  });
+});

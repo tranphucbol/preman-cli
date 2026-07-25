@@ -75,6 +75,58 @@ export const grpcRequestSchema = z
   })
   .passthrough();
 
+const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+/**
+ * Headers and query params appear in two shapes in real exports: a plain YAML map
+ * (`{X-CSRF-Token: abc}`) and a Postman-style array of entries. Both are accepted
+ * here; `src/http/headers.ts` normalises them so a bad shape reads as a `CliError`
+ * with details rather than a zod dump.
+ */
+const keyValueSourceSchema = z.union([
+  z.record(scalarSchema),
+  z.array(
+    z
+      .object({
+        key: z.string(),
+        value: scalarSchema.optional(),
+        disabled: z.boolean().optional(),
+      })
+      .passthrough(),
+  ),
+]);
+
+export const httpRequestSchema = z
+  .object({
+    $kind: z.literal("http-request"),
+    /** Optional on purpose: almost every real file omits it and relies on the filename. */
+    name: z.string().optional(),
+    description: z.string().optional(),
+    url: z.string(),
+    method: z.string().optional().default("GET"),
+    headers: keyValueSourceSchema.optional(),
+    queryParams: keyValueSourceSchema.optional(),
+    body: z
+      .object({
+        /** `json`, `text`, `xml`, ... Only used to pick a default `content-type`. */
+        type: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    auth: z
+      .object({
+        type: z.string(),
+        credentials: z.record(z.unknown()).optional(),
+      })
+      .passthrough()
+      .optional(),
+    settings: z.record(z.unknown()).optional(),
+    scripts: z.array(scriptSchema).optional(),
+    order: z.number().optional(),
+  })
+  .passthrough();
+
 /**
  * Recognised but unimplemented. Parsed loosely on purpose: we only need `$kind`
  * and `name` to produce a good "not supported yet" message.
@@ -108,6 +160,8 @@ export const environmentSchema = z
 
 export type ResourcesFile = z.infer<typeof resourcesFileSchema>;
 export type GrpcRequest = z.infer<typeof grpcRequestSchema>;
+export type HttpRequest = z.infer<typeof httpRequestSchema>;
+export type KeyValueSource = z.infer<typeof keyValueSourceSchema>;
 export type OtherRequest = z.infer<typeof otherRequestSchema>;
 export type EnvironmentFile = z.infer<typeof environmentSchema>;
 export type RequestScript = z.infer<typeof scriptSchema>;

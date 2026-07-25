@@ -9,7 +9,7 @@ import { CliError, EXIT, type ExitCode } from "./errors.js";
 const VERSION = "0.1.0";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-const HELP = `${pc.bold("preman")} — run Postman-format requests from the CLI
+const HELP = `${pc.bold("preman")} — run Postman-format gRPC and HTTP requests from the CLI
 
 ${pc.bold("usage")}
   preman list
@@ -21,32 +21,38 @@ ${pc.bold("usage")}
 ${pc.bold("options")}
   -d, --dir <path>      workspace to use (default: search upwards from cwd)
   -e, --env <name>      environment to load (auto-selected if only one exists)
-      --url <host:port> override the gRPC target
-      --tls             force TLS
-      --insecure        force plaintext
+      --url <target>    override the target: host:port for gRPC, an origin for
+                        HTTP (the request's own path and query are kept)
+      --tls             force TLS (https for HTTP requests)
+      --insecure        force plaintext (http for HTTP requests)
       --timeout <ms>    call deadline (default: ${DEFAULT_TIMEOUT_MS})
       --var <k=v>       set a variable, highest precedence; repeatable
       --no-save         do not write script-modified variables back to the env file
-      --descriptor      use the request's embedded descriptor instead of the .proto
+      --descriptor      gRPC only: use the request's embedded descriptor
+                        instead of the .proto
       --bail            in a collection run, stop at the first request that fails
       --json            machine-readable output
-  -v, --verbose         show request body, script logs, metadata and trailers
+  -v, --verbose         show request body, script logs, headers, metadata and
+                        trailers
   -h, --help            show this help
       --version         print the version
 
 ${pc.bold("exit codes")}
   0  success
   1  usage or configuration error
-  2  gRPC status other than OK
-  3  call succeeded but return_code is not OK
-  4  call succeeded but a pm.test assertion failed
+  2  transport failure: a gRPC status other than OK, or no HTTP response
+  3  a response arrived but return_code is not OK (gRPC), or the HTTP status
+     is not 2xx
+  4  the call succeeded but a pm.test assertion failed
 
 A collection run reports the worst outcome it saw, in that same order.
 
 ${pc.bold("scripts")}
-  beforeInvoke runs before the call; onMessage and afterResponse run after it,
-  with pm.response, pm.message, pm.expect and pm.test available. Post-response
-  scripts are skipped when the call fails at the transport level.
+  beforeInvoke and prerequest run before the call; onMessage (gRPC) and
+  afterResponse run after it, with pm.response, pm.expect, pm.test, pm.cookies
+  and pm.sendRequest available. gRPC also gets pm.message. A gRPC call that
+  fails at the transport level skips its post-response scripts; an HTTP request
+  runs them for any status that produced a response.
 `;
 
 function parseVars(entries: string[]): Record<string, string> {

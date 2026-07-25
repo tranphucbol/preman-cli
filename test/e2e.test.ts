@@ -448,9 +448,9 @@ describe("preman run (test scripts)", () => {
 });
 
 describe("preman run (error paths)", () => {
-  it("givenHttpRequest_whenRun_thenRejectedAsUnsupported", async () => {
+  it("givenUnsupportedKind_whenRun_thenRejectedWithTheSupportedKinds", async () => {
     await expect(runCli(["run", "Legacy Http", "-d", FIXTURE_WS, "-e", "LOCAL", "--json"])).rejects.toThrow(
-      /http-request, which preman does not support yet/,
+      /websocket-request, which preman does not support yet/,
     );
   });
 
@@ -543,7 +543,7 @@ describe("preman list / env", () => {
     expect(code).toBe(EXIT.OK);
     expect(stdout).toContain("payment");
     expect(stdout).toContain("Echo");
-    expect(stdout).toContain("http-request");
+    expect(stdout).toContain("websocket-request");
     expect(stdout).toContain("LOCAL");
     expect(stdout).toContain("echo.proto");
   });
@@ -772,7 +772,7 @@ describe("preman run <collection> (whole-collection runs)", () => {
 
     const report = JSON.parse(stdout) as GroupReport;
     const skipped = report.items.find((i) => i.status === "skipped");
-    expect(skipped?.request.kind).toBe("http-request");
+    expect(skipped?.request.kind).toBe("websocket-request");
     expect(skipped?.error?.message).toContain("not supported yet");
     expect(skipped?.run).toBeNull();
   });

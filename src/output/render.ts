@@ -1,6 +1,15 @@
 import pc from "picocolors";
 import { EXIT } from "../errors.js";
-import { countTests, type GroupRunItem, type GroupRunOutcome, type ItemStatus, type RunOutcome } from "../runner.js";
+import { NO_RESPONSE_STATUS } from "../http/invoke.js";
+import {
+  countTests,
+  type GroupRunItem,
+  type GroupRunOutcome,
+  type GrpcRunOutcome,
+  type HttpRunOutcome,
+  type ItemStatus,
+  type RunOutcome,
+} from "../runner.js";
 import type { TestResult } from "../scripts/sandbox.js";
 
 const TEST_MARK: Record<TestResult["status"], { mark: string; paint: (s: string) => string }> = {
@@ -8,6 +17,15 @@ const TEST_MARK: Record<TestResult["status"], { mark: string; paint: (s: string)
   failed: { mark: "✗", paint: pc.red },
   skipped: { mark: "-", paint: pc.dim },
 };
+
+/**
+ * Header values worth hiding: a verbose run is the thing people paste into a
+ * ticket, and these carry live credentials. Enough of the value survives to tell
+ * two tokens apart.
+ */
+const REDACTED_HEADERS = new Set(["authorization", "cookie", "set-cookie", "x-csrf-token"]);
+const REDACT_KEEP = 8;
+const NO_RESPONSE_LABEL = "no response";
 
 export interface RenderOptions {
   verbose: boolean;
@@ -31,18 +49,46 @@ export function colorizeJson(value: unknown): string {
   );
 }
 
-function statusLabel(outcome: RunOutcome): string {
-  const { invoke, returnCode } = outcome;
-  const ms = `${invoke.durationMs.toFixed(0)}ms`;
+/** `undefined` when the text is not JSON, so an error page renders as-is. */
+function parseJson(text: string): { value: unknown } | undefined {
+  if (text.trim() === "") return undefined;
+  try {
+    return { value: JSON.parse(text) };
+  } catch {
+    return undefined;
+  }
+}
 
-  if (!invoke.ok) return `${pc.red(`✗ ${invoke.codeName}`)} ${pc.dim(ms)}`;
+function redactValue(key: string, value: string): string {
+  if (!REDACTED_HEADERS.has(key.toLowerCase()) || value.length <= REDACT_KEEP) return value;
+  return `${value.slice(0, REDACT_KEEP)}…`;
+}
+
+function grpcStatusLabel(outcome: GrpcRunOutcome, ms: string): string {
+  if (!outcome.invoke.ok) return `${pc.red(`✗ ${outcome.invoke.codeName}`)} ${pc.dim(ms)}`;
 
   // The call itself succeeded, so the mark reflects the whole verdict: a failed
   // `pm.test` turns it yellow even though `return_code` was fine.
-  const label = returnCode === undefined ? "OK" : `OK / ${returnCode}`;
+  const label = outcome.returnCode === undefined ? "OK" : `OK / ${outcome.returnCode}`;
   return outcome.exitCode === EXIT.OK
     ? `${pc.green(`✓ ${label}`)} ${pc.dim(ms)}`
     : `${pc.yellow(`✗ ${label}`)} ${pc.dim(ms)}`;
+}
+
+/** HTTP has no separate business field, so the status line *is* the verdict. */
+function httpStatusLabel(outcome: HttpRunOutcome, ms: string): string {
+  const { invoke } = outcome;
+  if (invoke.statusCode === NO_RESPONSE_STATUS) return `${pc.red(`✗ ${NO_RESPONSE_LABEL}`)} ${pc.dim(ms)}`;
+
+  const label = `${invoke.statusCode} ${invoke.statusMessage}`.trim();
+  return outcome.exitCode === EXIT.OK
+    ? `${pc.green(`✓ ${label}`)} ${pc.dim(ms)}`
+    : `${pc.yellow(`✗ ${label}`)} ${pc.dim(ms)}`;
+}
+
+function statusLabel(outcome: RunOutcome): string {
+  const ms = `${outcome.invoke.durationMs.toFixed(0)}ms`;
+  return outcome.protocol === "grpc" ? grpcStatusLabel(outcome, ms) : httpStatusLabel(outcome, ms);
 }
 
 /** Per-test lines plus a one-line tally. Always shown: a silent test is a useless test. */
@@ -64,50 +110,105 @@ function renderTests(tests: TestResult[], out: string[]): void {
   out.push(pc.dim(parts.join(" · ")));
 }
 
-function renderMetadata(label: string, entries: Record<string, string | string[]>, out: string[]): void {
+function renderEntries(label: string, entries: Record<string, string | string[]>, out: string[]): void {
   const keys = Object.keys(entries);
   if (keys.length === 0) return;
   out.push(pc.dim(`${label}:`));
   for (const key of keys.sort()) {
     const value = entries[key];
-    out.push(pc.dim(`  ${key}: ${Array.isArray(value) ? value.join(", ") : value}`));
+    const shown = (Array.isArray(value) ? value : [value ?? ""]).map((v) => redactValue(key, v)).join(", ");
+    out.push(pc.dim(`  ${key}: ${shown}`));
   }
+}
+
+function grpcRequestLines(outcome: GrpcRunOutcome, out: string[]): void {
+  if (Object.keys(outcome.metadata).length > 0) renderEntries("request metadata", outcome.metadata, out);
+  out.push(pc.dim("request body:"), colorizeJson(outcome.sentMessage));
+}
+
+function httpRequestLines(outcome: HttpRunOutcome, out: string[]): void {
+  renderEntries("request headers", outcome.invoke.requestHeaders, out);
+  const body = outcome.invoke.requestBody;
+  if (body !== undefined && body !== "") {
+    const json = parseJson(body);
+    out.push(pc.dim("request body:"), json === undefined ? body : colorizeJson(json.value));
+  }
+}
+
+function grpcResponseLines(outcome: GrpcRunOutcome, verbose: boolean, out: string[]): void {
+  if (!outcome.invoke.ok) {
+    if (outcome.invoke.message) out.push(pc.red(outcome.invoke.message));
+  } else {
+    out.push(colorizeJson(outcome.invoke.response));
+  }
+
+  if (!verbose) return;
+  renderEntries("response metadata", outcome.invoke.metadata, out);
+  renderEntries("trailers", outcome.invoke.trailers, out);
+}
+
+function httpResponseLines(outcome: HttpRunOutcome, verbose: boolean, out: string[]): void {
+  const { invoke } = outcome;
+  if (invoke.statusCode === NO_RESPONSE_STATUS) {
+    if (invoke.message) out.push(pc.red(invoke.message));
+    return;
+  }
+
+  if (invoke.body !== "") {
+    const json = parseJson(invoke.body);
+    out.push(json === undefined ? invoke.body : colorizeJson(json.value));
+  }
+
+  if (!verbose) return;
+  for (const hop of invoke.redirects) out.push(pc.dim(`redirect ${hop.status}: ${hop.from} → ${hop.to}`));
+  renderEntries("response headers", invoke.headers, out);
+  if (invoke.setCookies.length > 0) {
+    out.push(pc.dim("set-cookie:"));
+    for (const cookie of invoke.setCookies) out.push(pc.dim(`  ${redactValue("set-cookie", cookie)}`));
+  }
+}
+
+function headerLines(outcome: RunOutcome): string[] {
+  const tlsLabel = outcome.target.tls ? "tls" : "plaintext";
+
+  if (outcome.protocol === "grpc") {
+    return [
+      `${pc.bold(outcome.entry.path)}  ${pc.dim("→")}  ${pc.cyan(outcome.methodPath)}`,
+      pc.dim(
+        `target ${outcome.target.authority} [${tlsLabel}] (${outcome.target.source}) · schema ${outcome.schemaSource}`,
+      ),
+    ];
+  }
+
+  const url = new URL(outcome.invoke.url);
+  return [
+    `${pc.bold(outcome.entry.path)}  ${pc.dim("→")}  ${pc.cyan(`${outcome.invoke.method} ${url.pathname}${url.search}`)}`,
+    pc.dim(`target ${outcome.target.origin} [${tlsLabel}] (${outcome.target.source})`),
+  ];
 }
 
 /** The human-facing report for a completed run. */
 export function renderOutcome(outcome: RunOutcome, options: RenderOptions): string {
   if (options.json) return JSON.stringify(toJsonReport(outcome), null, 2);
 
-  const lines: string[] = [];
-  const tlsLabel = outcome.target.tls ? "tls" : "plaintext";
-
-  lines.push(
-    `${pc.bold(outcome.entry.path)}  ${pc.dim("→")}  ${pc.cyan(outcome.methodPath)}`,
-    pc.dim(`target ${outcome.target.authority} [${tlsLabel}] (${outcome.target.source}) · schema ${outcome.schemaSource}`),
-  );
+  const lines: string[] = headerLines(outcome);
 
   for (const warning of outcome.warnings) lines.push(pc.yellow(`warn: ${warning}`));
 
   if (options.verbose) {
     for (const line of outcome.consoleLines) lines.push(pc.dim(`script ${line.level}: ${line.text}`));
-    if (Object.keys(outcome.metadata).length > 0) {
-      renderMetadata("request metadata", outcome.metadata, lines);
+    for (const side of outcome.sideRequests) {
+      const status = side.statusCode === NO_RESPONSE_STATUS ? NO_RESPONSE_LABEL : `${side.statusCode} ${side.statusMessage}`;
+      lines.push(pc.dim(`script request ${side.method} ${side.url} → ${status} ${side.durationMs}ms`));
     }
-    lines.push(pc.dim("request body:"), colorizeJson(outcome.sentMessage));
+    if (outcome.protocol === "grpc") grpcRequestLines(outcome, lines);
+    else httpRequestLines(outcome, lines);
   }
 
   lines.push("", statusLabel(outcome));
 
-  if (!outcome.invoke.ok) {
-    if (outcome.invoke.message) lines.push(pc.red(outcome.invoke.message));
-  } else {
-    lines.push(colorizeJson(outcome.invoke.response));
-  }
-
-  if (options.verbose) {
-    renderMetadata("response metadata", outcome.invoke.metadata, lines);
-    renderMetadata("trailers", outcome.invoke.trailers, lines);
-  }
+  if (outcome.protocol === "grpc") grpcResponseLines(outcome, options.verbose, lines);
+  else httpResponseLines(outcome, options.verbose, lines);
 
   renderTests(outcome.tests, lines);
 
@@ -129,6 +230,20 @@ const STATUS_STYLE: Record<ItemStatus, { mark: string; paint: (s: string) => str
   skipped: { mark: "-", paint: pc.dim },
 };
 
+/** The status half of an item label, without the test tally. */
+function itemStatusText(outcome: RunOutcome, status: ItemStatus): string {
+  if (outcome.protocol === "grpc") {
+    if (!outcome.invoke.ok) return pc.red(outcome.invoke.codeName);
+    const label = outcome.returnCode === undefined ? "OK" : `OK / ${outcome.returnCode}`;
+    return status === "ok" ? pc.green(label) : pc.yellow(label);
+  }
+
+  const { invoke } = outcome;
+  if (invoke.statusCode === NO_RESPONSE_STATUS) return pc.red(NO_RESPONSE_LABEL);
+  const label = `${invoke.statusCode} ${invoke.statusMessage}`.trim();
+  return status === "ok" ? pc.green(label) : pc.yellow(label);
+}
+
 /** Short right-hand column for one request in a collection run. */
 function itemLabel(item: GroupRunItem): string {
   if (item.status === "skipped") return pc.dim(`skipped: ${item.error?.message ?? "unsupported"}`);
@@ -137,9 +252,7 @@ function itemLabel(item: GroupRunItem): string {
   const outcome = item.outcome;
   if (outcome === undefined) return "";
   const ms = pc.dim(`${outcome.invoke.durationMs.toFixed(0)}ms`);
-  if (!outcome.invoke.ok) return `${pc.red(outcome.invoke.codeName)} ${ms}`;
-  const status = outcome.returnCode === undefined ? "OK" : `OK / ${outcome.returnCode}`;
-  const painted = item.status === "ok" ? pc.green(status) : pc.yellow(status);
+  const painted = itemStatusText(outcome, item.status);
 
   const tests = countTests(outcome.tests);
   if (tests.total === 0) return `${painted} ${ms}`;
@@ -237,29 +350,59 @@ export function toGroupJsonReport(outcome: GroupRunOutcome) {
   };
 }
 
-/** Stable machine-readable shape for `--json`. */
-export function toJsonReport(outcome: RunOutcome) {
+function commonJsonReport(outcome: RunOutcome) {
   return {
     request: { name: outcome.entry.name, path: outcome.entry.path, file: outcome.entry.filePath },
-    methodPath: outcome.methodPath,
+    protocol: outcome.protocol,
     target: outcome.target,
-    schemaSource: outcome.schemaSource,
     warnings: outcome.warnings,
     console: outcome.consoleLines,
-    request_message: outcome.sentMessage,
-    request_metadata: outcome.metadata,
-    /** True only when the gRPC status was OK; `exitCode` also folds in `return_code`. */
-    ok: outcome.invoke.ok,
-    status: { code: outcome.invoke.code, name: outcome.invoke.codeName, message: outcome.invoke.message },
-    durationMs: Number(outcome.invoke.durationMs.toFixed(3)),
-    response: outcome.invoke.response ?? null,
-    responseMetadata: outcome.invoke.metadata,
-    trailers: outcome.invoke.trailers,
-    returnCode: outcome.returnCode ?? null,
+    sideRequests: outcome.sideRequests,
     tests: outcome.tests.map((t) => ({ name: t.name, status: t.status, error: t.error ?? null })),
     testSummary: countTests(outcome.tests),
     savedVars: outcome.savedVars,
     savedTo: outcome.savedTo ?? null,
     exitCode: outcome.exitCode,
+  };
+}
+
+/** Stable machine-readable shape for `--json`. */
+export function toJsonReport(outcome: RunOutcome) {
+  if (outcome.protocol === "grpc") {
+    return {
+      ...commonJsonReport(outcome),
+      methodPath: outcome.methodPath,
+      schemaSource: outcome.schemaSource,
+      request_message: outcome.sentMessage,
+      request_metadata: outcome.metadata,
+      /** True only when the gRPC status was OK; `exitCode` also folds in `return_code`. */
+      ok: outcome.invoke.ok,
+      status: { code: outcome.invoke.code, name: outcome.invoke.codeName, message: outcome.invoke.message },
+      durationMs: Number(outcome.invoke.durationMs.toFixed(3)),
+      response: outcome.invoke.response ?? null,
+      responseMetadata: outcome.invoke.metadata,
+      trailers: outcome.invoke.trailers,
+      returnCode: outcome.returnCode ?? null,
+    };
+  }
+
+  const { invoke } = outcome;
+  const parsed = parseJson(invoke.body);
+  return {
+    ...commonJsonReport(outcome),
+    method: invoke.method,
+    url: invoke.url,
+    finalUrl: invoke.finalUrl,
+    request_headers: invoke.requestHeaders,
+    request_body: invoke.requestBody ?? null,
+    /** True only for 2xx; `exitCode` folds in failed `pm.test` assertions too. */
+    ok: invoke.ok,
+    status: { code: invoke.statusCode, name: invoke.statusMessage, message: invoke.message },
+    durationMs: Number(invoke.durationMs.toFixed(3)),
+    /** Parsed when the body is JSON, so `--json` output stays queryable. */
+    response: parsed === undefined ? (invoke.body === "" ? null : invoke.body) : parsed.value,
+    responseHeaders: invoke.headers,
+    setCookies: invoke.setCookies,
+    redirects: invoke.redirects,
   };
 }

@@ -1,0 +1,40 @@
+$kind: http-request
+name: Callback Login
+# Mirrors the real admin workspace: the login happens in a `beforeRequest`
+# script through the callback form of pm.sendRequest, which the script never
+# awaits. The token must still be in place before this request is built.
+url: "{{http_url}}/profile"
+method: GET
+auth:
+  type: bearer
+  credentials:
+    token: "{{token}}"
+scripts:
+  - type: beforeRequest
+    code: |-
+      pm.sendRequest(
+        {
+          url: pm.variables.get("http_url") + "/login",
+          method: "POST",
+          header: { "Content-Type": "application/json" },
+          body: { mode: "raw", raw: JSON.stringify({ user_name: "admin" }) },
+        },
+        function (error, response) {
+          if (error) {
+            throw error;
+          }
+          pm.environment.set("token", response.json().data.token);
+        },
+      );
+    language: text/javascript
+  - type: onLunarEclipse
+    code: |-
+      throw new Error("an unrecognised script type must never run");
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test("the callback login authenticated this request", function () {
+        pm.response.to.have.status(200);
+      });
+    language: text/javascript
+order: 80

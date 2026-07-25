@@ -1,0 +1,30 @@
+$kind: http-request
+name: Profile
+# `tab` is already in the query string and repeated in queryParams: it must be
+# sent once. `page` is only in queryParams, so it has to be appended.
+url: "{{http_url}}/profile?tab=main"
+method: GET
+queryParams:
+  tab: main
+  page: "2"
+headers:
+  # Blank on purpose: an empty header must not shadow the auth block.
+  authorization: ""
+  x-trace: trace-1
+auth:
+  type: bearer
+  credentials:
+    token: "{{token}}"
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const body = pm.response.json();
+
+      pm.test("bearer auth reached the server", function () {
+        pm.response.to.have.status(200);
+        pm.response.to.have.header("content-type", "application/json");
+        pm.expect(body.query.tab).to.equal("main");
+        pm.expect(body.query.page).to.equal("2");
+      });
+order: 20

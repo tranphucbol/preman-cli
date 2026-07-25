@@ -1,0 +1,7 @@
+$kind: http-request
+name: Squeezed
+url: "{{http_url}}/gzip"
+method: GET
+auth:
+  type: noauth
+order: 50

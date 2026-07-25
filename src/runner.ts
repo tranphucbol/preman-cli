@@ -1,20 +1,43 @@
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
+import type { ZodError } from "zod";
 import { CliError, EXIT, type ExitCode } from "./errors.js";
 import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
 import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
 import { resolveTarget, type GrpcTarget } from "./grpc/target.js";
-import { runScript, type ConsoleLine, type ScriptResponseInfo, type TestResult } from "./scripts/sandbox.js";
+import { CookieJar } from "./http/cookies.js";
+import { invokeHttp, NO_RESPONSE_STATUS, type HttpInvokeResult } from "./http/invoke.js";
+import { buildHttpRequest } from "./http/request.js";
+import type { HttpTarget } from "./http/target.js";
+import {
+  runScript,
+  type ConsoleLine,
+  type ScriptRequestInfo,
+  type ScriptResponseInfo,
+  type SideRequestRecord,
+  type TestResult,
+} from "./scripts/sandbox.js";
 import { interpolateStrict } from "./vars/interpolate.js";
 import { VariableStore } from "./vars/store.js";
-import { grpcRequestSchema, otherRequestSchema } from "./workspace/schemas.js";
+import {
+  grpcRequestSchema,
+  httpRequestSchema,
+  otherRequestSchema,
+  type GrpcRequest,
+  type HttpRequest,
+  type RequestScript,
+} from "./workspace/schemas.js";
 import { saveEnvironmentValues, type EnvironmentEntry } from "./workspace/environments.js";
 import type { RequestEntry } from "./workspace/collections.js";
 import type { Workspace } from "./workspace/discover.js";
 import type { Resources } from "./workspace/resources.js";
 
-/** Script types executed before the call. `prerequest` is the HTTP-side alias. */
-const PRE_SCRIPT_TYPES = new Set(["beforeinvoke", "prerequest", "pre-request"]);
+/**
+ * Script types executed before the call. `prerequest` is the HTTP-side alias, and
+ * `beforeRequest` is what the Postman filesystem format actually writes for HTTP
+ * requests, so it has to be recognised too.
+ */
+const PRE_SCRIPT_TYPES = new Set(["beforeinvoke", "beforerequest", "prerequest", "pre-request"]);
 
 /** Fires once per received message; a unary call has exactly one. */
 const MESSAGE_SCRIPT_TYPES = new Set(["onmessage"]);
@@ -22,12 +45,20 @@ const MESSAGE_SCRIPT_TYPES = new Set(["onmessage"]);
 /** Script types executed after the call, where `pm.test` assertions normally live. */
 const POST_SCRIPT_TYPES = new Set(["afterresponse", "test", "postresponse", "post-response"]);
 
-/** The only `$kind` this version can invoke. */
+/** Every type that maps to a run stage. A script outside this set is reported, never dropped. */
+const KNOWN_SCRIPT_TYPES = new Set([...PRE_SCRIPT_TYPES, ...MESSAGE_SCRIPT_TYPES, ...POST_SCRIPT_TYPES]);
+
 export const GRPC_KIND = "grpc-request";
+export const HTTP_KIND = "http-request";
+
+/** The `$kind` values preman can invoke. Anything else is reported, never guessed at. */
+const RUNNABLE_KINDS = new Set<string>([GRPC_KIND, HTTP_KIND]);
 
 /** Business-status field name, per `ReturnCode` in asset-exchange-v2-common.proto. */
 const RETURN_CODE_FIELDS = ["return_code", "returnCode"] as const;
 const RETURN_CODE_OK = "OK";
+
+export type Protocol = "grpc" | "http";
 
 export interface RunOptions {
   workspace: Workspace;
@@ -49,27 +80,52 @@ export interface RunOptions {
    * next, matching Postman's collection runner.
    */
   store?: VariableStore;
+  /**
+   * Reuse an existing cookie jar. A collection run passes the same jar to every
+   * request so a login's `Set-Cookie` authenticates the requests that follow.
+   */
+  cookies?: CookieJar;
 }
 
-export interface RunOutcome {
+interface BaseRunOutcome {
   entry: RequestEntry;
-  methodPath: string;
-  target: GrpcTarget;
-  schemaSource: SchemaSource;
+  protocol: Protocol;
   warnings: string[];
   consoleLines: ConsoleLine[];
   /** `pm.test` results from the post-response scripts. */
   tests: TestResult[];
+  /** Calls the scripts made through `pm.sendRequest`. */
+  sideRequests: SideRequestRecord[];
+  savedVars: Record<string, string>;
+  savedTo: string | undefined;
+  exitCode: ExitCode;
+}
+
+export interface GrpcRunOutcome extends BaseRunOutcome {
+  protocol: "grpc";
+  methodPath: string;
+  target: GrpcTarget;
+  schemaSource: SchemaSource;
   /** The payload actually sent, after interpolation. */
   sentMessage: unknown;
   metadata: Record<string, string>;
   invoke: InvokeResult;
   /** `return_code` from the response, when the message has one. */
   returnCode: string | undefined;
-  savedVars: Record<string, string>;
-  savedTo: string | undefined;
-  exitCode: ExitCode;
 }
+
+export interface HttpRunOutcome extends BaseRunOutcome {
+  protocol: "http";
+  target: HttpTarget;
+  invoke: HttpInvokeResult;
+}
+
+/**
+ * Discriminated on `protocol` rather than flattened: an HTTP run has no
+ * `methodPath`, `schemaSource` or `return_code`, and faking them would let the
+ * renderer print fields that never existed.
+ */
+export type RunOutcome = GrpcRunOutcome | HttpRunOutcome;
 
 /** Reads the response's business status, if the message carries one. */
 export function extractReturnCode(response: unknown): string | undefined {
@@ -115,25 +171,119 @@ function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVa
   });
 }
 
-function parseGrpcRequest(entry: RequestEntry) {
+function shapeError(entry: RequestEntry, error: ZodError): CliError {
+  return new CliError(`unexpected shape in ${entry.filePath}`, {
+    details: error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
+  });
+}
+
+type ParsedRequest = { protocol: "grpc"; request: GrpcRequest } | { protocol: "http"; request: HttpRequest };
+
+function parseRequest(entry: RequestEntry): ParsedRequest {
   const raw = parseYaml(readFileSync(entry.filePath, "utf8")) ?? {};
-
   const kind = (raw as { $kind?: unknown }).$kind;
-  if (kind !== "grpc-request") {
-    const other = otherRequestSchema.safeParse(raw);
-    const shown = other.success ? other.data.$kind : String(kind);
-    throw new CliError(`"${entry.name}" is a ${shown}, which preman does not support yet`, {
-      details: ["only $kind: grpc-request is implemented in this version"],
-    });
+
+  if (kind === GRPC_KIND) {
+    const parsed = grpcRequestSchema.safeParse(raw);
+    if (!parsed.success) throw shapeError(entry, parsed.error);
+    return { protocol: "grpc", request: parsed.data };
   }
 
-  const parsed = grpcRequestSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new CliError(`unexpected shape in ${entry.filePath}`, {
-      details: parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
-    });
+  if (kind === HTTP_KIND) {
+    const parsed = httpRequestSchema.safeParse(raw);
+    if (!parsed.success) throw shapeError(entry, parsed.error);
+    return { protocol: "http", request: parsed.data };
   }
-  return parsed.data;
+
+  const other = otherRequestSchema.safeParse(raw);
+  const shown = other.success ? other.data.$kind : String(kind);
+  throw new CliError(`"${entry.name}" is a ${shown}, which preman does not support yet`, {
+    details: [`supported kinds: ${[...RUNNABLE_KINDS].join(", ")}`],
+  });
+}
+
+function hasScriptOf(scripts: RequestScript[] | undefined, types: Set<string>): boolean {
+  return (scripts ?? []).some((s) => types.has(s.type.toLowerCase()));
+}
+
+/**
+ * A script whose `type` matches no stage would otherwise be skipped in silence, which
+ * looks exactly like a request that has no scripts at all - the author's login step
+ * simply never runs. Naming it turns a silent no-op into something actionable.
+ */
+function unknownScriptWarnings(scripts: RequestScript[] | undefined): string[] {
+  return (scripts ?? [])
+    .filter((s) => !KNOWN_SCRIPT_TYPES.has(s.type.toLowerCase()))
+    .map(
+      (s) =>
+        `script type "${s.type}" is not recognised, so it was not run (known types: ${[...KNOWN_SCRIPT_TYPES].join(", ")})`,
+    );
+}
+
+interface ScriptSink {
+  consoleLines: ConsoleLine[];
+  tests: TestResult[];
+  sideRequests: SideRequestRecord[];
+  run: (types: Set<string>, response?: ScriptResponseInfo) => Promise<void>;
+}
+
+interface ScriptSinkOptions {
+  scripts: RequestScript[] | undefined;
+  requestName: string;
+  store: VariableStore;
+  cookies: CookieJar;
+  /** Budget for each `pm.sendRequest`, matching the request's own timeout. */
+  requestTimeoutMs: number;
+  /**
+   * Read once per script rather than captured up front: an HTTP `afterResponse`
+   * script should see the url, method and headers that actually went out, which
+   * are only known once the request has been built.
+   */
+  request: () => ScriptRequestInfo;
+}
+
+/** Runs the scripts of one request, in file order, collecting logs and test results. */
+function scriptSink(options: ScriptSinkOptions): ScriptSink {
+  const consoleLines: ConsoleLine[] = [];
+  const tests: TestResult[] = [];
+  const sideRequests: SideRequestRecord[] = [];
+
+  const run = async (types: Set<string>, response?: ScriptResponseInfo): Promise<void> => {
+    for (const script of options.scripts ?? []) {
+      if (!types.has(script.type.toLowerCase())) continue;
+      if (!script.code || script.code.trim().length === 0) continue;
+      const result = await runScript({
+        code: script.code,
+        store: options.store,
+        cookies: options.cookies,
+        info: { requestName: options.requestName, eventName: script.type },
+        request: options.request(),
+        requestTimeoutMs: options.requestTimeoutMs,
+        ...(response === undefined ? {} : { response }),
+      });
+      consoleLines.push(...result.logs);
+      tests.push(...result.tests);
+      sideRequests.push(...result.sideRequests);
+    }
+  };
+
+  return { consoleLines, tests, sideRequests, run };
+}
+
+interface Persisted {
+  savedVars: Record<string, string>;
+  savedTo: string | undefined;
+}
+
+/** Writes back the environment variables the scripts changed, post-response ones included. */
+function persist(options: Pick<RunOptions, "save" | "environment">, store: VariableStore): Persisted {
+  const environment = options.environment;
+  if (!options.save || environment === undefined || !store.hasChanges("environment")) {
+    return { savedVars: {}, savedTo: undefined };
+  }
+  const savedVars = store.changes("environment");
+  saveEnvironmentValues(environment.filePath, savedVars);
+  return { savedVars, savedTo: environment.filePath };
 }
 
 /**
@@ -144,35 +294,35 @@ function parseGrpcRequest(entry: RequestEntry) {
  * only after a successful invocation attempt.
  */
 export async function runRequest(options: RunOptions): Promise<RunOutcome> {
-  const { entry, workspace, resources } = options;
-  const request = parseGrpcRequest(entry);
-
+  const parsed = parseRequest(options.entry);
   const store = options.store ?? newStore(options);
+  const cookies = options.cookies ?? new CookieJar();
 
+  return parsed.protocol === "grpc"
+    ? runGrpcRequest(options, parsed.request, store, cookies)
+    : runHttpRequest(options, parsed.request, store, cookies);
+}
+
+async function runGrpcRequest(
+  options: RunOptions,
+  request: GrpcRequest,
+  store: VariableStore,
+  cookies: CookieJar,
+): Promise<GrpcRunOutcome> {
+  const { entry, workspace, resources } = options;
   const rawBody = request.message?.content ?? "";
 
-  const consoleLines: ConsoleLine[] = [];
-  const tests: TestResult[] = [];
-
-  /** Runs every script of the given types, in file order, collecting logs and tests. */
-  const runScripts = (types: Set<string>, response?: ScriptResponseInfo): void => {
-    for (const script of request.scripts ?? []) {
-      if (!types.has(script.type.toLowerCase())) continue;
-      if (!script.code || script.code.trim().length === 0) continue;
-      const result = runScript({
-        code: script.code,
-        store,
-        info: { requestName: request.name, eventName: script.type },
-        request: { url: request.url, methodPath: request.methodPath, body: rawBody },
-        ...(response === undefined ? {} : { response }),
-      });
-      consoleLines.push(...result.logs);
-      tests.push(...result.tests);
-    }
-  };
+  const sink = scriptSink({
+    scripts: request.scripts,
+    requestName: request.name,
+    store,
+    cookies,
+    requestTimeoutMs: options.timeoutMs,
+    request: () => ({ url: request.url, methodPath: request.methodPath, body: rawBody }),
+  });
 
   // 1. Pre-request scripts, which may define variables used by the body.
-  runScripts(PRE_SCRIPT_TYPES);
+  await sink.run(PRE_SCRIPT_TYPES);
 
   // 2. Interpolate everything that goes over the wire.
   const methodPath = interpolateStrict(request.methodPath, store, "methodPath");
@@ -221,9 +371,10 @@ export async function runRequest(options: RunOptions): Promise<RunOutcome> {
   });
 
   // 5. Post-response scripts, where the `pm.test` assertions live.
-  const warnings = [...method.warnings];
+  const warnings = [...unknownScriptWarnings(request.scripts), ...method.warnings];
   if (invoke.ok) {
     const response: ScriptResponseInfo = {
+      protocol: "grpc",
       code: invoke.code,
       codeName: invoke.codeName,
       message: invoke.message,
@@ -232,9 +383,9 @@ export async function runRequest(options: RunOptions): Promise<RunOutcome> {
       metadata: invoke.metadata,
       trailers: invoke.trailers,
     };
-    runScripts(MESSAGE_SCRIPT_TYPES, response);
-    runScripts(POST_SCRIPT_TYPES, response);
-  } else if ((request.scripts ?? []).some((s) => POST_SCRIPT_TYPES.has(s.type.toLowerCase()))) {
+    await sink.run(MESSAGE_SCRIPT_TYPES, response);
+    await sink.run(POST_SCRIPT_TYPES, response);
+  } else if (hasScriptOf(request.scripts, POST_SCRIPT_TYPES)) {
     // Postman would run the script anyway and let it blow up on an absent message.
     // Reporting the transport failure is more useful than turning it into a
     // TypeError, so the scripts are skipped and the skip is surfaced.
@@ -242,31 +393,27 @@ export async function runRequest(options: RunOptions): Promise<RunOutcome> {
   }
 
   // 6. Persist variables the scripts changed, post-response ones included.
-  let savedVars: Record<string, string> = {};
-  let savedTo: string | undefined;
-  if (options.save && options.environment && store.hasChanges("environment")) {
-    savedVars = store.changes("environment");
-    saveEnvironmentValues(options.environment.filePath, savedVars);
-    savedTo = options.environment.filePath;
-  }
+  const { savedVars, savedTo } = persist(options, store);
 
   const returnCode = extractReturnCode(invoke.response);
   const exitCode: ExitCode = !invoke.ok
     ? EXIT.TRANSPORT
     : returnCode !== undefined && !isBusinessSuccess(returnCode)
       ? EXIT.BUSINESS
-      : countTests(tests).failed > 0
+      : countTests(sink.tests).failed > 0
         ? EXIT.TEST
         : EXIT.OK;
 
   return {
     entry,
+    protocol: "grpc",
     methodPath,
     target,
     schemaSource: method.source,
     warnings,
-    consoleLines,
-    tests,
+    consoleLines: sink.consoleLines,
+    tests: sink.tests,
+    sideRequests: sink.sideRequests,
     sentMessage,
     metadata,
     invoke,
@@ -277,9 +424,112 @@ export async function runRequest(options: RunOptions): Promise<RunOutcome> {
   };
 }
 
+async function runHttpRequest(
+  options: RunOptions,
+  request: HttpRequest,
+  store: VariableStore,
+  cookies: CookieJar,
+): Promise<HttpRunOutcome> {
+  const { entry } = options;
+  const rawBody = request.body?.content ?? "";
+
+  // Scripts see the raw url and body first; once the request is built they see
+  // what actually went out.
+  let info: ScriptRequestInfo = { url: request.url, method: request.method, body: rawBody };
+
+  // `HttpRequest.name` is optional and usually absent, so the entry's name (which
+  // falls back to the filename) is the only reliable label.
+  const sink = scriptSink({
+    scripts: request.scripts,
+    requestName: entry.name,
+    store,
+    cookies,
+    requestTimeoutMs: options.timeoutMs,
+    request: () => info,
+  });
+
+  // 1. Pre-request scripts, which may define variables used by the url or body.
+  await sink.run(PRE_SCRIPT_TYPES);
+
+  // 2. Interpolate and assemble the request exactly as it will go out.
+  const built = buildHttpRequest({
+    request,
+    store,
+    urlOverride: options.urlOverride,
+    tlsOverride: options.tlsOverride,
+  });
+
+  // 3. Send it. The jar is shared with the rest of the run, so cookies a login
+  //    sets reach the requests that follow.
+  const invoke = await invokeHttp({
+    url: built.url,
+    method: built.method,
+    headers: built.headers,
+    body: built.body,
+    timeoutMs: options.timeoutMs,
+    jar: cookies,
+  });
+
+  info = {
+    url: invoke.finalUrl,
+    method: invoke.method,
+    headers: invoke.requestHeaders,
+    body: invoke.requestBody ?? "",
+  };
+
+  // 4. Post-response scripts, where the `pm.test` assertions live.
+  const warnings = [...unknownScriptWarnings(request.scripts), ...built.warnings, ...invoke.warnings];
+  if (invoke.statusCode === NO_RESPONSE_STATUS) {
+    if (hasScriptOf(request.scripts, POST_SCRIPT_TYPES)) {
+      warnings.push("afterResponse scripts skipped: no response was received");
+    }
+  } else {
+    // Deliberate deviation from the gRPC path, which skips its scripts on failure:
+    // an HTTP error response still carries the body a script cares about most (the
+    // error code, a fresh csrf token), so any status that produced a response runs
+    // the scripts.
+    await sink.run(POST_SCRIPT_TYPES, {
+      protocol: "http",
+      code: invoke.statusCode,
+      codeName: invoke.statusMessage,
+      message: invoke.message,
+      durationMs: invoke.durationMs,
+      body: invoke.body,
+      headers: invoke.headers,
+    });
+  }
+
+  // 5. Persist variables the scripts changed, post-response ones included.
+  const { savedVars, savedTo } = persist(options, store);
+
+  const exitCode: ExitCode =
+    invoke.statusCode === NO_RESPONSE_STATUS
+      ? EXIT.TRANSPORT
+      : !invoke.ok
+        ? EXIT.BUSINESS
+        : countTests(sink.tests).failed > 0
+          ? EXIT.TEST
+          : EXIT.OK;
+
+  return {
+    entry,
+    protocol: "http",
+    target: built.target,
+    warnings,
+    consoleLines: sink.consoleLines,
+    tests: sink.tests,
+    sideRequests: sink.sideRequests,
+    invoke,
+    savedVars,
+    savedTo,
+    exitCode,
+  };
+}
+
 /**
- * `skipped` is a request preman cannot invoke at all (a non-gRPC `$kind`);
- * `error` is one that should have run but failed before reaching the wire.
+ * `skipped` is a request preman cannot invoke at all (a `$kind` outside
+ * `RUNNABLE_KINDS`); `error` is one that should have run but failed before
+ * reaching the wire.
  */
 export type ItemStatus = "ok" | "business" | "transport" | "test" | "error" | "skipped";
 
@@ -292,7 +542,7 @@ export interface GroupRunItem {
   error: { message: string; details: string[] } | undefined;
 }
 
-export interface GroupRunOptions extends Omit<RunOptions, "entry" | "store"> {
+export interface GroupRunOptions extends Omit<RunOptions, "entry" | "store" | "cookies"> {
   /** Requests to run, in order. */
   entries: RequestEntry[];
   /** Collection or folder path, for reporting. */
@@ -350,9 +600,10 @@ function aggregateExit(items: GroupRunItem[]): ExitCode {
 /**
  * Run every request in a collection or folder, in Postman `order`.
  *
- * All requests share one variable store, so a `trans_id` computed by the first
- * request's script is visible to the rest. The environment writeback is deferred
- * to the end so the YAML file is rewritten once, not once per request.
+ * All requests share one variable store and one cookie jar, so a `trans_id`
+ * computed by the first request's script and a session cookie its response set are
+ * both visible to the rest. The environment writeback is deferred to the end so the
+ * YAML file is rewritten once, not once per request.
  */
 export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcome> {
   if (options.entries.length === 0) {
@@ -360,12 +611,13 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
   }
 
   const store = newStore(options);
+  const cookies = new CookieJar();
   const started = performance.now();
   const items: GroupRunItem[] = [];
   let bailed = false;
 
   for (const entry of options.entries) {
-    if (entry.kind !== GRPC_KIND) {
+    if (!RUNNABLE_KINDS.has(entry.kind)) {
       items.push({
         entry,
         status: "skipped",
@@ -376,7 +628,7 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
     }
 
     try {
-      const outcome = await runRequest({ ...options, entry, store, save: false });
+      const outcome = await runRequest({ ...options, entry, store, cookies, save: false });
       items.push({ entry, status: statusOf(outcome), outcome, error: undefined });
     } catch (cause) {
       items.push({ entry, status: "error", outcome: undefined, error: toErrorInfo(cause) });
@@ -389,13 +641,7 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
     }
   }
 
-  let savedVars: Record<string, string> = {};
-  let savedTo: string | undefined;
-  if (options.save && options.environment && store.hasChanges("environment")) {
-    savedVars = store.changes("environment");
-    saveEnvironmentValues(options.environment.filePath, savedVars);
-    savedTo = options.environment.filePath;
-  }
+  const { savedVars, savedTo } = persist(options, store);
 
   return {
     groupPath: options.groupPath,

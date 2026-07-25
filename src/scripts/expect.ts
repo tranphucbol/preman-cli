@@ -36,12 +36,18 @@ export interface HeaderList {
   toObject: () => Record<string, string>;
 }
 
+/**
+ * The shape the assertions below understand. `headers` is the only list both
+ * protocols have: gRPC aliases it to metadata, HTTP has nothing else. The rest is
+ * optional so an HTTP response is not forced to fake `messages`/`trailers`.
+ */
 export interface ResponseLike {
   code: number;
   status: string;
-  metadata: HeaderList;
-  trailers: HeaderList;
-  messages: MessageList;
+  headers: HeaderList;
+  metadata?: HeaderList;
+  trailers?: HeaderList;
+  messages?: MessageList;
 }
 
 /**
@@ -137,7 +143,7 @@ function assertHeader(
   expected: string | undefined,
 ): void {
   if (list === undefined) {
-    throw new chai.AssertionError(`expected the assertion target to be a gRPC response with ${label}`);
+    throw new chai.AssertionError(`expected the assertion target to be a response with ${label}`);
   }
   const actual = list.get(key);
   if (expected === undefined) {
@@ -160,9 +166,10 @@ function assertHeader(
 }
 
 /**
- * Teaches chai the handful of Postman-specific assertions that operate on a gRPC
- * response: `pm.response.to.have.status(...)` / `.metadata(k[, v])` /
- * `.trailer(k[, v])`, and `pm.response.messages.to.include({...})`.
+ * Teaches chai the handful of Postman-specific assertions that operate on a
+ * response: `pm.response.to.have.status(...)` / `.header(k[, v])` /
+ * `.metadata(k[, v])` / `.trailer(k[, v])`, and
+ * `pm.response.messages.to.include({...})`.
  */
 chai.use((instance, utils) => {
   const { Assertion } = instance;
@@ -171,26 +178,32 @@ chai.use((instance, utils) => {
     const self = this as PluginAssertion;
     const target = utils.flag(this, "object") as ResponseLike | undefined;
     if (typeof target !== "object" || target === null || typeof target.code !== "number") {
-      throw new chai.AssertionError("expected the assertion target to be a gRPC response");
+      throw new chai.AssertionError("expected the assertion target to be a gRPC or HTTP response");
     }
     if (typeof expectedStatus === "number") {
       self.assert(
         target.code === expectedStatus,
-        `expected gRPC status ${expectedStatus} but got ${target.code} (${target.status})`,
-        `expected gRPC status not to be ${expectedStatus}`,
+        `expected status ${expectedStatus} but got ${target.code} (${target.status})`,
+        `expected status not to be ${expectedStatus}`,
         expectedStatus,
         target.code,
       );
       return;
     }
-    const wanted = expectedStatus.toUpperCase();
+    // Compared case-insensitively without normalising the reported value: gRPC
+    // names are SCREAMING_SNAKE, HTTP reason phrases are "Not Found".
     self.assert(
-      target.status.toUpperCase() === wanted,
-      `expected gRPC status ${wanted} but got ${target.status}`,
-      `expected gRPC status not to be ${wanted}`,
-      wanted,
+      target.status.toUpperCase() === expectedStatus.toUpperCase(),
+      `expected status ${expectedStatus} but got ${target.status}`,
+      `expected status not to be ${expectedStatus}`,
+      expectedStatus,
       target.status,
     );
+  });
+
+  Assertion.addMethod("header", function (this: object, key: string, value?: string) {
+    const target = utils.flag(this, "object") as ResponseLike | undefined;
+    assertHeader(this as PluginAssertion, target?.headers, "response headers", key, value);
   });
 
   Assertion.addMethod("metadata", function (this: object, key: string, value?: string) {

@@ -67,7 +67,7 @@ describe("collections", () => {
     expect(deep?.folders).toEqual(["nested"]);
     expect(deep?.collection).toBe("payment");
     expect(deep?.kind).toBe("grpc-request");
-    expect(listRequests(fixtureWorkspace()).find((r) => r.name === "Legacy Http")?.kind).toBe("http-request");
+    expect(listRequests(fixtureWorkspace()).find((r) => r.name === "Legacy Http")?.kind).toBe("websocket-request");
   });
 
   it("givenSelector_whenResolving_thenPrefersExactOverFuzzy", () => {

@@ -1,0 +1,30 @@
+$kind: http-request
+# No `name` on purpose: the real workspace almost never has one, so the
+# filename fallback has to carry the request through a run.
+url: "{{http_url}}/login"
+method: POST
+body:
+  type: json
+  content: |-
+    {
+      "user_name": "admin",
+      "password": "1"
+    }
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const body = pm.response.json();
+      pm.environment.set("token", body.data.token);
+
+      pm.test("logged in", function () {
+        pm.response.to.have.status(200);
+        pm.expect(body.reason_code).to.equal("SUCCESSFUL");
+      });
+
+      pm.test("the live cookie survived the delete-then-set pair", function () {
+        pm.expect(pm.cookies.get("sid")).to.equal("session-abc");
+      });
+order: 10

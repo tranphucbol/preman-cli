@@ -1,0 +1,13 @@
+$kind: http-request
+name: Echo Get Body
+# Postman sends a body on GET when the request has one, and the real workspace
+# relies on it, so preman does too.
+url: "{{http_url}}/echo"
+method: GET
+body:
+  type: text
+  content: |-
+    {"kept": "verbatim"}
+auth:
+  type: noauth
+order: 40

@@ -1,5 +1,7 @@
-$kind: http-request
+$kind: websocket-request
 name: Legacy Http
-method: GET
-url: http://localhost:8080/health
+# Deliberately a kind preman cannot run: the gRPC suites rely on this request to
+# cover the "skipped" path in a group. Real HTTP behaviour lives in
+# test/fixtures/http-ws, which no gRPC test points --url at.
+url: wss://example.invalid/socket
 order: 30

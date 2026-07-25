@@ -1,0 +1,8 @@
+# HTTP fixture environment. The server port is only known at runtime, so
+# http_url is empty here and supplied with --var http_url=<origin>.
+name: QC
+values:
+  - key: http_url
+    value: ''
+  - key: token
+    value: ''

@@ -117,7 +117,7 @@ describe("targetLabel", () => {
 
   it("givenNonGrpcRequest_whenLabelling_thenKindIsCalledOut", () => {
     expect(targetLabel({ kind: "request", entry: entryOf("payment/Legacy Http") })).toBe(
-      "payment/Legacy Http (http-request)",
+      "payment/Legacy Http (websocket-request)",
     );
   });
 

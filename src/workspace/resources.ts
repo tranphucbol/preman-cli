@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { CliError } from "../errors.js";
@@ -15,23 +15,29 @@ export interface Resources {
 
 const PROTO_ROOT_NAMES = new Set(["proto", "protos"]);
 
+const EMPTY_RESOURCES: Resources = { workspaceId: undefined, specs: [], includeDirs: [] };
+
 export function loadResources(ws: Workspace): Resources {
+  // HTTP-only workspaces have no `.postman/resources.yaml`; nothing to declare.
+  const resourcesPath = ws.resourcesPath;
+  if (resourcesPath === undefined || !existsSync(resourcesPath)) return EMPTY_RESOURCES;
+
   let raw: unknown;
   try {
-    raw = parseYaml(readFileSync(ws.resourcesPath, "utf8"));
+    raw = parseYaml(readFileSync(resourcesPath, "utf8"));
   } catch (cause) {
-    throw new CliError(`failed to parse ${ws.resourcesPath}: ${(cause as Error).message}`);
+    throw new CliError(`failed to parse ${resourcesPath}: ${(cause as Error).message}`);
   }
 
   const parsed = resourcesFileSchema.safeParse(raw ?? {});
   if (!parsed.success) {
-    throw new CliError(`unexpected shape in ${ws.resourcesPath}`, {
+    throw new CliError(`unexpected shape in ${resourcesPath}`, {
       details: parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
     });
   }
 
   // Spec paths in resources.yaml are relative to the `.postman/` directory itself.
-  const specBase = dirname(ws.resourcesPath);
+  const specBase = dirname(resourcesPath);
   const specs = (parsed.data.localResources?.specs ?? []).map((p) => resolve(specBase, p));
 
   return {

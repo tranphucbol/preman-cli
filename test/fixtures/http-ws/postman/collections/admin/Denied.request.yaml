@@ -1,0 +1,17 @@
+$kind: http-request
+name: Denied
+url: "{{http_url}}/boom"
+method: GET
+auth:
+  type: noauth
+scripts:
+  # A 401 still produced a response, so this script must run: that is how a
+  # Postman collection asserts on an error body.
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("the error body is readable", function () {
+        pm.response.to.have.status(401);
+        pm.expect(pm.response.json().return_code).to.equal("UNAUTHENTICATED");
+      });
+order: 30

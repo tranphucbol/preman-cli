@@ -1,0 +1,33 @@
+$kind: http-request
+name: Side Login
+# The pre-request script logs in through pm.sendRequest, so this request can be
+# run on its own and still be authenticated.
+url: "{{http_url}}/profile"
+method: GET
+auth:
+  type: noauth
+scripts:
+  - type: prerequest
+    language: text/javascript
+    code: |-
+      const login = await pm.sendRequest({
+        // pm.variables reads every scope, so a --var override is visible here
+        // while pm.environment would only see the (empty) environment file.
+        url: pm.variables.get("http_url") + "/login",
+        method: "POST",
+        body: { mode: "json", raw: '{"user_name":"admin"}' },
+      });
+
+      pm.environment.set("token", login.json().data.token);
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const body = pm.response.json();
+
+      pm.test("the side request's cookie came along", function () {
+        pm.response.to.have.status(200);
+        pm.expect(body.cookie).to.contain("sid=session-abc");
+      });
+headers:
+  authorization: "Bearer {{token}}"
+order: 70
