@@ -94,7 +94,7 @@ export const grpcRequestSchema = z
       .passthrough()
       .optional(),
     metadata: z
-      .array(z.object({ key: z.string(), value: z.string().optional() }).passthrough())
+      .array(z.object({ key: z.string(), value: z.string().optional(), disabled: z.boolean().optional() }).passthrough())
       .optional(),
     auth: authSchema.optional(),
     settings: z.record(z.unknown()).optional(),

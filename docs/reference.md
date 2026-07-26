@@ -341,19 +341,67 @@ The sandbox provides `pm.environment`, `pm.globals`, `pm.collectionVariables`, `
 `postman.setEnvironmentVariable` family. `CryptoJS` is a global, as it is in Postman, so a
 pre-request script can sign or encrypt a payload.
 
-`pm.request.body` exposes `mode` (the request's `body.type`), `raw`, and `urlencoded`, a read-only
-list with `toJSON`, `all`, `idx`, `count`, `get`, `has`, `each`, `map`, and `filter`. It is always a
-list, so `pm.request.body.urlencoded.toJSON()` never throws. Pre-request scripts see the authored
-field values, before interpolation; writing to the list has no effect, because the request is read
-again after the script runs.
+#### Mutable request
+
+`pm.request` is the live request that will be sent. Request variables and dynamic variables are
+interpolated first, then auth is rendered, then the pre-request script chain runs. Every script in
+the chain receives the same object, so a mutation from a collection script is visible to folder and
+request scripts and reaches the wire. Values deliberately written by a script are not interpolated
+again.
+
+The protocol-specific fields are:
+
+| Protocol | Fields |
+| --- | --- |
+| HTTP | `url`, `method`, `headers`, `body` |
+| gRPC | `url`, `methodPath`, `metadata`, `body` |
+
+HTTP requests do not expose `metadata`, and gRPC requests do not expose `headers`. gRPC metadata is
+string-only; binary `-bin` values are not supported in scripts.
+
+`pm.request.url` is a mutable URL object. Assigning a string to it reparses the whole URL. It has
+`protocol`, `host` (an array of labels), `port`, `path` (an array of segments), `query`, `hash`, and
+`toString()`. For example:
+
+```js
+pm.request.url = "https://api.example.com/v2/orders";
+pm.request.url.query.add({ key: "ts", value: Date.now().toString() });
+```
+
+`headers`, `metadata`, `url.query`, and `body.urlencoded` are property lists with these methods:
+
+```text
+add  upsert  remove  get  has  count  idx  all
+each  map  filter  toObject  toJSON
+```
+
+`add` keeps duplicate keys, `upsert` replaces the first matching entry, and `remove` removes every
+match. Header and metadata keys compare case-insensitively; query and form keys are case-sensitive.
+Entries with `disabled: true` remain visible to scripts but are omitted from the wire.
+
+`pm.request.body` exposes mutable `mode` and `raw` properties. `urlencoded` is always a property
+list, including for non-form bodies, so calling `pm.request.body.urlencoded.toJSON()` is safe.
 
 ```js
 const fields = {};
 pm.request.body.urlencoded.toJSON().forEach((entry) => {
   fields[entry.key] = entry.value;
 });
-pm.variables.set("sig", CryptoJS.SHA256(`${fields.clientid}|${fields.time}`).toString());
+const sig = CryptoJS.SHA256(`${fields.clientid}|${fields.time}`).toString();
+pm.request.body.urlencoded.upsert("sig", sig);
+pm.request.headers.upsert("X-Signature", sig);
 ```
+
+Use `pm.variables.replaceIn(text)` when a script intentionally introduces a variable token after
+the normal interpolation stage:
+
+```js
+pm.request.headers.upsert("Authorization", pm.variables.replaceIn("Bearer {{token}}"));
+```
+
+Before post-response scripts run, the request is frozen. They can inspect the exact object used for
+the invocation, but attempts to change its URL, method, body, headers, metadata, query, or form
+fields fail with `pm.request is read-only after the request has been sent`.
 
 Post-response scripts also receive `pm.response`. For gRPC it contains `code`, `status`, `message`,
 `responseTime`, `responseSize`, `metadata`, `headers`, `trailers`, and `messages`; `pm.message`

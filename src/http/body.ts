@@ -1,18 +1,10 @@
 import { CliError } from "../errors.js";
 import { interpolateStrict } from "../vars/interpolate.js";
 import type { VariableStore } from "../vars/store.js";
+import type { Property } from "../scripts/property-list.js";
 import type { HttpRequest } from "../workspace/schemas.js";
-import { normalizeKeyValues, type KeyValue } from "./headers.js";
-
-/** `body.type` → default `content-type`. Postman stores the short name only. */
-export const BODY_CONTENT_TYPES: Record<string, string> = {
-  json: "application/json",
-  text: "text/plain",
-  xml: "application/xml",
-  html: "text/html",
-  javascript: "application/javascript",
-  urlencoded: "application/x-www-form-urlencoded",
-};
+export { BODY_CONTENT_TYPES } from "../scripts/live-request.js";
+import { normalizeProperties, type KeyValue } from "./headers.js";
 
 /** The one `body.type` whose `content` may be a map or a list instead of text. */
 export const URLENCODED_MODE = "urlencoded";
@@ -23,7 +15,7 @@ export interface RequestBody {
   /** The authored text payload; `""` when the body is a form. */
   raw: string;
   /** Form fields, in order. Only ever set for a {@link URLENCODED_MODE} body. */
-  urlencoded: KeyValue[] | undefined;
+  urlencoded: Property[] | undefined;
 }
 
 const EMPTY_BODY: RequestBody = { mode: "", raw: "", urlencoded: undefined };
@@ -53,7 +45,7 @@ export function readRequestBody(request: HttpRequest): RequestBody {
     });
   }
 
-  return { mode, raw: "", urlencoded: normalizeKeyValues(content, `body.content in ${request.url}`) };
+  return { mode, raw: "", urlencoded: normalizeProperties(content, `body.content in ${request.url}`) };
 }
 
 /**
@@ -67,11 +59,12 @@ export function serializeUrlencoded(entries: readonly KeyValue[]): string {
 /** Resolve `{{tokens}}` and produce the bytes to send, or `undefined` for no body. */
 export function renderBody(body: RequestBody, store: VariableStore): string | undefined {
   if (body.urlencoded !== undefined) {
-    if (body.urlencoded.length === 0) return undefined;
+    const enabled = body.urlencoded.filter((entry) => entry.disabled !== true);
+    if (enabled.length === 0) return undefined;
     // Interpolated per field, then encoded: a `{{sig}}` holding `a+b` must reach
     // the server as that value, not as two characters the form parser splits on.
     return serializeUrlencoded(
-      body.urlencoded.map(({ key, value }) => ({ key, value: interpolateStrict(value, store, `body field "${key}"`) })),
+      enabled.map(({ key, value }) => ({ key, value: interpolateStrict(value, store, `body field "${key}"`) })),
     );
   }
 

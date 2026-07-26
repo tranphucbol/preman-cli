@@ -1,5 +1,6 @@
 import * as grpc from "@grpc/grpc-js";
 import type { MethodDefinition } from "@grpc/proto-loader";
+import type { Property } from "../scripts/property-list.js";
 import { grpcChannelCredentials, tlsFailureHints, type TlsCertOptions } from "../tls/certs.js";
 import type { GrpcTarget } from "./target.js";
 
@@ -8,7 +9,7 @@ export interface InvokeOptions {
   method: MethodDefinition<unknown, unknown>;
   message: unknown;
   /** Request metadata (already interpolated). */
-  metadata?: Record<string, string>;
+  metadata?: Property[];
   /** Deadline for the call, in milliseconds. */
   timeoutMs: number;
   /** Resolved certificate material; inert unless the target is TLS. */
@@ -40,11 +41,11 @@ function flatten(md: grpc.Metadata | undefined): Record<string, string | string[
   return out;
 }
 
-function buildMetadata(entries: Record<string, string> | undefined): grpc.Metadata {
+function buildMetadata(entries: Property[] | undefined): grpc.Metadata {
   const md = new grpc.Metadata();
-  for (const [key, value] of Object.entries(entries ?? {})) {
+  for (const { key, value } of entries ?? []) {
     if (key.length === 0) continue;
-    md.set(key, value);
+    md.add(key.toLowerCase(), value);
   }
   return md;
 }

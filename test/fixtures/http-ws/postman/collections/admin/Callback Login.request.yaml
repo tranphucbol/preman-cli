@@ -24,6 +24,7 @@ scripts:
             throw error;
           }
           pm.environment.set("token", response.json().data.token);
+          pm.request.headers.upsert("Authorization", "Bearer " + response.json().data.token);
         },
       );
     language: text/javascript

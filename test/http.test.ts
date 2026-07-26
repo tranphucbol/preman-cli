@@ -13,7 +13,7 @@ import {
   type KeyValue,
 } from "../src/http/headers.js";
 import { mergeQuery } from "../src/http/query.js";
-import { buildHttpRequest } from "../src/http/request.js";
+import { buildHttpRequest, buildLiveHttpRequest, finaliseHttpRequest } from "../src/http/request.js";
 import { pathPortion, resolveHttpUrl } from "../src/http/target.js";
 import { VariableStore } from "../src/vars/store.js";
 import type { HttpRequest } from "../src/workspace/schemas.js";
@@ -321,7 +321,7 @@ describe("request bodies", () => {
     expect(parsed.raw).toBe("");
   });
 
-  it("givenAUrlencodedList_whenRead_thenDisabledFieldsAreDropped", () => {
+  it("givenAUrlencodedList_whenRead_thenDisabledFieldsRemainInspectableButAreNotRendered", () => {
     const parsed = readRequestBody(
       httpRequest({
         type: "urlencoded",
@@ -331,7 +331,11 @@ describe("request bodies", () => {
         ],
       }),
     );
-    expect(parsed.urlencoded).toEqual([{ key: "keep", value: "1" }]);
+    expect(parsed.urlencoded).toEqual([
+      { key: "keep", value: "1" },
+      { key: "skip", value: "2", disabled: true },
+    ]);
+    expect(renderBody(parsed, store())).toBe("keep=1");
   });
 
   it("givenAUrlencodedField_whenRendered_thenTheResolvedValueIsPercentEncoded", () => {
@@ -341,6 +345,13 @@ describe("request bodies", () => {
 
   it("givenNoUrlencodedFields_whenRendered_thenThereIsNoBody", () => {
     expect(renderBody(readRequestBody(httpRequest({ type: "urlencoded", content: {} })), store())).toBeUndefined();
+  });
+
+  it("givenOnlyDisabledUrlencodedFields_whenRendered_thenThereIsNoBody", () => {
+    const parsed = readRequestBody(
+      httpRequest({ type: "urlencoded", content: [{ key: "skip", value: "{{missing}}", disabled: true }] }),
+    );
+    expect(renderBody(parsed, store())).toBeUndefined();
   });
 
   it("givenAStructuredBodyThatIsNotUrlencoded_whenRead_thenCliError", () => {
@@ -356,5 +367,65 @@ describe("request bodies", () => {
     });
     expect(built.body).toBe("sig=a%2Bb%2Fc%3D");
     expect(pairs(built.headers)["content-type"]).toBe("application/x-www-form-urlencoded");
+  });
+
+  it("givenDisabledAuthoredEntries_whenBuiltLive_thenScriptsSeeThemButTheWireDoesNot", () => {
+    const live = buildLiveHttpRequest({
+      request: {
+        ...httpRequest({
+          type: "urlencoded",
+          content: [
+            { key: "keep", value: "1" },
+            { key: "skip-form", value: "2", disabled: true },
+          ],
+        }),
+        headers: [
+          { key: "X-Keep", value: "yes" },
+          { key: "X-Skip", value: "no", disabled: true },
+        ],
+        queryParams: [
+          { key: "keep", value: "yes" },
+          { key: "skip-query", value: "no", disabled: true },
+        ],
+      },
+      auth: undefined,
+      store: store(),
+    });
+
+    expect(live.request.headers.toJSON()).toContainEqual({ key: "X-Skip", value: "no", disabled: true });
+    expect(live.request.url.query.toJSON()).toContainEqual({ key: "skip-query", value: "no", disabled: true });
+    expect(live.request.body.urlencoded.toJSON()).toContainEqual({ key: "skip-form", value: "2", disabled: true });
+
+    const built = finaliseHttpRequest(live.request, live.target);
+    expect(built.headers).toEqual([{ key: "X-Keep", value: "yes" }, { key: "content-type", value: "application/x-www-form-urlencoded" }]);
+    expect(built.url.toString()).toBe("http://host/pay?keep=yes");
+    expect(built.body).toBe("keep=1");
+  });
+
+  it("givenScriptRewrittenOrigin_whenFinalised_thenTargetMatchesTheFinalUrl", () => {
+    const live = buildLiveHttpRequest({ request: httpRequest(undefined), auth: undefined, store: store() });
+    live.request.url = "https://other.example:8443/pay";
+
+    expect(finaliseHttpRequest(live.request, live.target).target).toEqual({
+      origin: "https://other.example:8443",
+      tls: true,
+      source: "pre-request script",
+    });
+  });
+
+  it("givenUrlOverrideSupersededByScript_whenFinalised_thenTargetNamesTheScript", () => {
+    const live = buildLiveHttpRequest({
+      request: httpRequest(undefined),
+      auth: undefined,
+      store: store(),
+      urlOverride: "http://override.example",
+    });
+    live.request.url = "https://script.example/pay";
+
+    expect(finaliseHttpRequest(live.request, live.target).target).toEqual({
+      origin: "https://script.example",
+      tls: true,
+      source: "pre-request script",
+    });
   });
 });

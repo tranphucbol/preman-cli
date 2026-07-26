@@ -1,17 +1,13 @@
 import { renderAuth } from "../auth/credentials.js";
+import type { PropertyList } from "../scripts/property-list.js";
 import type { VariableStore } from "../vars/store.js";
 import type { RequestAuth } from "../workspace/schemas.js";
 
 export interface ApplyGrpcAuthOptions {
   auth: RequestAuth | undefined;
   /** Mutated in place; an existing `authorization` entry wins. */
-  metadata: Record<string, string>;
+  metadata: PropertyList;
   store: VariableStore;
-}
-
-function findKey(metadata: Record<string, string>, name: string): string | undefined {
-  const wanted = name.toLowerCase();
-  return Object.keys(metadata).find((key) => key.toLowerCase() === wanted);
 }
 
 /**
@@ -31,14 +27,14 @@ export function applyGrpcAuth(options: ApplyGrpcAuthOptions): string[] {
     return warnings;
   }
 
-  const existing = findKey(metadata, rendered.name);
+  const existing = metadata.enabled().find((entry) => entry.key.toLowerCase() === rendered.name.toLowerCase());
   if (existing !== undefined) {
-    warnings.push(`request metadata "${existing}" overrides the ${auth?.type.trim().toLowerCase()} auth block`);
+    warnings.push(`request metadata "${existing.key}" overrides the ${auth?.type.trim().toLowerCase()} auth block`);
     return warnings;
   }
 
   // gRPC metadata keys are case-insensitive and @grpc/grpc-js lowercases them
   // anyway, so store the canonical form rather than `Authorization`.
-  metadata[rendered.name.toLowerCase()] = rendered.value;
+  metadata.add(rendered.name.toLowerCase(), rendered.value);
   return warnings;
 }

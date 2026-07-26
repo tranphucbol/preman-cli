@@ -24,14 +24,17 @@ interface EchoRequest {
 }
 
 /** Every request the in-process server received, in order. */
-const received: Array<{ method: string; body: EchoRequest; metadata: Record<string, string> }> = [];
+const received: Array<{ method: string; body: EchoRequest; metadata: Record<string, string | string[]> }> = [];
 
 let server: grpc.Server;
 let port: number;
 
-function flattenMetadata(metadata: grpc.Metadata): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, values] of Object.entries(metadata.getMap())) out[key] = String(values);
+function flattenMetadata(metadata: grpc.Metadata): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const key of Object.keys(metadata.getMap())) {
+    const values = metadata.get(key).map(String);
+    out[key] = values.length === 1 ? values[0]! : values;
+  }
   return out;
 }
 
@@ -171,6 +174,8 @@ describe("preman run (end to end against a real gRPC server)", () => {
     // trans_id was computed by the beforeInvoke script, not present in the env file.
     expect(sent.body.trans_id).toMatch(/^\d{19}$/);
     expect(sent.metadata["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(sent.metadata["x-scripted"]).toBe("beforeInvoke");
+    expect(sent.metadata["x-collection-script"]).toBe("payment");
 
     // And the response round-tripped back through the same schema.
     expect(report.response.echoed).toBe(sent.body.text);
@@ -940,7 +945,7 @@ interface RunReport {
   warnings: string[];
   console: Array<{ level: string; text: string; origin: { level: string; label: string } }>;
   tests: Array<{ name: string; status: string; origin: { level: string; label: string } }>;
-  request_metadata: Record<string, string>;
+  request_metadata: Record<string, string | string[]>;
   request_message: EchoRequest;
 }
 
@@ -967,6 +972,43 @@ function definitionWithAuth(name: string, auth: string): string {
 /** Append extra top-level YAML keys to a request file inside a clone. */
 function appendToRequest(root: string, request: string, yaml: string): void {
   appendFileSync(collectionPath(root, ...request.split("/")) + ".request.yaml", yaml);
+}
+
+function writeScriptedGrpcRequest(
+  root: string,
+  options: { script: string; methodPath?: string; body?: string; metadata?: string },
+): void {
+  const script = options.script
+    .trimEnd()
+    .split("\n")
+    .map((line) => `      ${line}`)
+    .join("\n");
+  const body = (options.body ?? '{"text":"original","mode":"SUCCEED"}')
+    .split("\n")
+    .map((line) => `      ${line}`)
+    .join("\n");
+  writeFileSync(
+    collectionPath(root, "payment", "Echo") + ".request.yaml",
+    [
+      "$kind: grpc-request",
+      "name: Echo",
+      'url: "{{grpc_url}}"',
+      `methodPath: ${options.methodPath ?? "test.echo.EchoService.Echo"}`,
+      "message:",
+      "  content: |-",
+      body,
+      "schema:",
+      "  source: file",
+      "  location: ../../../src/main/proto/echo/echo.proto",
+      options.metadata ?? "",
+      "scripts:",
+      "  - type: beforeInvoke",
+      "    code: |",
+      script,
+      "order: 20",
+      "",
+    ].join("\n"),
+  );
 }
 
 const deepEcho = (root: string, extra: string[] = []) => [
@@ -1004,7 +1046,11 @@ describe("group-level scripts (gRPC)", () => {
       writeDefinition(
         clone.root,
         "payment/nested",
-        definitionWithScript("nested", "grpc:beforeInvoke", 'pm.environment.set("trans_id", "from-folder");'),
+        definitionWithScript(
+          "nested",
+          "grpc:beforeInvoke",
+          'const body = JSON.parse(pm.request.body.raw); body.trans_id = "from-folder"; pm.request.body.raw = JSON.stringify(body);',
+        ),
       );
 
       const { code } = await runCli(deepEcho(clone.root));
@@ -1305,6 +1351,96 @@ describe("group-level scripts (gRPC)", () => {
       expect(report.tests).toEqual([
         { name: "post ran", status: "passed", error: null, origin: { level: "folder", label: "folder nested" } },
       ]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+});
+
+describe("mutable pm.request (gRPC)", () => {
+  it("givenGrpcPreRequestScriptSettingMetadata_whenRun_thenServerReceivesMetadata", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeScriptedGrpcRequest(clone.root, { script: 'pm.request.metadata.upsert("X-Scripted", "yes");' });
+      const { code } = await runCli(runArgs("Echo", "-d", clone.root, "--json"));
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.metadata["x-scripted"]).toBe("yes");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcPreRequestScriptEditingBody_whenRun_thenServerReceivesEditedMessage", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeScriptedGrpcRequest(clone.root, {
+        script: 'const body = JSON.parse(pm.request.body.raw); body.text = "edited"; pm.request.body.raw = JSON.stringify(body);',
+      });
+      const { code } = await runCli(runArgs("Echo", "-d", clone.root, "--json"));
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.body.text).toBe("edited");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcPreRequestScriptWritingInvalidJson_whenRun_thenErrorNamesScripts", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeScriptedGrpcRequest(clone.root, { script: 'pm.request.body.raw = "not json";' });
+      await expect(runCli(runArgs("Echo", "-d", clone.root, "--json"))).rejects.toThrow(
+        /not valid JSON after pre-request scripts/,
+      );
+      expect(received).toHaveLength(0);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcPreRequestScriptChangingMethodPath_whenRun_thenOtherMethodInvoked", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeScriptedGrpcRequest(clone.root, { script: 'pm.request.methodPath = "test.echo.EchoService.Ping";' });
+      const { code } = await runCli(runArgs("Echo", "-d", clone.root, "--json"));
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.method).toBe("Ping");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenGrpcPreRequestScriptAddingDuplicateMetadata_whenRun_thenEveryValueReachesTheServer", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeScriptedGrpcRequest(clone.root, {
+        script: 'pm.request.metadata.add("X-Repeat", "one"); pm.request.metadata.add("x-repeat", "two");',
+      });
+      const { code, stdout } = await runCli(runArgs("Echo", "-d", clone.root, "--json"));
+      const report = JSON.parse(stdout) as RunReport;
+
+      expect(code).toBe(EXIT.OK);
+      // grpc-js preserves both string values and joins them with a comma on the wire.
+      expect(received[0]?.metadata["x-repeat"]).toBe("one, two");
+      expect(report.request_metadata["x-repeat"]).toEqual(["one", "two"]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenDisabledGrpcMetadata_whenScriptReadsIt_thenItDoesNotReachTheServer", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeScriptedGrpcRequest(clone.root, {
+        metadata: "metadata:\n  - key: X-Disabled\n    value: hidden\n    disabled: true",
+        script: [
+          'const entry = pm.request.metadata.all().find((item) => item.key === "X-Disabled");',
+          'if (!entry || entry.disabled !== true) throw new Error("disabled metadata missing");',
+        ].join("\n"),
+      });
+      const { code } = await runCli(runArgs("Echo", "-d", clone.root, "--json"));
+
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.metadata["x-disabled"]).toBeUndefined();
     } finally {
       clone.cleanup();
     }

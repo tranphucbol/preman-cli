@@ -1,2 +1,7 @@
 $kind: collection
 name: payment
+scripts:
+  - type: grpc:beforeInvoke
+    language: javascript
+    code: |
+      pm.request.metadata.upsert("x-collection-script", "payment");

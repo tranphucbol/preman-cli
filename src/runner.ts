@@ -7,9 +7,8 @@ import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
 import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
 import { resolveTarget, type GrpcTarget } from "./grpc/target.js";
 import { CookieJar } from "./http/cookies.js";
-import { readRequestBody } from "./http/body.js";
 import { invokeHttp, NO_RESPONSE_STATUS, type HttpInvokeResult } from "./http/invoke.js";
-import { buildHttpRequest } from "./http/request.js";
+import { buildLiveHttpRequest, finaliseHttpRequest } from "./http/request.js";
 import type { HttpTarget } from "./http/target.js";
 import {
   hasScriptOf,
@@ -24,11 +23,19 @@ import {
 import {
   runScript,
   type ConsoleLine,
-  type ScriptRequestInfo,
   type ScriptResponseInfo,
   type SideRequestRecord,
   type TestResult,
 } from "./scripts/sandbox.js";
+import {
+  freezeRequest,
+  LiveBody,
+  LiveGrpcRequest,
+  LiveHttpRequest,
+  Url,
+  type LiveRequest,
+} from "./scripts/live-request.js";
+import type { Property } from "./scripts/property-list.js";
 import type { TlsCertOptions } from "./tls/certs.js";
 import { interpolateStrict } from "./vars/interpolate.js";
 import { VariableStore } from "./vars/store.js";
@@ -110,7 +117,7 @@ export interface GrpcRunOutcome extends BaseRunOutcome {
   schemaSource: SchemaSource;
   /** The payload actually sent, after interpolation. */
   sentMessage: unknown;
-  metadata: Record<string, string>;
+  metadata: Record<string, string | string[]>;
   invoke: InvokeResult;
   /** `return_code` from the response, when the message has one. */
   returnCode: string | undefined;
@@ -163,6 +170,32 @@ export function countTests(tests: TestResult[]): TestSummary {
     failed: tests.filter((t) => t.status === "failed").length,
     skipped: tests.filter((t) => t.status === "skipped").length,
   };
+}
+
+function groupProperties(entries: readonly Property[]): Record<string, string | string[]> {
+  const grouped: Record<string, string | string[]> = {};
+  for (const { key, value } of entries) {
+    const existing = grouped[key];
+    if (existing === undefined) grouped[key] = value;
+    else if (Array.isArray(existing)) existing.push(value);
+    else grouped[key] = [existing, value];
+  }
+  return grouped;
+}
+
+function replaceProperties(list: LiveHttpRequest["headers"], entries: Record<string, string | string[]>): void {
+  for (const { key } of list.all()) list.remove(key);
+  for (const [key, value] of Object.entries(entries)) {
+    for (const item of Array.isArray(value) ? value : [value]) list.add(key, item);
+  }
+}
+
+/** Make afterResponse observe the final redirect hop, including generated headers. */
+function syncFinalHttpRequest(request: LiveHttpRequest, invoke: HttpInvokeResult, initialBody: string | undefined): void {
+  request.url = invoke.finalUrl;
+  request.method = invoke.method;
+  replaceProperties(request.headers, invoke.requestHeaders);
+  if (invoke.requestBody !== initialBody) request.body = new LiveBody(undefined, invoke.requestBody ?? "");
 }
 
 function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVars">): VariableStore {
@@ -221,11 +254,10 @@ interface ScriptSinkOptions {
   /** `pm.sendRequest` dials over the same trust store as the request itself. */
   tlsCerts: TlsCertOptions;
   /**
-   * Read once per script rather than captured up front: an HTTP `afterResponse`
-   * script should see the url, method and headers that actually went out, which
-   * are only known once the request has been built.
+   * Read once per script so the same live object is shared across the chain and
+   * then exposed read-only to post-response scripts.
    */
-  request: () => ScriptRequestInfo;
+  request: () => LiveRequest;
 }
 
 /** Runs the scripts of one request, in file order, collecting logs and test results. */
@@ -277,9 +309,8 @@ function persist(options: Pick<RunOptions, "save" | "environment">, store: Varia
 /**
  * Execute one request end to end.
  *
- * Order matters: scripts run *before* interpolation so a value they compute
- * (e.g. `trans_id`) is visible to the body, and the environment writeback happens
- * only after a successful invocation attempt.
+ * Request templates and auth are resolved before scripts, matching Postman's live
+ * `pm.request`; scripts that introduce a token can resolve it with replaceIn().
  */
 export async function runRequest(options: RunOptions): Promise<RunOutcome> {
   const parsed = parseRequest(options.entry);
@@ -298,13 +329,44 @@ async function runGrpcRequest(
   cookies: CookieJar,
 ): Promise<GrpcRunOutcome> {
   const { entry, workspace, resources } = options;
-  const rawBody = request.message?.content ?? "";
-
   const chain = resolveScriptChain({
     ancestors: entry.ancestors,
     requestScripts: request.scripts,
     protocol: "grpc",
   });
+
+  const methodPath = interpolateStrict(request.methodPath, store, "methodPath");
+  const authoredUrl = options.urlOverride ? options.urlOverride : interpolateStrict(request.url, store, "url");
+  const initialTarget = resolveTarget({
+    url: authoredUrl,
+    workspaceRoot: workspace.root,
+    override: options.urlOverride,
+    tlsOverride: options.tlsOverride,
+  });
+  const liveUrlText =
+    authoredUrl.trim().length > 0
+      ? authoredUrl
+      : `${initialTarget.tls ? "grpcs" : "grpc"}://${initialTarget.authority}`;
+  const metadataEntries = (request.metadata ?? []).map((item) => ({
+    key: item.key,
+    value:
+      item.disabled === true ? (item.value ?? "") : interpolateStrict(item.value ?? "", store, `metadata.${item.key}`),
+    ...(item.disabled === undefined ? {} : { disabled: item.disabled }),
+  }));
+  const rawBody = request.message?.content ?? "";
+  const body = rawBody.length === 0 ? "" : interpolateStrict(rawBody, store, "message body");
+  const liveRequest = new LiveGrpcRequest({
+    url: Url.parse(liveUrlText),
+    methodPath,
+    metadata: metadataEntries,
+    body: new LiveBody(undefined, body),
+  });
+
+  const auth = resolveAuth(entry, request.auth);
+  const authWarnings = applyGrpcAuth({ auth: auth?.auth, metadata: liveRequest.metadata, store });
+  if (auth !== undefined && auth.origin.level !== "request") {
+    authWarnings.unshift(`auth inherited from ${auth.origin.label}`);
+  }
 
   const sink = scriptSink({
     scripts: chain.scripts,
@@ -313,68 +375,56 @@ async function runGrpcRequest(
     cookies,
     requestTimeoutMs: options.timeoutMs,
     tlsCerts: options.tlsCerts,
-    request: () => ({ url: request.url, methodPath: request.methodPath, body: rawBody }),
+    request: () => liveRequest,
   });
 
-  // 1. Pre-request scripts, which may define variables used by the body.
+  // 1. Pre-request scripts edit the already-resolved request in place.
   await sink.run(PRE_SCRIPT_TYPES);
 
-  // 2. Interpolate everything that goes over the wire.
-  const methodPath = interpolateStrict(request.methodPath, store, "methodPath");
-  // `--url` replaces the request's url outright, so an unresolvable `{{grpc_url}}`
-  // must not block a run that already says where to go.
-  const url = options.urlOverride ? "" : interpolateStrict(request.url, store, "url");
-  const metadata: Record<string, string> = {};
-  for (const item of request.metadata ?? []) {
-    metadata[item.key] = interpolateStrict(item.value ?? "", store, `metadata.${item.key}`);
-  }
-
-  // After interpolation so `{{jwt_token}}` in a literal entry has resolved and is
-  // visible to the precedence check.
-  const auth = resolveAuth(entry, request.auth);
-  const authWarnings = applyGrpcAuth({ auth: auth?.auth, metadata, store });
-  if (auth !== undefined && auth.origin.level !== "request") {
-    authWarnings.unshift(`auth inherited from ${auth.origin.label}`);
-  }
+  const sentMetadata = liveRequest.metadata
+    .enabled()
+    .map((item) => ({ key: item.key.toLowerCase(), value: item.value }));
+  const metadata = groupProperties(sentMetadata);
 
   let sentMessage: unknown = {};
-  if (rawBody.trim().length > 0) {
-    const body = interpolateStrict(rawBody, store, "message body");
+  if (liveRequest.body.raw.trim().length > 0) {
     try {
-      sentMessage = JSON.parse(body);
+      sentMessage = JSON.parse(liveRequest.body.raw);
     } catch (cause) {
-      throw new CliError(`request body is not valid JSON after interpolation: ${(cause as Error).message}`);
+      throw new CliError(`request body is not valid JSON after pre-request scripts: ${(cause as Error).message}`);
     }
   }
 
-  // 3. Resolve schema and target.
+  // 2. Resolve schema and target from the possibly changed route.
   const method = resolveMethod({
     requestFilePath: entry.filePath,
     schemaLocation: request.schema?.location,
     methodDescriptor: request.methodDescriptor,
-    methodPath,
+    methodPath: liveRequest.methodPath,
     includeDirs: resources.includeDirs,
     preferDescriptor: options.preferDescriptor,
   });
 
-  const target = resolveTarget({
-    url,
+  const changedUrl = liveRequest.url.toString();
+  const resolvedTarget = resolveTarget({
+    url: changedUrl,
     workspaceRoot: workspace.root,
-    override: options.urlOverride,
     tlsOverride: options.tlsOverride,
   });
+  const target = changedUrl === Url.parse(liveUrlText).toString() ? { ...resolvedTarget, source: initialTarget.source } : resolvedTarget;
 
-  // 4. Invoke.
+  // 3. Invoke.
   const invoke = await invokeUnary({
     target,
     method: method.definition,
     message: sentMessage,
-    metadata,
+    metadata: sentMetadata,
     timeoutMs: options.timeoutMs,
     tlsCerts: options.tlsCerts,
   });
+  freezeRequest(liveRequest);
 
-  // 5. Post-response scripts, where the `pm.test` assertions live.
+  // 4. Post-response scripts, where the `pm.test` assertions live.
   const warnings = [...chain.warnings, ...authWarnings, ...method.warnings, ...invoke.warnings];
   if (invoke.ok) {
     const response: ScriptResponseInfo = {
@@ -390,13 +440,10 @@ async function runGrpcRequest(
     await sink.run(MESSAGE_SCRIPT_TYPES, response);
     await sink.run(POST_SCRIPT_TYPES, response);
   } else if (hasScriptOf(chain.scripts, POST_SCRIPT_TYPES)) {
-    // Postman would run the script anyway and let it blow up on an absent message.
-    // Reporting the transport failure is more useful than turning it into a
-    // TypeError, so the scripts are skipped and the skip is surfaced.
     warnings.push("afterResponse scripts skipped: the call failed at the transport level");
   }
 
-  // 6. Persist variables the scripts changed, post-response ones included.
+  // 5. Persist variables the scripts changed, post-response ones included.
   const { savedVars, savedTo } = persist(options, store);
 
   const returnCode = extractReturnCode(invoke.response);
@@ -411,7 +458,7 @@ async function runGrpcRequest(
   return {
     entry,
     protocol: "grpc",
-    methodPath,
+    methodPath: liveRequest.methodPath,
     target,
     schemaSource: method.source,
     warnings,
@@ -436,17 +483,6 @@ async function runHttpRequest(
   cookies: CookieJar,
 ): Promise<HttpRunOutcome> {
   const { entry } = options;
-  const rawBody = readRequestBody(request);
-
-  // Scripts see the raw url and body first; once the request is built they see
-  // what actually went out.
-  let info: ScriptRequestInfo = {
-    url: request.url,
-    method: request.method,
-    body: rawBody.raw,
-    bodyMode: rawBody.mode,
-    urlencoded: rawBody.urlencoded,
-  };
 
   const chain = resolveScriptChain({
     ancestors: entry.ancestors,
@@ -454,23 +490,7 @@ async function runHttpRequest(
     protocol: "http",
   });
 
-  // `HttpRequest.name` is optional and usually absent, so the entry's name (which
-  // falls back to the filename) is the only reliable label.
-  const sink = scriptSink({
-    scripts: chain.scripts,
-    requestName: entry.name,
-    store,
-    cookies,
-    requestTimeoutMs: options.timeoutMs,
-    tlsCerts: options.tlsCerts,
-    request: () => info,
-  });
-
-  // 1. Pre-request scripts, which may define variables used by the url or body.
-  await sink.run(PRE_SCRIPT_TYPES);
-
-  // 2. Interpolate and assemble the request exactly as it will go out.
-  const built = buildHttpRequest({
+  const live = buildLiveHttpRequest({
     request,
     auth: resolveAuth(entry, request.auth),
     store,
@@ -478,8 +498,23 @@ async function runHttpRequest(
     tlsOverride: options.tlsOverride,
   });
 
-  // 3. Send it. The jar is shared with the rest of the run, so cookies a login
-  //    sets reach the requests that follow.
+  const sink = scriptSink({
+    scripts: chain.scripts,
+    requestName: entry.name,
+    store,
+    cookies,
+    requestTimeoutMs: options.timeoutMs,
+    tlsCerts: options.tlsCerts,
+    request: () => live.request,
+  });
+
+  // 1. Scripts edit the interpolated request and rendered auth directly.
+  await sink.run(PRE_SCRIPT_TYPES);
+
+  // 2. Finalisation does not interpolate again.
+  const built = finaliseHttpRequest(live.request, live.target);
+
+  // 3. Send it. The jar is shared with the rest of the run.
   const invoke = await invokeHttp({
     url: built.url,
     method: built.method,
@@ -489,29 +524,16 @@ async function runHttpRequest(
     jar: cookies,
     tlsCerts: options.tlsCerts,
   });
+  syncFinalHttpRequest(live.request, invoke, built.body);
+  freezeRequest(live.request);
 
-  info = {
-    url: invoke.finalUrl,
-    method: invoke.method,
-    headers: invoke.requestHeaders,
-    body: invoke.requestBody ?? "",
-    bodyMode: rawBody.mode,
-    // The authored fields, not the encoded string: a post-response script that
-    // logs a field should see the same value the pre-request script did.
-    urlencoded: rawBody.urlencoded,
-  };
-
-  // 4. Post-response scripts, where the `pm.test` assertions live.
-  const warnings = [...chain.warnings, ...built.warnings, ...invoke.warnings];
+  // 4. Post-response scripts see the same request object, now read-only.
+  const warnings = [...chain.warnings, ...live.warnings, ...invoke.warnings];
   if (invoke.statusCode === NO_RESPONSE_STATUS) {
     if (hasScriptOf(chain.scripts, POST_SCRIPT_TYPES)) {
       warnings.push("afterResponse scripts skipped: no response was received");
     }
   } else {
-    // Deliberate deviation from the gRPC path, which skips its scripts on failure:
-    // an HTTP error response still carries the body a script cares about most (the
-    // error code, a fresh csrf token), so any status that produced a response runs
-    // the scripts.
     await sink.run(POST_SCRIPT_TYPES, {
       protocol: "http",
       code: invoke.statusCode,

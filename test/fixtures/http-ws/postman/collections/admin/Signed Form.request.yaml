@@ -9,7 +9,7 @@ body:
   content:
     clientid: "11"
     note: "a+b/c="
-    sig: "{{form_sig}}"
+    sig: ""
 auth:
   type: noauth
 scripts:
@@ -24,16 +24,19 @@ scripts:
       pm.test("scripts see the authored fields, not the encoded string", function () {
         pm.expect(pm.request.body.mode).to.equal("urlencoded");
         pm.expect(fields.note).to.equal("a+b/c=");
-        // Still a placeholder here: interpolation happens after the script runs.
-        pm.expect(fields.sig).to.equal("{{form_sig}}");
+        pm.expect(fields.sig).to.equal("");
       });
 
-      pm.variables.set("form_sig", CryptoJS.SHA256(fields.clientid + "|" + fields.note).toString());
+      const signature = CryptoJS.SHA256(fields.clientid + "|" + fields.note).toString();
+      pm.request.body.urlencoded.upsert("sig", signature);
+      pm.request.headers.upsert("X-Signature", signature);
+      pm.request.url.query.add("signed", "true");
   - type: afterResponse
     language: javascript
     code: |-
       pm.test("the form reached the server percent-encoded", function () {
-        const sent = pm.response.json().body;
+       const sent = pm.response.json().body;
+        pm.expect(pm.response.json().query.signed).to.equal("true");
         pm.expect(sent).to.contain("note=a%2Bb%2Fc%3D");
         pm.expect(sent).to.contain("sig=" + CryptoJS.SHA256("11|a+b/c=").toString());
       });

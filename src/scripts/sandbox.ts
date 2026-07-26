@@ -1,13 +1,14 @@
 import CryptoJS from "crypto-js";
 import { createContext, runInContext } from "node:vm";
 import { CliError } from "../errors.js";
+import { interpolate } from "../vars/interpolate.js";
 import type { Scope, VariableStore } from "../vars/store.js";
 import { CookieJar } from "../http/cookies.js";
-import type { KeyValue } from "../http/headers.js";
 import { NO_RESPONSE_STATUS } from "../http/invoke.js";
 import { emptyTlsCerts, type TlsCertOptions } from "../tls/certs.js";
 import type { ScriptOrigin } from "./chain.js";
 import { expect, makeHeaderList, makeMessageList, type MessageList, type ResponseLike } from "./expect.js";
+import type { LiveRequest } from "./live-request.js";
 import { sendScriptRequest } from "./send-request.js";
 
 export interface ConsoleLine {
@@ -21,54 +22,6 @@ export interface ScriptContextInfo {
   /** Request display name, surfaced as `pm.info.requestName`. */
   requestName: string;
   eventName: string;
-}
-
-export interface ScriptRequestInfo {
-  url: string;
-  /** gRPC only. */
-  methodPath?: string;
-  /** HTTP only. */
-  method?: string;
-  /** HTTP only, as actually sent. */
-  headers?: Record<string, string | string[]>;
-  body: string;
-  /** HTTP only: `body.type`, surfaced as `pm.request.body.mode`. */
-  bodyMode?: string;
-  /** HTTP only: the fields of a `urlencoded` body, before interpolation. */
-  urlencoded?: KeyValue[];
-}
-
-/** Postman's `PropertyList`, narrowed to the read-only members scripts use. */
-export interface FormList {
-  toJSON: () => KeyValue[];
-  all: () => KeyValue[];
-  idx: (index: number) => KeyValue | undefined;
-  count: () => number;
-  get: (key: string) => string | undefined;
-  has: (key: string) => boolean;
-  each: (fn: (entry: KeyValue, index: number) => void) => void;
-  map: <T>(fn: (entry: KeyValue, index: number) => T) => T[];
-  filter: (fn: (entry: KeyValue, index: number) => boolean) => KeyValue[];
-}
-
-/**
- * Read-only on purpose: the authored request is re-read after the scripts run, so
- * an `upsert` here would be silently discarded. Scripts sign or encrypt the fields
- * and write the result to a variable the body interpolates instead.
- */
-function makeFormList(entries: readonly KeyValue[]): FormList {
-  const copy = (): KeyValue[] => entries.map((entry) => ({ ...entry }));
-  return {
-    toJSON: copy,
-    all: copy,
-    idx: (index) => (entries[index] === undefined ? undefined : { ...entries[index] }),
-    count: () => entries.length,
-    get: (key) => entries.find((entry) => entry.key === key)?.value,
-    has: (key) => entries.some((entry) => entry.key === key),
-    each: (fn) => copy().forEach(fn),
-    map: (fn) => copy().map(fn),
-    filter: (fn) => copy().filter(fn),
-  };
 }
 
 /** What a gRPC post-response script can see about the call that just finished. */
@@ -134,7 +87,7 @@ export interface RunScriptOptions {
   info: ScriptContextInfo;
   /** Where the script was declared; stamped onto every log line and test result. */
   origin: ScriptOrigin;
-  request: ScriptRequestInfo;
+  request: LiveRequest;
   /** Present for `onMessage` / `afterResponse` scripts; absent for pre-request ones. */
   response?: ScriptResponseInfo;
   /** The run's cookie jar, exposed as `pm.cookies`. Empty when omitted. */
@@ -473,6 +426,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       get: (key: string) => store.get(key),
       set: (key: string, value: unknown) => store.set(VARIABLES_WRITE_SCOPE, key, value),
       has: (key: string) => store.has(key),
+      replaceIn: (text: string) => interpolate(String(text), store).text,
       toObject: () => ({
         ...store.snapshot("globals"),
         ...store.snapshot("collection"),
@@ -481,18 +435,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       }),
     },
     info: { requestName: info.requestName, eventName: info.eventName, iteration: 0, iterationCount: 1 },
-    request: {
-      url: request.url,
-      methodPath: request.methodPath,
-      method: request.method,
-      headers: makeHeaderList(request.headers ?? {}),
-      body: {
-        mode: request.bodyMode ?? "",
-        raw: request.body,
-        /** Always a list, so `pm.request.body.urlencoded.toJSON()` never throws. */
-        urlencoded: makeFormList(request.urlencoded ?? []),
-      },
-    },
+    request,
     /**
      * Always present, even for gRPC (where the jar stays empty), so a script
      * shared between protocols cannot trip over an undefined `pm.cookies`.

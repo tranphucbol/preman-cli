@@ -2,12 +2,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { CliError } from "../src/errors.js";
 import { REQUEST_ORIGIN } from "../src/scripts/chain.js";
-import {
-  runScript,
-  type GrpcScriptResponse,
-  type ScriptRequestInfo,
-  type ScriptResponseInfo,
-} from "../src/scripts/sandbox.js";
+import { freezeRequest, LiveBody, LiveGrpcRequest, LiveHttpRequest, type LiveRequest } from "../src/scripts/live-request.js";
+import { runScript, type GrpcScriptResponse, type ScriptResponseInfo } from "../src/scripts/sandbox.js";
 import { VariableStore } from "../src/vars/store.js";
 
 /** Verbatim `beforeInvoke` script from postman/collections/payment/Long Chau.request.yaml. */
@@ -20,13 +16,37 @@ const id = Math.floor(Math.random() * 1000000000);
 const trans_id = prefix * 1000000000 + id;
 pm.environment.set("trans_id", trans_id);`;
 
+interface ScriptRequestInfo {
+  url: string;
+  methodPath?: string;
+  method?: string;
+  body: string;
+  bodyMode?: string;
+  urlencoded?: Array<{ key: string; value: string }>;
+}
+
+function liveRequest(request: ScriptRequestInfo): LiveRequest {
+  if (request.methodPath !== undefined) {
+    return new LiveGrpcRequest({
+      url: request.url,
+      methodPath: request.methodPath,
+      body: new LiveBody(undefined, request.body),
+    });
+  }
+  return new LiveHttpRequest({
+    url: request.url,
+    method: request.method ?? "GET",
+    body: new LiveBody(request.bodyMode, request.body, request.urlencoded),
+  });
+}
+
 function runFull(code: string, store = new VariableStore(), response?: ScriptResponseInfo) {
   return runScript({
     code,
     store,
     info: { requestName: "Long Chau", eventName: response === undefined ? "beforeInvoke" : "afterResponse" },
     origin: REQUEST_ORIGIN,
-    request: { url: "{{grpc_url}}", methodPath: "pe.aev2.ExchangeService.Exchange", body: '{"a":1}' },
+    request: liveRequest({ url: "{{grpc_url}}", methodPath: "pe.aev2.ExchangeService.Exchange", body: '{"a":1}' }),
     ...(response === undefined ? {} : { response }),
   });
 }
@@ -141,7 +161,7 @@ describe("runScript", () => {
         store: new VariableStore(),
         info: { requestName: "spin", eventName: "beforeInvoke" },
         origin: REQUEST_ORIGIN,
-        request: { url: "", methodPath: "", body: "" },
+        request: liveRequest({ url: "localhost:9090", methodPath: "", body: "" }),
         timeoutMs: 50,
       }),
     ).rejects.toThrow(CliError);
@@ -156,7 +176,7 @@ describe("runScript", () => {
         store: new VariableStore(),
         info: { requestName: "hang", eventName: "beforeInvoke" },
         origin: REQUEST_ORIGIN,
-        request: { url: "", methodPath: "", body: "" },
+        request: liveRequest({ url: "localhost:9090", methodPath: "", body: "" }),
         timeoutMs: 50,
       }),
     ).rejects.toThrow(/timed out after 50ms/);
@@ -176,6 +196,90 @@ describe("runScript", () => {
   it("givenPreScript_whenRun_thenResponseAndMessageAreAbsent", async () => {
     const logs = await run(`console.log(typeof pm.response, typeof pm.message);`);
     expect(logs[0]?.text).toBe("undefined undefined");
+  });
+
+  it("givenPreRequestScript_whenHeadersUpsert_thenNextScriptInChainSeesIt", async () => {
+    const request = liveRequest({ url: "http://host/pay", method: "POST", body: "" });
+    const options = {
+      store: new VariableStore(),
+      info: { requestName: "Pay", eventName: "beforeRequest" },
+      origin: REQUEST_ORIGIN,
+      request,
+    };
+
+    await runScript({ ...options, code: `pm.request.headers.upsert("X-Signature", "abc");` });
+    const result = await runScript({ ...options, code: `console.log(pm.request.headers.get("x-signature"));` });
+
+    expect(result.logs[0]?.text).toBe("abc");
+  });
+
+  it("givenPreRequestScript_whenUrlQueryAdd_thenUrlToStringIncludesIt", async () => {
+    const result = await runFull2(`pm.request.url.query.add("ts", "123"); console.log(String(pm.request.url));`);
+    expect(result.logs[0]?.text).toBe("http://host/pay?ts=123");
+  });
+
+  it("givenPostResponseScript_whenMutatingRequest_thenThrowsFrozenError", async () => {
+    const request = liveRequest({ url: "http://host/pay", method: "POST", body: "" });
+    freezeRequest(request);
+
+    await expect(
+      runScript({
+        code: `pm.request.headers.add("X-Late", "nope");`,
+        store: new VariableStore(),
+        info: { requestName: "Pay", eventName: "afterResponse" },
+        origin: REQUEST_ORIGIN,
+        request,
+      }),
+    ).rejects.toThrow("pm.request is read-only after the request has been sent");
+  });
+
+  it.each([
+    `pm.request.body = {};`,
+    `pm.request.url.query = {};`,
+    `pm.request.headers = {};`,
+    `pm.request.protocol = "grpc";`,
+    `pm.request.body.urlencoded = {};`,
+    `pm.request.url.path.push("late");`,
+    `pm.request.url.host[0] = "other";`,
+    `Object.setPrototypeOf(pm.request.url.path, null);`,
+    `Object.preventExtensions(pm.request.url.host);`,
+  ])(
+    "givenFrozenRequest_whenReplacingNestedObject_thenThrowsFrozenError: %s",
+    async (code) => {
+      const request = liveRequest({ url: "http://host/pay", method: "POST", body: "" });
+      freezeRequest(request);
+
+      await expect(
+        runScript({
+          code,
+          store: new VariableStore(),
+          info: { requestName: "Pay", eventName: "afterResponse" },
+          origin: REQUEST_ORIGIN,
+          request,
+        }),
+      ).rejects.toThrow("pm.request is read-only after the request has been sent");
+    },
+  );
+
+  it("givenFrozenGrpcRequest_whenReplacingMetadata_thenThrowsFrozenError", async () => {
+    const request = liveRequest({ url: "grpc://host:9090", methodPath: "test.Echo", body: "{}" });
+    freezeRequest(request);
+
+    await expect(
+      runScript({
+        code: `pm.request.metadata = {};`,
+        store: new VariableStore(),
+        info: { requestName: "Echo", eventName: "afterResponse" },
+        origin: REQUEST_ORIGIN,
+        request,
+      }),
+    ).rejects.toThrow("pm.request is read-only after the request has been sent");
+  });
+
+  it("givenScript_whenReplaceIn_thenTokenResolved", async () => {
+    const store = new VariableStore({ environment: { token: "resolved" } });
+    const result = await runFull2(`console.log(pm.variables.replaceIn("Bearer {{token}}"));`, undefined, store);
+    expect(result.logs[0]?.text).toBe("Bearer resolved");
   });
 });
 
@@ -404,7 +508,7 @@ async function runFull2(code: string, request?: ScriptRequestInfo, store = new V
     store,
     info: { requestName: "Bank Query", eventName: "beforeRequest" },
     origin: REQUEST_ORIGIN,
-    request: request ?? { url: "http://host/pay", method: "POST", body: "" },
+    request: liveRequest(request ?? { url: "http://host/pay", method: "POST", body: "" }),
   });
 }
 

@@ -19,6 +19,7 @@ scripts:
       });
 
       pm.environment.set("token", login.json().data.token);
+      pm.request.headers.upsert("authorization", "Bearer " + login.json().data.token);
   - type: afterResponse
     language: text/javascript
     code: |-

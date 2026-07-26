@@ -99,7 +99,7 @@ Run `preman --help` for every option.
 - Pre-request, post-response, and gRPC `onMessage` scripts
 - Collection- and folder-level scripts and authentication, inherited by descendant requests
 - `bearer`, `basic`, and `apikey` authentication for both HTTP and gRPC
-- `pm.test`, `pm.expect`, cookies, `pm.sendRequest`, and `CryptoJS` in scripts
+- `pm.test`, `pm.expect`, cookies, `pm.sendRequest`, `CryptoJS`, and mutable `pm.request` in scripts
 - Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
 - Environment writeback and JSON output for CI
 

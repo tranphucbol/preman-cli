@@ -317,6 +317,40 @@ function writeAdminDefinition(root: string, body: string): void {
   writeFileSync(definitionPath(root, "admin"), adminDefinition(body));
 }
 
+function writeScriptedHttpRequest(
+  root: string,
+  options: { path?: string; method?: string; headers?: string; body?: string; script: string; afterScript?: string },
+): void {
+  const indentScript = (script: string): string =>
+    script
+      .trimEnd()
+      .split("\n")
+      .map((line) => `      ${line}`)
+      .join("\n");
+  const scripts = ["scripts:", "  - type: beforeRequest", "    code: |", indentScript(options.script)];
+  if (options.afterScript !== undefined) {
+    scripts.push("  - type: afterResponse", "    code: |", indentScript(options.afterScript));
+  }
+  writeFileSync(
+    `${collectionPath(root, "admin", "Echo Get Body")}.request.yaml`,
+    [
+      "$kind: http-request",
+      "name: Echo Get Body",
+      `url: "{{http_url}}${options.path ?? "/echo"}"`,
+      `method: ${options.method ?? "GET"}`,
+      options.headers ?? "",
+      options.body ?? "",
+      "auth:",
+      "  type: noauth",
+      ...scripts,
+      "order: 40",
+      "",
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n"),
+  );
+}
+
 /**
  * `Echo Get Body` is the only request that reaches an endpoint which echoes what
  * it received, and every fixture request declares `auth` — so inheritance can
@@ -417,6 +451,130 @@ describe("group-level scripts and auth (HTTP)", () => {
       // The prefix exists precisely so a mixed folder does not warn on every request.
       expect(report.warnings).toEqual([]);
       expect(report.console).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+});
+
+describe("mutable pm.request (HTTP)", () => {
+  it("givenPreRequestScriptAddingHeader_whenRun_thenServerReceivesHeader", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, { script: 'pm.request.headers.add("X-Scripted", "yes");' });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.headers["x-scripted"]).toBe("yes");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenPreRequestScriptReplacingAuthorization_whenRun_thenServerReceivesScriptValue", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        path: "/profile",
+        headers: 'headers:\n  Authorization: "Bearer wrong"',
+        script: `pm.request.headers.upsert("Authorization", "Bearer ${HTTP_TOKEN}");`,
+      });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.headers.authorization).toBe(`Bearer ${HTTP_TOKEN}`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenPreRequestScriptSettingContentType_whenRun_thenInferredTypeNotApplied", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: 'body:\n  type: json\n  content: \'{"a":1}\'',
+        script: 'pm.request.headers.upsert("Content-Type", "application/vnd.test+json");',
+      });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.headers["content-type"]).toBe("application/vnd.test+json");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenPreRequestScriptRewritingUrl_whenRun_thenServerReceivesNewPath", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        path: "/boom",
+        script: 'pm.request.url = pm.variables.get("http_url") + "/echo?rewritten=true";',
+      });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.url).toBe("/echo?rewritten=true");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenPreRequestScriptSettingUnsupportedMethod_whenRun_thenMethodError", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, { script: 'pm.request.method = "CONNECT";' });
+      await expect(runCli(clonedArgs(ws.root, "admin/Echo Get Body"))).rejects.toThrow(
+        'unsupported HTTP method "CONNECT"',
+      );
+      expect(http.received).toHaveLength(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenInterpolatedHeader_whenScriptReads_thenSeesResolvedValue", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        headers: 'headers:\n  X-Template: "{{token}}"',
+        script: 'pm.request.headers.add("X-Seen", pm.request.headers.get("x-template"));',
+      });
+      const { code } = await runCli(
+        clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`),
+      );
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.headers["x-seen"]).toBe(HTTP_TOKEN);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenRedirect_whenAfterResponseRuns_thenRequestShowsTheFinalHop", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        path: "/redirect-echo",
+        method: "POST",
+        headers: "headers:\n  X-Initial: yes",
+        body: 'body:\n  type: json\n  content: \'{"a":1}\'',
+        script: 'pm.request.headers.add("X-Scripted", "yes");',
+        afterScript: [
+          'pm.test("request is the final hop", function () {',
+          '  pm.expect(pm.request.method).to.equal("GET");',
+          '  pm.expect(String(pm.request.url)).to.equal(pm.variables.get("http_url") + "/echo?redirected=true");',
+          '  pm.expect(pm.request.body.raw).to.equal("");',
+          '  pm.expect(pm.request.headers.has("content-type")).to.be.false;',
+          '  pm.expect(pm.request.headers.has("content-length")).to.be.false;',
+          "});",
+        ].join("\n"),
+      });
+
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      const report = JSON.parse(stdout) as HttpReport;
+
+      expect(code).toBe(EXIT.OK);
+      expect(http.received.map((item) => item.method)).toEqual(["POST", "GET"]);
+      expect(report.method).toBe("GET");
+      expect(report.finalUrl).toBe(`${http.origin}/echo?redirected=true`);
+      expect(report.testSummary).toMatchObject({ total: 1, passed: 1, failed: 0 });
     } finally {
       ws.cleanup();
     }

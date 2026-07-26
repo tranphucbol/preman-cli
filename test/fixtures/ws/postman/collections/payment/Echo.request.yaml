@@ -30,6 +30,10 @@ scripts:
       const transId = yy + mm + dd + suffix;
       console.log("generated trans_id", transId);
       pm.environment.set("trans_id", transId);
+      const message = JSON.parse(pm.request.body.raw);
+      message.trans_id = transId;
+      pm.request.body.raw = JSON.stringify(message);
+      pm.request.metadata.upsert("x-scripted", "beforeInvoke");
   - type: afterResponse
     language: text/javascript
     code: |-

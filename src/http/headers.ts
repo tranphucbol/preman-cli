@@ -1,10 +1,8 @@
 import { CliError } from "../errors.js";
+import type { Property } from "../scripts/property-list.js";
 import type { KeyValueSource } from "../workspace/schemas.js";
 
-export interface KeyValue {
-  key: string;
-  value: string;
-}
+export interface KeyValue extends Property {}
 
 function scalarToString(value: unknown): string {
   if (value === undefined || value === null) return "";
@@ -16,11 +14,10 @@ function scalarToString(value: unknown): string {
 /**
  * Flatten a map-or-array collection into ordered `{key, value}` pairs.
  *
- * `disabled: true` entries are dropped, matching Postman's own behaviour for
- * unchecked rows. Keys keep their original casing — some servers are picky, and
- * lookups go through {@link findHeader} instead.
+ * Keys keep their original casing and disabled rows remain available to the live
+ * request. Wire-oriented callers use {@link normalizeKeyValues} to omit them.
  */
-export function normalizeKeyValues(source: KeyValueSource | undefined, label: string): KeyValue[] {
+export function normalizeProperties(source: KeyValueSource | undefined, label: string): KeyValue[] {
   if (source === undefined) return [];
 
   try {
@@ -29,8 +26,11 @@ export function normalizeKeyValues(source: KeyValueSource | undefined, label: st
     if (typeof source !== "object" || source === null) throw new CliError(`expected a map or a list, got ${typeof source}`);
     if (Array.isArray(source)) {
       return source
-        .filter((entry) => entry.disabled !== true)
-        .map((entry) => ({ key: entry.key.trim(), value: scalarToString(entry.value) }))
+        .map((entry) => ({
+          key: entry.key.trim(),
+          value: scalarToString(entry.value),
+          ...(entry.disabled === undefined ? {} : { disabled: entry.disabled }),
+        }))
         .filter((entry) => entry.key.length > 0);
     }
     return Object.entries(source)
@@ -43,10 +43,15 @@ export function normalizeKeyValues(source: KeyValueSource | undefined, label: st
   }
 }
 
+/** Legacy wire-oriented normalisation; live requests use {@link normalizeProperties}. */
+export function normalizeKeyValues(source: KeyValueSource | undefined, label: string): KeyValue[] {
+  return normalizeProperties(source, label).filter((entry) => entry.disabled !== true);
+}
+
 /** Case-insensitive lookup, since HTTP header names are not case sensitive. */
 export function findHeader(headers: readonly KeyValue[], name: string): KeyValue | undefined {
   const wanted = name.toLowerCase();
-  return headers.find((header) => header.key.toLowerCase() === wanted);
+  return headers.find((header) => header.disabled !== true && header.key.toLowerCase() === wanted);
 }
 
 export function hasHeader(headers: readonly KeyValue[], name: string): boolean {
@@ -67,7 +72,7 @@ export function setHeaderIfAbsent(headers: KeyValue[], name: string, value: stri
  * the token and return 401. Treating blank as unset is the useful reading.
  */
 export function dropEmptyValues(headers: readonly KeyValue[]): KeyValue[] {
-  return headers.filter((header) => header.value.length > 0);
+  return headers.filter((header) => header.disabled === true || header.value.length > 0);
 }
 
 /**
@@ -80,7 +85,8 @@ export function dropEmptyValues(headers: readonly KeyValue[]): KeyValue[] {
 export function toOutgoingHeaders(headers: readonly KeyValue[]): Record<string, string | string[]> {
   const out: Record<string, string | string[]> = {};
   const emittedFor = new Map<string, string>();
-  for (const { key, value } of headers) {
+  for (const { key, value, disabled } of headers) {
+    if (disabled === true) continue;
     const emitted = emittedFor.get(key.toLowerCase());
     if (emitted === undefined) {
       emittedFor.set(key.toLowerCase(), key);

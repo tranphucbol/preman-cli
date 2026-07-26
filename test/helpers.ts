@@ -148,6 +148,11 @@ function route(req: IncomingMessage, res: ServerResponse, body: string): void {
     sendJson(res, 200, { method: req.method, query: Object.fromEntries(url.searchParams), body, cookie: cookies });
     return;
   }
+  if (url.pathname === "/redirect-echo") {
+    res.writeHead(303, { location: "/echo?redirected=true" });
+    res.end();
+    return;
+  }
   if (url.pathname === "/gzip") {
     res.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
     res.end(gzipSync(Buffer.from(JSON.stringify({ return_code: "OK", squeezed: true }))));
