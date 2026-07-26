@@ -94,16 +94,23 @@ export interface RunScriptOptions {
   cookies?: CookieJar;
   /** Wall-clock budget for the script. */
   timeoutMs?: number;
-  /** Per-call budget for `pm.sendRequest`; falls back to the script budget. */
+  /** Per-call budget for `pm.sendRequest`; supplied by the request runner. */
   requestTimeoutMs?: number;
+  /** Zero-based collection iteration exposed through `pm.info`. */
+  iteration?: number;
+  /** Total number of requested collection iterations. */
+  iterationCount?: number;
   /** Certificate material for `pm.sendRequest`; Node's defaults when omitted. */
   tlsCerts?: TlsCertOptions;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
+const FIRST_ITERATION = 0;
+const SINGLE_ITERATION = 1;
 
 /** `pm.variables.set` has no file to persist to, so it stays in the local scope. */
 const VARIABLES_WRITE_SCOPE: Scope = "local";
+const DATA_SCOPE: Scope = "data";
 
 const ASYNC_TEST_MESSAGE =
   "async tests are not supported: pm.test callbacks must be synchronous (no done callback, no async function)";
@@ -152,14 +159,26 @@ function byteLength(value: unknown): number {
   }
 }
 
+interface ReadOnlyScopeApi {
+  get: (key: string) => string | undefined;
+  has: (key: string) => boolean;
+  toObject: () => Record<string, string>;
+}
+
+function makeReadOnlyScopeApi(store: VariableStore, scope: Scope): ReadOnlyScopeApi {
+  return {
+    get: (key: string) => store.getIn(scope, key),
+    has: (key: string) => store.getIn(scope, key) !== undefined,
+    toObject: () => store.snapshot(scope),
+  };
+}
+
 /** A Postman-ish variable-scope facade backed by one {@link VariableStore} layer. */
 function makeScopeApi(store: VariableStore, scope: Scope) {
   return {
-    get: (key: string) => store.getIn(scope, key),
+    ...makeReadOnlyScopeApi(store, scope),
     set: (key: string, value: unknown) => store.set(scope, key, value),
     unset: (key: string) => store.unset(scope, key),
-    has: (key: string) => store.getIn(scope, key) !== undefined,
-    toObject: () => store.snapshot(scope),
     clear: () => {
       for (const key of Object.keys(store.snapshot(scope))) store.unset(scope, key);
     },
@@ -380,6 +399,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   const environment = makeScopeApi(store, "environment");
   const globals = makeScopeApi(store, "globals");
   const collectionVariables = makeScopeApi(store, "collection");
+  const iterationData = makeReadOnlyScopeApi(store, DATA_SCOPE);
 
   /**
    * A failing assertion fails only its own test — the rest of the script keeps
@@ -421,6 +441,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
     environment,
     globals,
     collectionVariables,
+    iterationData,
     /** Reads span every scope by precedence; writes land in the local scope. */
     variables: {
       get: (key: string) => store.get(key),
@@ -430,11 +451,17 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       toObject: () => ({
         ...store.snapshot("globals"),
         ...store.snapshot("collection"),
+        ...store.snapshot("data"),
         ...store.snapshot("environment"),
         ...store.snapshot("local"),
       }),
     },
-    info: { requestName: info.requestName, eventName: info.eventName, iteration: 0, iterationCount: 1 },
+    info: {
+      requestName: info.requestName,
+      eventName: info.eventName,
+      iteration: options.iteration ?? FIRST_ITERATION,
+      iterationCount: options.iterationCount ?? SINGLE_ITERATION,
+    },
     request,
     /**
      * Always present, even for gRPC (where the jar stays empty), so a script

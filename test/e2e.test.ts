@@ -14,6 +14,7 @@ import {
   FIXTURE_INCLUDE_DIR,
   FIXTURE_PROTO,
   FIXTURE_WS,
+  dataPath,
 } from "./helpers.js";
 
 interface EchoRequest {
@@ -236,7 +237,7 @@ describe("preman run (end to end against a real gRPC server)", () => {
   });
 
   it("givenUnreachableTarget_whenRun_thenReportsUnavailableWithinTheDeadline", async () => {
-    const { code, stdout } = await runCli([
+    const { code, stdout, stderr } = await runCli([
       "run",
       "Echo",
       "-d",
@@ -255,6 +256,7 @@ describe("preman run (end to end against a real gRPC server)", () => {
     const report = JSON.parse(stdout) as { ok: boolean; status: { name: string } };
     expect(report.ok).toBe(false);
     expect(["UNAVAILABLE", "DEADLINE_EXCEEDED"]).toContain(report.status.name);
+    expect(stderr).toContain("--timeout now means the whole-run budget");
   });
 
   it("givenSelectorPointingAtANestedRequest_whenRun_thenTheNestedRequestIsInvoked", async () => {
@@ -623,11 +625,13 @@ describe("preman list / env", () => {
 
 interface GroupReport {
   group: string;
+  iterations: number;
   items: Array<{
     request: { path: string; kind: string };
     status: string;
     error: { message: string; details: string[] } | null;
     run: { request_message: EchoRequest; returnCode: string | null; status: { name: string } } | null;
+    iteration: number;
   }>;
   bailed: boolean;
   bailReason: string | null;
@@ -721,6 +725,144 @@ describe("preman run <collection> (whole-collection runs)", () => {
     expect(report.items).toHaveLength(1);
     expect(report.items[0]?.request.path).toBe("payment/nested/Deep Echo");
     expect(received).toHaveLength(1);
+  });
+
+  it("givenIterationCountTwoOverDataFile_whenRunningFolder_thenServerSeesEachRowOnce", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const request = collectionPath(clone.root, "payment", "nested", "Deep Echo.request.yaml");
+      writeFileSync(request, readFileSync(request, "utf8").replace('"text": "deep"', '"text": "{{msisdn}}"'));
+
+      const { code, stdout } = await runCli([
+        "run",
+        "payment/nested",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--iteration-count",
+        "2",
+        "--iteration-data",
+        dataPath("users.json"),
+        "--no-save",
+        "--json",
+      ]);
+
+      expect(code).toBe(EXIT.OK);
+      const report = JSON.parse(stdout) as GroupReport;
+      expect(report.iterations).toBe(2);
+      expect(report.items.map((item) => item.iteration)).toEqual([0, 1]);
+      expect(received.map((item) => item.body.text)).toEqual(["84900000001", "84900000002"]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenIterationCountThree_whenFolderRuns_thenStoreIsSharedAcrossPasses", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment/nested",
+        definitionWithScript(
+          "nested",
+          "grpc:beforeInvoke",
+          [
+            'const seen = Number(pm.environment.get("seen") || "0") + 1;',
+            'pm.environment.set("seen", seen);',
+            "const message = JSON.parse(pm.request.body.raw);",
+            "message.text = String(seen);",
+            "pm.request.body.raw = JSON.stringify(message);",
+          ].join("\n"),
+        ),
+      );
+
+      const { code } = await runCli([
+        "run",
+        "payment/nested",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "-n",
+        "3",
+        "--no-save",
+        "--json",
+      ]);
+
+      expect(code).toBe(EXIT.OK);
+      expect(received.map((item) => item.body.text)).toEqual(["1", "2", "3"]);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenBailAndFailureInFirstIteration_whenFolderRuns_thenSecondIterationNeverStarts", async () => {
+    const { code, stdout } = await runCli([
+      "run",
+      "payment/nested",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "--var",
+      "mode=BUSINESS_FAIL",
+      "-n",
+      "2",
+      "--bail",
+      "--no-save",
+      "--json",
+    ]);
+
+    const report = JSON.parse(stdout) as GroupReport;
+    expect(code).toBe(EXIT.BUSINESS);
+    expect(report.iterations).toBe(1);
+    expect(report.items.map((item) => item.iteration)).toEqual([0]);
+    expect(report.bailReason).toBe("bail-flag");
+    expect(received).toHaveLength(1);
+  });
+
+  it("givenIterationCount_whenSingleRequestSelected_thenCliError", async () => {
+    await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, "-n", "2"])).rejects.toThrow(
+      /iterations require a collection or folder/,
+    );
+    expect(received).toHaveLength(0);
+  });
+
+  it("givenRunBudgetExpiresBetweenIterations_whenFolderRuns_thenStopsWithTimeoutReason", async () => {
+    const { code, stdout, stderr } = await runCli([
+      "run",
+      "payment/nested",
+      "-d",
+      FIXTURE_WS,
+      "-e",
+      "LOCAL",
+      "--url",
+      target(),
+      "-n",
+      "2",
+      "--delay-request",
+      "20",
+      "--timeout",
+      "1",
+      "--timeout-request",
+      "30000",
+      "--no-save",
+      "--json",
+    ]);
+
+    const report = JSON.parse(stdout) as GroupReport;
+    expect(code).toBe(EXIT.TRANSPORT);
+    expect(report.items).toHaveLength(1);
+    expect(report.bailReason).toBe("timeout");
+    expect(received).toHaveLength(1);
+    expect(stderr).not.toContain("--timeout now means the whole-run budget");
   });
 
   it("givenBusinessFailureInGroup_whenRun_thenAggregateExitIsThree", async () => {

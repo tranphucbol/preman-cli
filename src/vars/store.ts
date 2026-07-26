@@ -1,5 +1,5 @@
 /** Variable scopes, ordered from lowest to highest precedence. */
-export const SCOPES = ["globals", "collection", "environment", "local"] as const;
+export const SCOPES = ["globals", "collection", "data", "environment", "local"] as const;
 export type Scope = (typeof SCOPES)[number];
 
 /** Highest precedence first — the lookup order used by {@link VariableStore.get}. */
@@ -7,7 +7,7 @@ const LOOKUP_ORDER: readonly Scope[] = [...SCOPES].reverse();
 
 /**
  * Layered variable storage mirroring Postman's precedence:
- * local (CLI `--var`) > environment > collection > globals.
+ * local (CLI `--var`) > environment > data > collection > globals.
  *
  * Mutations made by scripts are tracked per scope so the runner knows exactly
  * which keys to persist back to the environment file.
@@ -20,10 +20,17 @@ export class VariableStore {
     this.scopes = {
       globals: new Map(Object.entries(initial.globals ?? {})),
       collection: new Map(Object.entries(initial.collection ?? {})),
+      data: new Map(Object.entries(initial.data ?? {})),
       environment: new Map(Object.entries(initial.environment ?? {})),
       local: new Map(Object.entries(initial.local ?? {})),
     };
-    this.dirty = { globals: new Set(), collection: new Set(), environment: new Set(), local: new Set() };
+    this.dirty = {
+      globals: new Set(),
+      collection: new Set(),
+      data: new Set(),
+      environment: new Set(),
+      local: new Set(),
+    };
   }
 
   /** Resolve `key` across all scopes, highest precedence first. */

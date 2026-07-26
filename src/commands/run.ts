@@ -1,4 +1,5 @@
 import pc from "picocolors";
+import { loadIterationData, type DataRow } from "../data/rows.js";
 import { CliError, type ExitCode } from "../errors.js";
 import { renderGroupOutcome, renderOutcome } from "../output/render.js";
 import { runGroup, runRequest, type GroupRunOutcome, type RunOutcome } from "../runner.js";
@@ -26,6 +27,11 @@ export interface RunArgs {
   /** Raw `--ssl-*` and `-k` values; resolved here, where the workspace is known. */
   tlsCerts: TlsCertInput;
   timeoutMs: number;
+  runTimeoutMs: number;
+  scriptTimeoutMs: number;
+  iterationCount: number | undefined;
+  iterationData: string | undefined;
+  delayRequestMs: number;
   vars: Record<string, string>;
   save: boolean;
   preferDescriptor: boolean;
@@ -110,10 +116,15 @@ async function pickEnvironment(ws: Workspace, name: string | undefined): Promise
   });
 }
 
+export function resolveIterations(requested: number | undefined, rows: DataRow[]): number {
+  return requested ?? (rows.length > 0 ? rows.length : 1);
+}
+
 export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
   const ws = requireWorkspace(args.dir);
   const resources = loadResources(ws);
   const requests = listRequests(ws);
+  const data = args.iterationData === undefined ? undefined : await loadIterationData(args.iterationData);
 
   let target: RunTarget;
   if (args.selector === undefined) {
@@ -161,12 +172,22 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
     urlOverride: args.url,
     tlsOverride: args.tls,
     timeoutMs: args.timeoutMs,
+    scriptTimeoutMs: args.scriptTimeoutMs,
     preferDescriptor: args.preferDescriptor,
     save: args.save,
   };
 
   if (target.kind === "group") {
-    const group = await runGroup({ ...shared, entries: target.group.requests, groupPath: target.group.path, bail: args.bail });
+    const group = await runGroup({
+      ...shared,
+      entries: target.group.requests,
+      groupPath: target.group.path,
+      bail: args.bail,
+      iterationCount: resolveIterations(args.iterationCount, data?.rows ?? []),
+      data: data?.rows ?? [],
+      delayRequestMs: args.delayRequestMs,
+      runTimeoutMs: args.runTimeoutMs,
+    });
     return {
       output: renderGroupOutcome(group, { verbose: args.verbose, json: args.json }),
       exitCode: group.exitCode,
@@ -175,7 +196,13 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
     };
   }
 
-  const outcome = await runRequest({ ...shared, entry: target.entry });
+  if ((args.iterationCount ?? 1) > 1 || (data?.rows.length ?? 0) > 1) {
+    throw new CliError(`iterations require a collection or folder; "${target.entry.path}" is a single request`, {
+      details: ["run its parent collection or folder instead"],
+    });
+  }
+
+  const outcome = await runRequest({ ...shared, entry: target.entry, data: data?.rows[0] });
   return {
     output: renderOutcome(outcome, { verbose: args.verbose, json: args.json }),
     exitCode: outcome.exitCode,

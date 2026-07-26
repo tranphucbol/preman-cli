@@ -293,6 +293,7 @@ function countsLine(outcome: GroupRunOutcome): string {
   const tally = (status: ItemStatus) => outcome.items.filter((i) => i.status === status).length;
   const total = outcome.items.length;
   const parts = [`${total} ${total === 1 ? "request" : "requests"}`, pc.green(`${tally("ok")} ok`)];
+  if (outcome.iterations > 1) parts.unshift(`${outcome.iterations} iterations`);
 
   const optional: Array<[ItemStatus, (n: number) => string, (s: string) => string]> = [
     ["business", (n) => `${n} business`, pc.yellow],
@@ -312,6 +313,7 @@ function countsLine(outcome: GroupRunOutcome): string {
 
 const BAIL_FLAG_LINE = "stopped early: --bail";
 const ABORT_FALLBACK = "an inherited script failed";
+const TIMEOUT_BAIL_LINE = "stopped early: run budget exhausted";
 
 /**
  * Explains why a group run stopped short. `--bail` is the user's own doing; an
@@ -319,6 +321,7 @@ const ABORT_FALLBACK = "an inherited script failed";
  */
 function stoppedLine(outcome: GroupRunOutcome): string | undefined {
   if (outcome.bailReason === "bail-flag") return pc.yellow(BAIL_FLAG_LINE);
+  if (outcome.bailReason === "timeout") return pc.red(TIMEOUT_BAIL_LINE);
   if (outcome.bailReason !== "inherited-script") return undefined;
   const cause = outcome.items[outcome.items.length - 1]?.error?.message ?? ABORT_FALLBACK;
   return pc.red(`aborted: ${cause}`);
@@ -349,7 +352,8 @@ export function renderGroupOutcome(outcome: GroupRunOutcome, options: RenderOpti
     const width = Math.max(...outcome.items.map((i) => i.entry.path.length));
     for (const item of outcome.items) {
       const style = STATUS_STYLE[item.status];
-      lines.push(`${style.paint(style.mark)} ${item.entry.path.padEnd(width)}  ${itemLabel(item)}`);
+      const iteration = outcome.iterations > 1 ? `[${item.iteration}] ` : "";
+      lines.push(`${iteration}${style.paint(style.mark)} ${item.entry.path.padEnd(width)}  ${itemLabel(item)}`);
       for (const detail of item.error?.details ?? []) lines.push(pc.dim(`  ${detail}`));
       lines.push(...failedTestLines(item));
     }
@@ -375,12 +379,14 @@ export function toGroupJsonReport(outcome: GroupRunOutcome) {
     group: outcome.groupPath,
     items: outcome.items.map((item) => ({
       request: { name: item.entry.name, path: item.entry.path, file: item.entry.filePath, kind: item.entry.kind },
+      iteration: item.iteration,
       status: item.status,
       error: item.error ?? null,
       run: item.outcome ? toJsonReport(item.outcome) : null,
     })),
     bailed: outcome.bailed,
     bailReason: outcome.bailReason ?? null,
+    iterations: outcome.iterations,
     savedVars: outcome.savedVars,
     savedTo: outcome.savedTo ?? null,
     durationMs: Number(outcome.durationMs.toFixed(3)),

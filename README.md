@@ -87,6 +87,12 @@ Common options:
 | `--ssl-client-key <path>` | Private key for that certificate |
 | `--ssl-client-passphrase <text>` | Passphrase for an encrypted key |
 | `-k, --insecure` | Skip server certificate verification |
+| `-n, --iteration-count <n>` | Run a collection or folder multiple times |
+| `--iteration-data <path>` | Load iteration rows from a JSON or CSV file |
+| `--delay-request <ms>` | Wait between collection requests |
+| `--timeout <ms>` | Set the whole-run budget when used with `--timeout-request`; `0` is unbounded |
+| `--timeout-request <ms>` | Set each request deadline; defaults to `30000` |
+| `--timeout-script <ms>` | Set each script deadline; defaults to `5000` |
 | `--no-save` | Do not write script changes back to the environment |
 | `--bail` | Stop a collection run after the first failure |
 | `--json` | Print machine-readable output |
@@ -99,6 +105,7 @@ Run `preman --help` for every option.
 - Unary gRPC using the request's `.proto` file or embedded descriptor
 - HTTP requests, including `urlencoded` form bodies
 - Collections and folders in Postman order
+- Repeated collection runs with JSON or CSV iteration data
 - Postman environments, globals, collection variables, and dynamic variables
 - Pre-request, post-response, and gRPC `onMessage` scripts
 - Collection- and folder-level scripts and authentication, inherited by descendant requests

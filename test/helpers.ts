@@ -15,6 +15,7 @@ export const FIXTURE_WS = join(FIXTURES_DIR, "ws");
 export const FIXTURE_HTTP_WS = join(FIXTURES_DIR, "http-ws");
 export const FIXTURE_PROTO = join(FIXTURE_WS, "src/main/proto/echo/echo.proto");
 export const FIXTURE_INCLUDE_DIR = join(FIXTURE_WS, "src/main/proto");
+export const DATA_DIR = join(FIXTURES_DIR, "data");
 
 /** Committed certificates; regenerate with `test/fixtures/ssl/generate.sh`. */
 export const SSL_DIR = join(FIXTURES_DIR, "ssl");
@@ -23,6 +24,10 @@ export const CLIENT_KEY_PASSPHRASE = "preman-test";
 
 export function sslPath(name: string): string {
   return join(SSL_DIR, name);
+}
+
+export function dataPath(name: string): string {
+  return join(DATA_DIR, name);
 }
 
 export function fixtureWorkspace(): Workspace {

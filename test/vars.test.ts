@@ -18,6 +18,16 @@ describe("VariableStore", () => {
     expect(store.get("missing")).toBeUndefined();
   });
 
+  it("givenDataAndEnvironmentBothSetKey_whenReading_thenEnvironmentWins", () => {
+    const store = new VariableStore({ data: { value: "data" }, environment: { value: "environment" } });
+    expect(store.get("value")).toBe("environment");
+  });
+
+  it("givenDataAndCollectionBothSetKey_whenReading_thenDataWins", () => {
+    const store = new VariableStore({ collection: { value: "collection" }, data: { value: "data" } });
+    expect(store.get("value")).toBe("data");
+  });
+
   it("givenNoWrites_whenCheckingChanges_thenNothingIsDirty", () => {
     const store = new VariableStore({ environment: { a: "1" } });
     expect(store.hasChanges("environment")).toBe(false);

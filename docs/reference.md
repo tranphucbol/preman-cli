@@ -35,7 +35,12 @@ preman env set <key> <value>
 | `--ssl-client-key <path>` | Private key for `--ssl-client-cert`. |
 | `--ssl-client-passphrase <text>` | Passphrase for an encrypted private key. |
 | `-k, --insecure` | Skip server certificate verification. |
-| `--timeout <ms>` | Set the call deadline. The default is `30000`. |
+| `-n, --iteration-count <n>` | Number of collection or folder passes. Defaults to the data row count, or `1`. |
+| `--iteration-data <path>` | Load iteration rows from a `.json` or `.csv` file. |
+| `--delay-request <ms>` | Delay between requests, including iteration boundaries. The default is `0`. |
+| `--timeout <ms>` | Whole-run budget when paired with `--timeout-request`; `0` means unbounded. Alone, temporarily retains its old per-request meaning and prints a deprecation warning. |
+| `--timeout-request <ms>` | Per-request deadline. The default is `30000`. |
+| `--timeout-script <ms>` | Per-script deadline. The default is `5000`. |
 | `--var <key=value>` | Set a local variable at the highest precedence. Repeatable. |
 | `--no-save` | Do not write script-modified variables back to the environment file. |
 | `--descriptor` | For gRPC, use the embedded descriptor instead of the `.proto` file. |
@@ -99,7 +104,28 @@ aborted: folder ZAS script "http:beforeRequest" failed: login returned 500
 ```
 
 With `--json`, a group emits an object containing `group`, `items`, `bailed`, `bailReason`,
-`savedVars`, and `exitCode`. `bailReason` is `"bail-flag"`, `"inherited-script"`, or `null`.
+`iterations`, `savedVars`, and `exitCode`. Each item carries a zero-based `iteration`.
+`bailReason` is `"bail-flag"`, `"inherited-script"`, `"timeout"`, or `null`.
+
+## Iterations and data files
+
+`-n, --iteration-count` repeats a collection or folder. `--iteration-data` accepts a JSON array of
+objects or a CSV with a header row. Values become strings; JSON `null` becomes an empty string.
+When no count is supplied, the number of rows decides the count. When both are supplied, the
+explicit count wins and rows cycle by modulo.
+
+```text
+preman run payment --iteration-data users.csv
+preman run payment -n 20 --iteration-data users.json
+```
+
+The variable store and cookie jar are shared across passes. Scripts read the current row through
+the read-only `pm.iterationData` API (`get`, `has`, and `toObject`), while `pm.info.iteration` and
+`pm.info.iterationCount` identify the pass. Environment changes are written once after the final
+pass. `--bail`, inherited-script aborts, and run-budget exhaustion stop the whole run.
+
+Iterations do not apply to a single-request selector. A multi-row data file or count above one must
+target the parent collection or folder.
 
 ## Exit codes
 
@@ -270,8 +296,9 @@ Variable precedence, from lowest to highest, is:
 
 1. Globals
 2. Collection variables
-3. Environment variables
-4. Local variables from `--var` and script writes
+3. Iteration data
+4. Environment variables
+5. Local variables from `--var` and script writes
 
 `{{name}}` tokens are expanded recursively with cycle detection. Unresolved tokens are errors and
 name the missing variables instead of being sent on the wire.
@@ -336,9 +363,9 @@ Request-level output is untagged.
 
 ### Sandbox
 
-The sandbox provides `pm.environment`, `pm.globals`, `pm.collectionVariables`, `pm.variables`,
-`pm.info`, `pm.request`, `pm.expect`, `pm.test`, `pm.cookies`, `pm.sendRequest`, and the legacy
-`postman.setEnvironmentVariable` family.
+The sandbox provides `pm.environment`, `pm.globals`, `pm.collectionVariables`, `pm.iterationData`,
+`pm.variables`, `pm.info`, `pm.request`, `pm.expect`, `pm.test`, `pm.cookies`, `pm.sendRequest`, and
+the legacy `postman.setEnvironmentVariable` family.
 
 #### Libraries
 

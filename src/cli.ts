@@ -7,7 +7,11 @@ import { commandRun } from "./commands/run.js";
 import { CliError, EXIT, type ExitCode } from "./errors.js";
 
 const VERSION = "0.1.0";
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_SCRIPT_TIMEOUT_MS = 5_000;
+const DEFAULT_RUN_TIMEOUT_MS = 0;
+const TIMEOUT_DEPRECATION =
+  "--timeout now means the whole-run budget; use --timeout-request for the per-call deadline";
 
 const HELP = `${pc.bold("preman")} — run Postman-format gRPC and HTTP requests from the CLI
 
@@ -35,7 +39,17 @@ ${pc.bold("options")}
       --ssl-client-passphrase <text>
                         passphrase for an encrypted --ssl-client-key
   -k, --insecure        skip server certificate verification
-      --timeout <ms>    call deadline (default: ${DEFAULT_TIMEOUT_MS})
+  -n, --iteration-count <n>
+                        number of collection or folder passes (default: data rows or 1)
+      --iteration-data <path>
+                        JSON or CSV rows used by collection iterations
+      --delay-request <ms>
+                        delay between collection requests (default: 0)
+      --timeout <ms>    whole-run budget; 0 means unbounded (default: 0)
+      --timeout-request <ms>
+                        per-call deadline (default: ${DEFAULT_REQUEST_TIMEOUT_MS})
+      --timeout-script <ms>
+                        per-script deadline (default: ${DEFAULT_SCRIPT_TIMEOUT_MS})
       --var <k=v>       set a variable, highest precedence; repeatable
       --no-save         do not write script-modified variables back to the env file
       --descriptor      gRPC only: use the request's embedded descriptor
@@ -75,11 +89,53 @@ function parseVars(entries: string[]): Record<string, string> {
   return out;
 }
 
-function parseTimeout(raw: string | undefined): number {
-  if (raw === undefined) return DEFAULT_TIMEOUT_MS;
+function parsePositiveInteger(raw: string, flag: string): number {
   const ms = Number.parseInt(raw, 10);
-  if (!Number.isInteger(ms) || ms <= 0) throw new CliError(`invalid --timeout "${raw}"; expected a positive integer`);
+  if (!Number.isInteger(ms) || String(ms) !== raw.trim() || ms <= 0) {
+    throw new CliError(`invalid ${flag} "${raw}"; expected a positive integer`);
+  }
   return ms;
+}
+
+function parseTimeout(raw: string | undefined, flag: string, fallback: number): number {
+  return raw === undefined ? fallback : parsePositiveInteger(raw, flag);
+}
+
+function parseBudget(raw: string | undefined, flag: string, fallback = DEFAULT_RUN_TIMEOUT_MS): number {
+  if (raw === undefined) return fallback;
+  const ms = Number.parseInt(raw, 10);
+  if (!Number.isInteger(ms) || String(ms) !== raw.trim() || ms < 0) {
+    throw new CliError(`invalid ${flag} "${raw}"; expected a non-negative integer`);
+  }
+  return ms;
+}
+
+export interface ResolvedTimeouts {
+  runMs: number;
+  requestMs: number;
+  scriptMs: number;
+  warning?: string;
+}
+
+export function resolveTimeouts(values: {
+  timeout?: string;
+  "timeout-request"?: string;
+  "timeout-script"?: string;
+}): ResolvedTimeouts {
+  const scriptMs = parseTimeout(values["timeout-script"], "--timeout-script", DEFAULT_SCRIPT_TIMEOUT_MS);
+  if (values["timeout-request"] === undefined && values.timeout !== undefined) {
+    return {
+      runMs: DEFAULT_RUN_TIMEOUT_MS,
+      requestMs: parseTimeout(values.timeout, "--timeout", DEFAULT_REQUEST_TIMEOUT_MS),
+      scriptMs,
+      warning: TIMEOUT_DEPRECATION,
+    };
+  }
+  return {
+    runMs: parseBudget(values.timeout, "--timeout"),
+    requestMs: parseTimeout(values["timeout-request"], "--timeout-request", DEFAULT_REQUEST_TIMEOUT_MS),
+    scriptMs,
+  };
 }
 
 const OPTIONS = {
@@ -95,6 +151,12 @@ const OPTIONS = {
   "ssl-client-passphrase": { type: "string" },
   insecure: { type: "boolean", short: "k" },
   timeout: { type: "string" },
+  "timeout-request": { type: "string" },
+  "timeout-script": { type: "string" },
+  "iteration-count": { type: "string", short: "n" },
+  // `-d` remains the established workspace shortcut for `--dir`.
+  "iteration-data": { type: "string" },
+  "delay-request": { type: "string" },
   var: { type: "string", multiple: true },
   "no-save": { type: "boolean" },
   descriptor: { type: "boolean" },
@@ -155,6 +217,8 @@ export async function main(argv: string[]): Promise<ExitCode> {
     }
 
     case "run": {
+      const timeouts = resolveTimeouts(values);
+      if (timeouts.warning !== undefined) process.stderr.write(`${pc.yellow(`warn: ${timeouts.warning}`)}\n`);
       const { output, exitCode } = await commandRun({
         dir,
         selector: rest.length > 0 ? rest.join(" ") : undefined,
@@ -168,7 +232,15 @@ export async function main(argv: string[]): Promise<ExitCode> {
           clientPassphrase: values["ssl-client-passphrase"],
           insecure: values.insecure === true ? true : undefined,
         },
-        timeoutMs: parseTimeout(values.timeout),
+        runTimeoutMs: timeouts.runMs,
+        timeoutMs: timeouts.requestMs,
+        scriptTimeoutMs: timeouts.scriptMs,
+        iterationCount:
+          values["iteration-count"] === undefined
+            ? undefined
+            : parsePositiveInteger(values["iteration-count"], "--iteration-count"),
+        iterationData: values["iteration-data"],
+        delayRequestMs: parseBudget(values["delay-request"], "--delay-request"),
         vars: parseVars(values.var ?? []),
         save: values["no-save"] !== true,
         preferDescriptor: values.descriptor === true,

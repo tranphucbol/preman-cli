@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import type { ZodError } from "zod";
 import { CliError, EXIT, type ExitCode } from "./errors.js";
+import { rowFor, type DataRow } from "./data/rows.js";
 import { applyGrpcAuth } from "./grpc/auth.js";
 import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
 import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
@@ -73,11 +74,19 @@ export interface RunOptions {
   globals: Record<string, string>;
   /** `--var key=value` overrides, highest precedence. */
   localVars: Record<string, string>;
+  /** The current iteration's read-only data row. */
+  data?: DataRow;
   urlOverride: string | undefined;
   tlsOverride: boolean | undefined;
   /** Certificate material shared by both transports; resolved once per run. */
   tlsCerts: TlsCertOptions;
   timeoutMs: number;
+  /** Wall-clock budget for each pre-request or post-response script. */
+  scriptTimeoutMs?: number;
+  /** Zero-based collection iteration. Single-request runs use zero. */
+  iteration?: number;
+  /** Total requested iterations. Single-request runs use one. */
+  iterationCount?: number;
   preferDescriptor: boolean;
   /** Persist script-mutated environment variables back to the YAML file. */
   save: boolean;
@@ -198,9 +207,10 @@ function syncFinalHttpRequest(request: LiveHttpRequest, invoke: HttpInvokeResult
   if (invoke.requestBody !== initialBody) request.body = new LiveBody(undefined, invoke.requestBody ?? "");
 }
 
-function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVars">): VariableStore {
+function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVars" | "data">): VariableStore {
   return new VariableStore({
     globals: options.globals,
+    data: options.data ?? {},
     environment: options.environment?.values ?? {},
     local: options.localVars,
   });
@@ -251,6 +261,10 @@ interface ScriptSinkOptions {
   cookies: CookieJar;
   /** Budget for each `pm.sendRequest`, matching the request's own timeout. */
   requestTimeoutMs: number;
+  /** Independent wall-clock budget for each script. */
+  scriptTimeoutMs?: number;
+  iteration?: number;
+  iterationCount?: number;
   /** `pm.sendRequest` dials over the same trust store as the request itself. */
   tlsCerts: TlsCertOptions;
   /**
@@ -277,7 +291,10 @@ function scriptSink(options: ScriptSinkOptions): ScriptSink {
         info: { requestName: options.requestName, eventName: script.rawType },
         origin: script.origin,
         request: options.request(),
+        timeoutMs: options.scriptTimeoutMs,
         requestTimeoutMs: options.requestTimeoutMs,
+        iteration: options.iteration,
+        iterationCount: options.iterationCount,
         tlsCerts: options.tlsCerts,
         ...(response === undefined ? {} : { response }),
       });
@@ -374,6 +391,9 @@ async function runGrpcRequest(
     store,
     cookies,
     requestTimeoutMs: options.timeoutMs,
+    scriptTimeoutMs: options.scriptTimeoutMs,
+    iteration: options.iteration,
+    iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,
     request: () => liveRequest,
   });
@@ -504,6 +524,9 @@ async function runHttpRequest(
     store,
     cookies,
     requestTimeoutMs: options.timeoutMs,
+    scriptTimeoutMs: options.scriptTimeoutMs,
+    iteration: options.iteration,
+    iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,
     request: () => live.request,
   });
@@ -582,6 +605,8 @@ export type ItemStatus = "ok" | "business" | "transport" | "test" | "error" | "s
 
 export interface GroupRunItem {
   entry: RequestEntry;
+  /** Zero-based collection iteration that produced this item. */
+  iteration: number;
   status: ItemStatus;
   /** Present when the request reached the wire. */
   outcome: RunOutcome | undefined;
@@ -589,21 +614,27 @@ export interface GroupRunItem {
   error: { message: string; details: string[] } | undefined;
 }
 
-export interface GroupRunOptions extends Omit<RunOptions, "entry" | "store" | "cookies"> {
+export interface GroupRunOptions
+  extends Omit<RunOptions, "entry" | "store" | "cookies" | "data" | "iteration" | "iterationCount"> {
   /** Requests to run, in order. */
   entries: RequestEntry[];
   /** Collection or folder path, for reporting. */
   groupPath: string;
   /** Stop after the first request that does not fully succeed. */
   bail: boolean;
+  iterationCount: number;
+  data: DataRow[];
+  delayRequestMs: number;
+  /** Whole-run budget. Zero means unbounded. */
+  runTimeoutMs: number;
 }
 
 /**
  * Why a group run stopped before its last request. `bail-flag` is the user asking for it;
- * `inherited-script` is decision 6 - a collection- or folder-level script threw, so the
- * shared precondition every remaining request depends on is broken.
+ * `inherited-script` means a shared precondition broke; `timeout` means the run budget
+ * elapsed between requests.
  */
-export type BailReason = "bail-flag" | "inherited-script";
+export type BailReason = "bail-flag" | "inherited-script" | "timeout";
 
 export interface GroupRunOutcome {
   groupPath: string;
@@ -611,6 +642,8 @@ export interface GroupRunOutcome {
   /** True when the run stopped short; `bailReason` says who stopped it. */
   bailed: boolean;
   bailReason: BailReason | undefined;
+  /** Number of iterations entered before completion or an early stop. */
+  iterations: number;
   savedVars: Record<string, string>;
   savedTo: string | undefined;
   durationMs: number;
@@ -652,66 +685,122 @@ function aggregateExit(items: GroupRunItem[]): ExitCode {
   return EXIT.OK;
 }
 
+const FIRST_ITERATION = 0;
+const NO_RUN_BUDGET = 0;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runBudgetExhausted(runTimeoutMs: number, started: number): boolean {
+  return runTimeoutMs !== NO_RUN_BUDGET && performance.now() - started >= runTimeoutMs;
+}
+
+/** Replace the transient data layer without disturbing the shared mutable scopes. */
+function replaceData(store: VariableStore, data: DataRow | undefined): void {
+  for (const key of Object.keys(store.snapshot("data"))) store.unset("data", key);
+  for (const [key, value] of Object.entries(data ?? {})) store.set("data", key, value);
+}
+
 /**
  * Run every request in a collection or folder, in Postman `order`.
  *
  * All requests share one variable store and one cookie jar, so a `trans_id`
  * computed by the first request's script and a session cookie its response set are
- * both visible to the rest. The environment writeback is deferred to the end so the
- * YAML file is rewritten once, not once per request.
+ * both visible to later requests and iterations. The environment writeback is deferred
+ * to the end so the YAML file is rewritten once, not once per request.
  */
 export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcome> {
   if (options.entries.length === 0) {
     throw new CliError(`"${options.groupPath}" contains no requests`);
   }
 
-  const store = newStore(options);
+  const store = newStore({ ...options, data: {} });
   const cookies = new CookieJar();
   const started = performance.now();
   const items: GroupRunItem[] = [];
   let bailReason: BailReason | undefined;
+  let iterations = 0;
+  let attemptedRequest = false;
+  let stop = false;
 
-  for (const entry of options.entries) {
-    if (!RUNNABLE_KINDS.has(entry.kind)) {
-      items.push({
-        entry,
-        status: "skipped",
-        outcome: undefined,
-        error: { message: `${entry.kind} is not supported yet`, details: [] },
-      });
-      continue;
-    }
+  for (let iteration = FIRST_ITERATION; iteration < options.iterationCount; iteration += 1) {
+    iterations += 1;
+    const data = rowFor(options.data, iteration);
+    replaceData(store, data);
 
-    try {
-      const outcome = await runRequest({ ...options, entry, store, cookies, save: false });
-      items.push({ entry, status: statusOf(outcome), outcome, error: undefined });
-    } catch (cause) {
-      items.push({ entry, status: "error", outcome: undefined, error: toErrorInfo(cause) });
-      if (cause instanceof CliError && cause.abortsGroup) {
-        // Checked before `options.bail` so the reason names the real culprit rather
-        // than a flag the user may not even have passed.
-        bailReason = "inherited-script";
+    for (const entry of options.entries) {
+      if (runBudgetExhausted(options.runTimeoutMs, started)) {
+        bailReason = "timeout";
+        stop = true;
+        break;
+      }
+
+      if (!RUNNABLE_KINDS.has(entry.kind)) {
+        items.push({
+          entry,
+          iteration,
+          status: "skipped",
+          outcome: undefined,
+          error: { message: `${entry.kind} is not supported yet`, details: [] },
+        });
+        continue;
+      }
+
+      if (attemptedRequest && options.delayRequestMs > 0) await delay(options.delayRequestMs);
+      if (runBudgetExhausted(options.runTimeoutMs, started)) {
+        bailReason = "timeout";
+        stop = true;
+        break;
+      }
+      attemptedRequest = true;
+
+      try {
+        const outcome = await runRequest({
+          ...options,
+          entry,
+          store,
+          cookies,
+          save: false,
+          data,
+          iteration,
+          iterationCount: options.iterationCount,
+        });
+        items.push({ entry, iteration, status: statusOf(outcome), outcome, error: undefined });
+      } catch (cause) {
+        items.push({ entry, iteration, status: "error", outcome: undefined, error: toErrorInfo(cause) });
+        if (cause instanceof CliError && cause.abortsGroup) {
+          // Checked before `options.bail` so the reason names the real culprit rather
+          // than a flag the user may not even have passed.
+          bailReason = "inherited-script";
+          stop = true;
+          break;
+        }
+      }
+
+      const status = items[items.length - 1]!.status;
+      if (options.bail && status !== "ok") {
+        bailReason = "bail-flag";
+        stop = true;
         break;
       }
     }
-
-    const status = items[items.length - 1]!.status;
-    if (options.bail && status !== "ok") {
-      bailReason = "bail-flag";
-      break;
-    }
+    if (stop) break;
   }
 
   const { savedVars, savedTo } = persist(options, store);
+  const itemExitCode = aggregateExit(items);
+  const exitCode = bailReason === "timeout" && itemExitCode !== EXIT.CLI ? EXIT.TRANSPORT : itemExitCode;
 
   return {
     groupPath: options.groupPath,
     items,
     bailed: bailReason !== undefined,
     bailReason,
+    iterations,
     savedVars,
     savedTo,
     durationMs: performance.now() - started,
-    exitCode: aggregateExit(items),
+    exitCode,
   };
 }

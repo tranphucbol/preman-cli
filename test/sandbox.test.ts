@@ -135,6 +135,36 @@ describe("runScript", () => {
     expect(logs[0]?.text).toBe('Long Chau beforeInvoke pe.aev2.ExchangeService.Exchange {"a":1}');
   });
 
+  it("givenIterationData_whenScriptReads_thenValueReturned", async () => {
+    const store = new VariableStore({ data: { msisdn: "84900000001" } });
+    const logs = await run(`console.log(pm.iterationData.get("msisdn"), pm.iterationData.has("msisdn"));`, store);
+    expect(logs[0]?.text).toBe("84900000001 true");
+  });
+
+  it("givenIterationData_whenScriptCallsSet_thenTypeError", async () => {
+    const store = new VariableStore({ data: { msisdn: "84900000001" } });
+    await expect(run(`pm.iterationData.set("msisdn", "changed");`, store)).rejects.toThrow(/set is not a function/);
+    expect(store.getIn("data", "msisdn")).toBe("84900000001");
+  });
+
+  it("givenIterationTwoOfFive_whenScriptReadsPmInfo_thenReportsTwoAndFive", async () => {
+    const result = await runScript({
+      code: `console.log(pm.info.iteration, pm.info.iterationCount);`,
+      store: new VariableStore(),
+      info: { requestName: "iterate", eventName: "beforeInvoke" },
+      origin: REQUEST_ORIGIN,
+      request: liveRequest({ url: "localhost:9090", methodPath: "", body: "" }),
+      iteration: 2,
+      iterationCount: 5,
+    });
+    expect(result.logs[0]?.text).toBe("2 5");
+  });
+
+  it("givenNoIterationOptions_whenScriptReadsPmInfo_thenReportsZeroAndOne", async () => {
+    const logs = await run(`console.log(pm.info.iteration, pm.info.iterationCount);`);
+    expect(logs[0]?.text).toBe("0 1");
+  });
+
   it("givenToObject_whenRun_thenMergesScopesByPrecedence", async () => {
     const store = new VariableStore({ globals: { shared: "g", g: "1" }, environment: { shared: "e" } });
     const logs = await run(`console.log(JSON.stringify(pm.variables.toObject()));`, store);
