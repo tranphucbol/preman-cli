@@ -1,0 +1,40 @@
+$kind: http-request
+name: Signed Form
+# Mirrors a real bank collection: the fields are authored as a map, and a
+# pre-request script reads them back and signs them with CryptoJS.
+url: "{{http_url}}/echo"
+method: POST
+body:
+  type: urlencoded
+  content:
+    clientid: "11"
+    note: "a+b/c="
+    sig: "{{form_sig}}"
+auth:
+  type: noauth
+scripts:
+  - type: beforeRequest
+    language: javascript
+    code: |-
+      const fields = {};
+      pm.request.body.urlencoded.toJSON().forEach(function (entry) {
+        fields[entry.key] = entry.value;
+      });
+
+      pm.test("scripts see the authored fields, not the encoded string", function () {
+        pm.expect(pm.request.body.mode).to.equal("urlencoded");
+        pm.expect(fields.note).to.equal("a+b/c=");
+        // Still a placeholder here: interpolation happens after the script runs.
+        pm.expect(fields.sig).to.equal("{{form_sig}}");
+      });
+
+      pm.variables.set("form_sig", CryptoJS.SHA256(fields.clientid + "|" + fields.note).toString());
+  - type: afterResponse
+    language: javascript
+    code: |-
+      pm.test("the form reached the server percent-encoded", function () {
+        const sent = pm.response.json().body;
+        pm.expect(sent).to.contain("note=a%2Bb%2Fc%3D");
+        pm.expect(sent).to.contain("sig=" + CryptoJS.SHA256("11|a+b/c=").toString());
+      });
+order: 90

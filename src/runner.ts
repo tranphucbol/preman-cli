@@ -7,6 +7,7 @@ import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
 import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
 import { resolveTarget, type GrpcTarget } from "./grpc/target.js";
 import { CookieJar } from "./http/cookies.js";
+import { readRequestBody } from "./http/body.js";
 import { invokeHttp, NO_RESPONSE_STATUS, type HttpInvokeResult } from "./http/invoke.js";
 import { buildHttpRequest } from "./http/request.js";
 import type { HttpTarget } from "./http/target.js";
@@ -435,11 +436,17 @@ async function runHttpRequest(
   cookies: CookieJar,
 ): Promise<HttpRunOutcome> {
   const { entry } = options;
-  const rawBody = request.body?.content ?? "";
+  const rawBody = readRequestBody(request);
 
   // Scripts see the raw url and body first; once the request is built they see
   // what actually went out.
-  let info: ScriptRequestInfo = { url: request.url, method: request.method, body: rawBody };
+  let info: ScriptRequestInfo = {
+    url: request.url,
+    method: request.method,
+    body: rawBody.raw,
+    bodyMode: rawBody.mode,
+    urlencoded: rawBody.urlencoded,
+  };
 
   const chain = resolveScriptChain({
     ancestors: entry.ancestors,
@@ -488,6 +495,10 @@ async function runHttpRequest(
     method: invoke.method,
     headers: invoke.requestHeaders,
     body: invoke.requestBody ?? "",
+    bodyMode: rawBody.mode,
+    // The authored fields, not the encoded string: a post-response script that
+    // logs a field should see the same value the pre-request script did.
+    urlencoded: rawBody.urlencoded,
   };
 
   // 4. Post-response scripts, where the `pm.test` assertions live.

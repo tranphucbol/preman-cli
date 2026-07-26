@@ -93,13 +93,13 @@ Run `preman --help` for every option.
 ## Supported
 
 - Unary gRPC using the request's `.proto` file or embedded descriptor
-- HTTP requests
+- HTTP requests, including `urlencoded` form bodies
 - Collections and folders in Postman order
 - Postman environments, globals, collection variables, and dynamic variables
 - Pre-request, post-response, and gRPC `onMessage` scripts
 - Collection- and folder-level scripts and authentication, inherited by descendant requests
 - `bearer`, `basic`, and `apikey` authentication for both HTTP and gRPC
-- `pm.test`, `pm.expect`, cookies, and `pm.sendRequest`
+- `pm.test`, `pm.expect`, cookies, `pm.sendRequest`, and `CryptoJS` in scripts
 - Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
 - Environment writeback and JSON output for CI
 

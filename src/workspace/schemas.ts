@@ -139,7 +139,11 @@ export const httpRequestSchema = z
       .object({
         /** `json`, `text`, `xml`, ... Only used to pick a default `content-type`. */
         type: z.string().optional(),
-        content: z.string().optional(),
+        /**
+         * A text payload, or — for `type: urlencoded` — the form fields, in either
+         * key/value shape. `src/http/body.ts` decides which reading applies.
+         */
+        content: z.union([z.string(), keyValueSourceSchema]).optional(),
       })
       .passthrough()
       .optional(),

@@ -196,9 +196,23 @@ because silent authentication is how a stale token turns into an unexplained `40
 
 ### Bodies, cookies, redirects, and compression
 
-The request body is sent verbatim. It is not parsed and serialized again, and a body on `GET` is
-not discarded. `content-type` is inferred from `body.type` only when the request does not provide
-one.
+A text body is sent verbatim. It is not parsed and serialized again, and a body on `GET` is not
+discarded. `content-type` is inferred from `body.type` only when the request does not provide one.
+
+A `urlencoded` body may instead be authored as form fields, in either key/value shape:
+
+```yaml
+body:
+  type: urlencoded
+  content:
+    clientid: "11"
+    sig: "{{sig}}"
+```
+
+Each value is interpolated on its own and then percent-encoded, so a resolved variable containing
+`+`, `/`, or `=` survives the trip. Fields keep their authored order, and `disabled: true` entries
+are dropped. A form with no fields sends no body at all. Structured `content` under any other
+`body.type` is an error. A `urlencoded` body written as a string is still sent verbatim.
 
 Each run has an in-memory cookie jar. Collection runs share it across requests, and
 `pm.sendRequest` uses the same jar. Domain and path matching follow RFC 6265. `HttpOnly` cookies are
@@ -324,7 +338,22 @@ Request-level output is untagged.
 
 The sandbox provides `pm.environment`, `pm.globals`, `pm.collectionVariables`, `pm.variables`,
 `pm.info`, `pm.request`, `pm.expect`, `pm.test`, `pm.cookies`, `pm.sendRequest`, and the legacy
-`postman.setEnvironmentVariable` family.
+`postman.setEnvironmentVariable` family. `CryptoJS` is a global, as it is in Postman, so a
+pre-request script can sign or encrypt a payload.
+
+`pm.request.body` exposes `mode` (the request's `body.type`), `raw`, and `urlencoded`, a read-only
+list with `toJSON`, `all`, `idx`, `count`, `get`, `has`, `each`, `map`, and `filter`. It is always a
+list, so `pm.request.body.urlencoded.toJSON()` never throws. Pre-request scripts see the authored
+field values, before interpolation; writing to the list has no effect, because the request is read
+again after the script runs.
+
+```js
+const fields = {};
+pm.request.body.urlencoded.toJSON().forEach((entry) => {
+  fields[entry.key] = entry.value;
+});
+pm.variables.set("sig", CryptoJS.SHA256(`${fields.clientid}|${fields.time}`).toString());
+```
 
 Post-response scripts also receive `pm.response`. For gRPC it contains `code`, `status`, `message`,
 `responseTime`, `responseSize`, `metadata`, `headers`, `trailers`, and `messages`; `pm.message`

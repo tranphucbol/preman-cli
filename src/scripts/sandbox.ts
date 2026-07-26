@@ -1,7 +1,9 @@
+import CryptoJS from "crypto-js";
 import { createContext, runInContext } from "node:vm";
 import { CliError } from "../errors.js";
 import type { Scope, VariableStore } from "../vars/store.js";
 import { CookieJar } from "../http/cookies.js";
+import type { KeyValue } from "../http/headers.js";
 import { NO_RESPONSE_STATUS } from "../http/invoke.js";
 import { emptyTlsCerts, type TlsCertOptions } from "../tls/certs.js";
 import type { ScriptOrigin } from "./chain.js";
@@ -30,6 +32,43 @@ export interface ScriptRequestInfo {
   /** HTTP only, as actually sent. */
   headers?: Record<string, string | string[]>;
   body: string;
+  /** HTTP only: `body.type`, surfaced as `pm.request.body.mode`. */
+  bodyMode?: string;
+  /** HTTP only: the fields of a `urlencoded` body, before interpolation. */
+  urlencoded?: KeyValue[];
+}
+
+/** Postman's `PropertyList`, narrowed to the read-only members scripts use. */
+export interface FormList {
+  toJSON: () => KeyValue[];
+  all: () => KeyValue[];
+  idx: (index: number) => KeyValue | undefined;
+  count: () => number;
+  get: (key: string) => string | undefined;
+  has: (key: string) => boolean;
+  each: (fn: (entry: KeyValue, index: number) => void) => void;
+  map: <T>(fn: (entry: KeyValue, index: number) => T) => T[];
+  filter: (fn: (entry: KeyValue, index: number) => boolean) => KeyValue[];
+}
+
+/**
+ * Read-only on purpose: the authored request is re-read after the scripts run, so
+ * an `upsert` here would be silently discarded. Scripts sign or encrypt the fields
+ * and write the result to a variable the body interpolates instead.
+ */
+function makeFormList(entries: readonly KeyValue[]): FormList {
+  const copy = (): KeyValue[] => entries.map((entry) => ({ ...entry }));
+  return {
+    toJSON: copy,
+    all: copy,
+    idx: (index) => (entries[index] === undefined ? undefined : { ...entries[index] }),
+    count: () => entries.length,
+    get: (key) => entries.find((entry) => entry.key === key)?.value,
+    has: (key) => entries.some((entry) => entry.key === key),
+    each: (fn) => copy().forEach(fn),
+    map: (fn) => copy().map(fn),
+    filter: (fn) => copy().filter(fn),
+  };
 }
 
 /** What a gRPC post-response script can see about the call that just finished. */
@@ -447,7 +486,12 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       methodPath: request.methodPath,
       method: request.method,
       headers: makeHeaderList(request.headers ?? {}),
-      body: { raw: request.body },
+      body: {
+        mode: request.bodyMode ?? "",
+        raw: request.body,
+        /** Always a list, so `pm.request.body.urlencoded.toJSON()` never throws. */
+        urlencoded: makeFormList(request.urlencoded ?? []),
+      },
     },
     /**
      * Always present, even for gRPC (where the jar stays empty), so a script
@@ -474,6 +518,9 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       error: record("error"),
       debug: record("debug"),
     },
+    // Bundled because Postman ships it: collections that sign or encrypt a payload
+    // in a pre-request script reach for `CryptoJS` and have no other way to do it.
+    CryptoJS,
     // Explicitly provided so scripts can rely on them; everything else is absent.
     Date,
     Math,

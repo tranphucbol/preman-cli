@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { CliError } from "../src/errors.js";
 import { applyAuth } from "../src/http/auth.js";
+import { readRequestBody, renderBody } from "../src/http/body.js";
 import { CookieJar } from "../src/http/cookies.js";
 import {
   dropEmptyValues,
@@ -12,8 +13,10 @@ import {
   type KeyValue,
 } from "../src/http/headers.js";
 import { mergeQuery } from "../src/http/query.js";
+import { buildHttpRequest } from "../src/http/request.js";
 import { pathPortion, resolveHttpUrl } from "../src/http/target.js";
 import { VariableStore } from "../src/vars/store.js";
+import type { HttpRequest } from "../src/workspace/schemas.js";
 
 function pairs(headers: readonly KeyValue[]): Record<string, string> {
   return Object.fromEntries(headers.map((header) => [header.key, header.value]));
@@ -293,5 +296,65 @@ describe("CookieJar", () => {
     expect(jar.toObject()).toEqual({ sid: "abc", theme: "dark" });
     expect(jar.has("sid")).toBe(true);
     expect(jar.get("nope")).toBeUndefined();
+  });
+});
+
+describe("request bodies", () => {
+  const store = () => new VariableStore({ environment: { sig: "a+b/c=", tenant: "acme" } });
+
+  function httpRequest(body: HttpRequest["body"]): HttpRequest {
+    return { $kind: "http-request", url: "http://host/pay", method: "POST", body };
+  }
+
+  it("givenATextBody_whenRead_thenItIsKeptVerbatim", () => {
+    const parsed = readRequestBody(httpRequest({ type: "json", content: '{"a": 1}' }));
+    expect(parsed).toEqual({ mode: "json", raw: '{"a": 1}', urlencoded: undefined });
+    expect(renderBody(parsed, store())).toBe('{"a": 1}');
+  });
+
+  it("givenAUrlencodedMap_whenRead_thenTheFieldsKeepTheirOrder", () => {
+    const parsed = readRequestBody(httpRequest({ type: "urlencoded", content: { clientid: "11", sig: "{{sig}}" } }));
+    expect(parsed.urlencoded).toEqual([
+      { key: "clientid", value: "11" },
+      { key: "sig", value: "{{sig}}" },
+    ]);
+    expect(parsed.raw).toBe("");
+  });
+
+  it("givenAUrlencodedList_whenRead_thenDisabledFieldsAreDropped", () => {
+    const parsed = readRequestBody(
+      httpRequest({
+        type: "urlencoded",
+        content: [
+          { key: "keep", value: "1" },
+          { key: "skip", value: "2", disabled: true },
+        ],
+      }),
+    );
+    expect(parsed.urlencoded).toEqual([{ key: "keep", value: "1" }]);
+  });
+
+  it("givenAUrlencodedField_whenRendered_thenTheResolvedValueIsPercentEncoded", () => {
+    const parsed = readRequestBody(httpRequest({ type: "urlencoded", content: { sig: "{{sig}}", to: "{{tenant}}" } }));
+    expect(renderBody(parsed, store())).toBe("sig=a%2Bb%2Fc%3D&to=acme");
+  });
+
+  it("givenNoUrlencodedFields_whenRendered_thenThereIsNoBody", () => {
+    expect(renderBody(readRequestBody(httpRequest({ type: "urlencoded", content: {} })), store())).toBeUndefined();
+  });
+
+  it("givenAStructuredBodyThatIsNotUrlencoded_whenRead_thenCliError", () => {
+    expect(() => readRequestBody(httpRequest({ type: "json", content: { a: "1" } }))).toThrow(CliError);
+    expect(() => readRequestBody(httpRequest({ type: "json", content: { a: "1" } }))).toThrow(/urlencoded/);
+  });
+
+  it("givenAUrlencodedBody_whenBuilt_thenTheFormContentTypeIsSet", () => {
+    const built = buildHttpRequest({
+      request: httpRequest({ type: "urlencoded", content: { sig: "{{sig}}" } }),
+      auth: undefined,
+      store: store(),
+    });
+    expect(built.body).toBe("sig=a%2Bb%2Fc%3D");
+    expect(pairs(built.headers)["content-type"]).toBe("application/x-www-form-urlencoded");
   });
 });

@@ -1,7 +1,13 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { CliError } from "../src/errors.js";
 import { REQUEST_ORIGIN } from "../src/scripts/chain.js";
-import { runScript, type GrpcScriptResponse, type ScriptResponseInfo } from "../src/scripts/sandbox.js";
+import {
+  runScript,
+  type GrpcScriptResponse,
+  type ScriptRequestInfo,
+  type ScriptResponseInfo,
+} from "../src/scripts/sandbox.js";
 import { VariableStore } from "../src/vars/store.js";
 
 /** Verbatim `beforeInvoke` script from postman/collections/payment/Long Chau.request.yaml. */
@@ -358,7 +364,49 @@ describe("runScript (post-response scripts)", () => {
     );
     expect(logs[0]?.text).toBe("0 true");
   });
+
+  it("givenAUrlencodedBody_whenScriptReadsIt_thenTheFieldsAreVisible", async () => {
+    const { logs } = await runFull2(
+      `const fields = {};
+       pm.request.body.urlencoded.toJSON().forEach((entry) => { fields[entry.key] = entry.value; });
+       console.log(pm.request.body.mode, JSON.stringify(fields), pm.request.body.urlencoded.get("sig"));`,
+      { url: "http://host/pay", method: "POST", body: "", bodyMode: "urlencoded", urlencoded: FORM_FIELDS },
+    );
+    expect(logs[0]?.text).toBe('urlencoded {"clientid":"11","sig":"abc"} abc');
+  });
+
+  it("givenNoUrlencodedBody_whenScriptReadsIt_thenTheListIsEmptyRatherThanUndefined", async () => {
+    const { logs } = await runFull2(`console.log(pm.request.body.urlencoded.count(), pm.request.body.raw);`, {
+      url: "http://host/pay",
+      method: "POST",
+      body: '{"a":1}',
+      bodyMode: "json",
+    });
+    expect(logs[0]?.text).toBe('0 {"a":1}');
+  });
+
+  it("givenAScriptUsingCryptoJs_whenRun_thenTheDigestMatchesNode", async () => {
+    const store = new VariableStore();
+    await runFull2(`pm.environment.set("sig", CryptoJS.SHA256("11|payload").toString());`, undefined, store);
+    expect(store.get("sig")).toBe(createHash("sha256").update("11|payload").digest("hex"));
+  });
 });
+
+const FORM_FIELDS = [
+  { key: "clientid", value: "11" },
+  { key: "sig", value: "abc" },
+];
+
+/** Like {@link runFull}, but with the HTTP request facade the body tests need. */
+async function runFull2(code: string, request?: ScriptRequestInfo, store = new VariableStore()) {
+  return runScript({
+    code,
+    store,
+    info: { requestName: "Bank Query", eventName: "beforeRequest" },
+    origin: REQUEST_ORIGIN,
+    request: request ?? { url: "http://host/pay", method: "POST", body: "" },
+  });
+}
 
 async function run2(code: string, response: ScriptResponseInfo) {
   return (await runFull(code, new VariableStore(), response)).logs;

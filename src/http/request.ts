@@ -4,6 +4,7 @@ import type { VariableStore } from "../vars/store.js";
 import type { ResolvedAuth } from "../workspace/inherit.js";
 import type { HttpRequest } from "../workspace/schemas.js";
 import { applyAuth } from "./auth.js";
+import { BODY_CONTENT_TYPES, readRequestBody, renderBody } from "./body.js";
 import { dropEmptyValues, normalizeKeyValues, setHeaderIfAbsent, type KeyValue } from "./headers.js";
 import { mergeQuery } from "./query.js";
 import { pathPortion, resolveHttpUrl, type HttpTarget } from "./target.js";
@@ -30,16 +31,6 @@ export interface BuiltHttpRequest {
 const DEFAULT_METHOD = "GET";
 const CONTENT_TYPE = "content-type";
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
-
-/** `body.type` → default `content-type`. Postman stores the short name only. */
-const BODY_CONTENT_TYPES: Record<string, string> = {
-  json: "application/json",
-  text: "text/plain",
-  xml: "application/xml",
-  html: "text/html",
-  javascript: "application/javascript",
-  urlencoded: "application/x-www-form-urlencoded",
-};
 
 /**
  * Turn a parsed `http-request` into everything {@link import("./invoke.js").invokeHttp} needs.
@@ -98,13 +89,10 @@ export function buildHttpRequest(options: BuildHttpRequestOptions): BuiltHttpReq
   }
   warnings.push(...authWarnings);
 
-  const rawBody = request.body?.content ?? "";
-  // Sent verbatim: round-tripping through JSON.parse would reformat the payload and
-  // reject the deliberately non-JSON bodies real collections contain.
-  const body = rawBody.length > 0 ? interpolateStrict(rawBody, store, "request body") : undefined;
+  const parsedBody = readRequestBody(request);
+  const body = renderBody(parsedBody, store);
 
-  const bodyType = request.body?.type?.trim().toLowerCase() ?? "";
-  const contentType = BODY_CONTENT_TYPES[bodyType];
+  const contentType = BODY_CONTENT_TYPES[parsedBody.mode];
   if (body !== undefined && contentType !== undefined) {
     setHeaderIfAbsent(headers, CONTENT_TYPE, contentType);
   }

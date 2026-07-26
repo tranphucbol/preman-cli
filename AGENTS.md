@@ -24,7 +24,7 @@ src/workspace/        discovery, resources, collections/groups, environments, zo
 src/vars/             scoped store, {{token}} interpolation, dynamic vars
 src/scripts/          node:vm sandbox (pm shim), chai + gRPC assertions
 src/grpc/             schema resolution, target/TLS, unary invoke
-src/http/             target/URL, cookies, redirects, auth, compression, invoke
+src/http/             target/URL, bodies, cookies, redirects, auth, compression, invoke
 src/tls/certs.ts      --ssl-* layering, secure context, gRPC credentials, handshake hints
 src/output/render.ts  human + --json rendering
 src/errors.ts         CliError, EXIT codes

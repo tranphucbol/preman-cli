@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
@@ -156,6 +157,19 @@ describe("preman run (end to end against a real HTTP server)", () => {
     expect(report.request_headers["content-type"]).toBe("text/plain");
   });
 
+  it("givenAUrlencodedBodySignedByAScript_whenRun_thenTheFormReachesTheWireEncoded", async () => {
+    const { code, stdout } = await runCli(args("admin/Signed Form"));
+    const report = JSON.parse(stdout) as HttpReport;
+    const signature = createHash("sha256").update("11|a+b/c=").digest("hex");
+
+    expect(code).toBe(EXIT.OK);
+    expect(http.received[0]?.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+    expect(http.received[0]?.body).toBe(`clientid=11&note=a%2Bb%2Fc%3D&sig=${signature}`);
+    // Both scripts assert too: the pre-request one on the authored fields, the
+    // post-response one on what came back.
+    expect(report.testSummary).toMatchObject({ total: 2, passed: 2, failed: 0 });
+  });
+
   it("givenGzippedResponse_whenRun_thenTheBodyIsDecoded", async () => {
     const { code, stdout } = await runCli(args("admin/Squeezed"));
     const report = JSON.parse(stdout) as HttpReport;
@@ -218,6 +232,7 @@ describe("preman run (end to end against a real HTTP server)", () => {
       "admin/Round And Round",
       "admin/Side Login",
       "admin/Callback Login",
+      "admin/Signed Form",
     ]);
     // Profile has no token of its own: only Login's script can supply it.
     expect(report.items[1]?.status).toBe("ok");
@@ -234,6 +249,7 @@ describe("preman run (end to end against a real HTTP server)", () => {
       "ok",
       "ok",
       "business",
+      "ok",
       "ok",
       "ok",
     ]);
