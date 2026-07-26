@@ -1,11 +1,20 @@
 /**
- * Build script: bundles the CLI for node, keeping @grpc/* external because their
- * internals rely on dynamic requires / native bindings that do not bundle cleanly.
+ * Build script: bundles the CLI for node while keeping runtime packages external.
  */
 import { chmod, readFile, writeFile } from "node:fs/promises";
+import { SANDBOX_ALIASES, SANDBOX_PACKAGES } from "../src/scripts/modules.js";
 
 const OUTFILE = "dist/preman.js";
 const SHEBANG = "#!/usr/bin/env node\n";
+
+/** Packages resolved from node_modules at runtime rather than inlined into dist/preman.js. */
+const EXTERNAL_PACKAGES = [
+  "@grpc/grpc-js",
+  "@grpc/proto-loader",
+  "@inquirer/prompts",
+  ...SANDBOX_PACKAGES,
+  ...Object.values(SANDBOX_ALIASES),
+];
 
 const result = await Bun.build({
   entrypoints: ["src/cli.ts"],
@@ -13,7 +22,7 @@ const result = await Bun.build({
   target: "node",
   format: "esm",
   naming: "preman.js",
-  external: ["@grpc/grpc-js", "@grpc/proto-loader", "@inquirer/prompts"],
+  external: EXTERNAL_PACKAGES,
 });
 
 if (!result.success) {

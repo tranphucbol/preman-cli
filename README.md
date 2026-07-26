@@ -35,6 +35,10 @@ bun run build
 npm link
 ```
 
+The built `dist/preman.js` resolves runtime dependencies from `node_modules`; it is not a
+standalone file. Keep it with the installed package, or install through npm so those dependencies
+are present.
+
 From a repository connected to Postman Local View:
 
 ```sh
@@ -99,7 +103,8 @@ Run `preman --help` for every option.
 - Pre-request, post-response, and gRPC `onMessage` scripts
 - Collection- and folder-level scripts and authentication, inherited by descendant requests
 - `bearer`, `basic`, and `apikey` authentication for both HTTP and gRPC
-- `pm.test`, `pm.expect`, cookies, `pm.sendRequest`, `CryptoJS`, and mutable `pm.request` in scripts
+- `pm.test`, `pm.expect`, cookies, `pm.sendRequest`, mutable `pm.request`, and sandbox `require()`
+- Postman's common script libraries, including Lodash, CryptoJS, Moment, Cheerio, XML2JS, and UUID
 - Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
 - Environment writeback and JSON output for CI
 

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { CliError } from "../src/errors.js";
 import { REQUEST_ORIGIN } from "../src/scripts/chain.js";
@@ -188,9 +188,83 @@ describe("runScript", () => {
     expect(store.get("late")).toBe("written");
   });
 
-  it("givenScriptTouchingHostGlobals_whenRun_thenTheyAreAbsent", async () => {
+  it("givenScriptTouchingHostGlobals_whenRun_thenOnlyAllowlistedRequireIsPresent", async () => {
     const logs = await run(`console.log(typeof process, typeof require, typeof fetch);`);
-    expect(logs[0]?.text).toBe("undefined undefined undefined");
+    expect(logs[0]?.text).toBe("undefined function undefined");
+  });
+
+  it("givenScript_whenRequireLodash_thenPickWorks", async () => {
+    const logs = await run(`console.log(JSON.stringify(require("lodash").pick({ a: 1, b: 2 }, ["b"])));`);
+    expect(logs[0]?.text).toBe('{"b":2}');
+  });
+
+  it("givenScript_whenUsingBareUnderscore_thenLodashAvailable", async () => {
+    const logs = await run(`console.log(_.camelCase("bare lodash global"));`);
+    expect(logs[0]?.text).toBe("bareLodashGlobal");
+  });
+
+  it("givenScript_whenUsingBareCryptoJs_thenHmacMatchesKnownVector", async () => {
+    const store = new VariableStore();
+    await run(`pm.environment.set("hmac", CryptoJS.HmacSHA256("payload", "secret").toString());`, store);
+    expect(store.get("hmac")).toBe(createHmac("sha256", "secret").update("payload").digest("hex"));
+  });
+
+  it("givenScript_whenUsingMoment_thenFormattedDate", async () => {
+    const logs = await run(`console.log(require("moment").utc("2026-07-26T12:34:56Z").format("YYYYMMDDHHmmss"));`);
+    expect(logs[0]?.text).toBe("20260726123456");
+  });
+
+  it("givenScript_whenUsingBufferBase64_thenRoundTrips", async () => {
+    const logs = await run(`const value = Buffer.from("preman").toString("base64"); console.log(Buffer.from(value, "base64").toString());`);
+    expect(logs[0]?.text).toBe("preman");
+  });
+
+  it("givenScript_whenUsingBtoaAtob_thenRoundTrips", async () => {
+    const logs = await run(`console.log(atob(btoa("preman")));`);
+    expect(logs[0]?.text).toBe("preman");
+  });
+
+  it("givenScript_whenUsingXml2js_thenParsesToObject", async () => {
+    const logs = await run(`const parsed = await require("xml2js").parseStringPromise("<root><id>7</id></root>"); console.log(parsed.root.id[0]);`);
+    expect(logs[0]?.text).toBe("7");
+  });
+
+  it("givenScript_whenUsingCheerio_thenSelectsElement", async () => {
+    const logs = await run(`const $ = require("cheerio").load("<p class='value'>seven</p>"); console.log($(".value").text());`);
+    expect(logs[0]?.text).toBe("seven");
+  });
+
+  it("givenScript_whenCallingFunctionConstructor_thenThrows", async () => {
+    await expect(run(`Function("return process")();`)).rejects.toThrow("Function is not a function");
+  });
+
+  it("givenScript_whenRequiringFs_thenScriptFailsWithAllowList", async () => {
+    try {
+      await run(`require("fs");`);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).message).toContain("fs");
+      expect((error as CliError).details.join("\n")).toContain("crypto-js");
+    }
+  });
+
+  it("givenScript_whenUsingPmRequire_thenSameAsRequire", async () => {
+    const logs = await run(`console.log(pm.require("lodash") === require("lodash"));`);
+    expect(logs[0]?.text).toBe("true");
+  });
+
+  it("givenLongRunningLibraryCall_whenScriptExceedsBudget_thenDeadlineStillFires", async () => {
+    await expect(
+      runScript({
+        code: `require("ajv"); await new Promise(() => {});`,
+        store: new VariableStore(),
+        info: { requestName: "library hang", eventName: "beforeInvoke" },
+        origin: REQUEST_ORIGIN,
+        request: liveRequest({ url: "localhost:9090", methodPath: "", body: "" }),
+        timeoutMs: 50,
+      }),
+    ).rejects.toThrow(/timed out after 50ms/);
   });
 
   it("givenPreScript_whenRun_thenResponseAndMessageAreAbsent", async () => {

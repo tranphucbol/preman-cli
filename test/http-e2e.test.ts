@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
@@ -160,10 +160,11 @@ describe("preman run (end to end against a real HTTP server)", () => {
   it("givenAUrlencodedBodySignedByAScript_whenRun_thenTheFormReachesTheWireEncoded", async () => {
     const { code, stdout } = await runCli(args("admin/Signed Form"));
     const report = JSON.parse(stdout) as HttpReport;
-    const signature = createHash("sha256").update("11|a+b/c=").digest("hex");
+    const signature = createHmac("sha256", "fixture-secret").update("11|a+b/c=").digest("hex");
 
     expect(code).toBe(EXIT.OK);
     expect(http.received[0]?.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+    expect(http.received[0]?.headers["x-signature"]).toBe(signature);
     expect(http.received[0]?.body).toBe(`clientid=11&note=a%2Bb%2Fc%3D&sig=${signature}`);
     // Both scripts assert too: the pre-request one on the authored fields, the
     // post-response one on what came back.
@@ -575,6 +576,23 @@ describe("mutable pm.request (HTTP)", () => {
       expect(report.method).toBe("GET");
       expect(report.finalUrl).toBe(`${http.origin}/echo?redirected=true`);
       expect(report.testSummary).toMatchObject({ total: 1, passed: 1, failed: 0 });
+    } finally {
+      ws.cleanup();
+    }
+  });
+});
+
+describe("sandbox library isolation (HTTP)", () => {
+  it.each([
+    { label: "node builtin", script: 'require("fs");', expected: "fs" },
+    { label: "relative module", script: 'require("./x.js");', expected: "./x.js" },
+    { label: "Function constructor", script: 'Function("return process")();', expected: "Function is not a function" },
+  ])("givenScriptUsing$label_whenRun_thenRejected", async ({ script, expected }) => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, { script });
+      await expect(runCli(clonedArgs(ws.root, "admin/Echo Get Body"))).rejects.toThrow(expected);
+      expect(http.received).toHaveLength(0);
     } finally {
       ws.cleanup();
     }

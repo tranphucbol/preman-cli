@@ -338,8 +338,40 @@ Request-level output is untagged.
 
 The sandbox provides `pm.environment`, `pm.globals`, `pm.collectionVariables`, `pm.variables`,
 `pm.info`, `pm.request`, `pm.expect`, `pm.test`, `pm.cookies`, `pm.sendRequest`, and the legacy
-`postman.setEnvironmentVariable` family. `CryptoJS` is a global, as it is in Postman, so a
-pre-request script can sign or encrypt a payload.
+`postman.setEnvironmentVariable` family.
+
+#### Libraries
+
+Scripts can load this fixed library set through either `require(name)` or `pm.require(name)`:
+
+| Name | Purpose |
+| --- | --- |
+| `ajv` | JSON Schema validation |
+| `atob`, `btoa` | Base64 conversion packages |
+| `chai` | The configured Chai instance also used by `pm.expect` |
+| `cheerio` | HTML parsing and traversal |
+| `crypto-js` | Hashing, signing, and encryption |
+| `csv-parse/lib/sync` | Synchronous CSV parsing; mapped to the package's modern entry point |
+| `lodash` | Collection and object helpers |
+| `moment` | Postman-compatible date parsing and formatting |
+| `tv4` | JSON Schema draft-04 validation |
+| `uuid` | UUID parsing and generation |
+| `xml2js` | XML parsing and building |
+
+Modules are loaded from preman's own installation, lazily on first use, and memoised. `require()`
+does not search the workspace. Any name outside the table, including `fs`, `node:fs`, and relative
+paths, is rejected with the full allow-list. Lodash is additionally available as `_`, and CryptoJS
+as `CryptoJS`, matching Postman's bare globals.
+
+The sandbox also provides `Buffer`, `atob`, `btoa`, `TextEncoder`, `TextDecoder`, `URL`,
+`URLSearchParams`, `Promise`, `Symbol`, `Map`, `Set`, `WeakMap`, `WeakSet`, and `RegExp` directly.
+It deliberately does not expose `Function`, `eval`, `process`, `fetch`, `setInterval`, filesystem
+access, or unrestricted Node module loading.
+
+`node:vm` is isolation by convention, not a security boundary. Library parsers and `Buffer`
+increase what a script can do, and dependencies can have vulnerabilities of their own. Preman runs
+the scripts checked into the workspace; trust them the same way you trust the rest of that
+repository.
 
 #### Mutable request
 
@@ -418,9 +450,8 @@ pm.test("Transaction status is TRANS_PROCESSING", function () {
 ```
 
 `pm.sendRequest(request[, callback])` makes an extra HTTP request. Callback and `await` forms are
-supported. Script `console` output is shown with `--verbose`. The sandbox does not expose
-`process`, `require`, or `fetch`. A five-second deadline bounds the complete script, including
-asynchronous work.
+supported. Script `console` output is shown with `--verbose`. A five-second deadline bounds the
+complete script, including asynchronous work.
 
 Post-response scripts are skipped when a request receives no response. For gRPC, that means a
 transport failure. For HTTP, any received status, including `401`, still runs the script.

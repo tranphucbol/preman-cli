@@ -1,5 +1,7 @@
 import * as chai from "chai";
 
+export { chai };
+
 /**
  * `pm.expect` is chai in Postman, so it is chai here too. Scripts written against
  * Postman keep working, and every chain (`.deep.equal`, `.have.property`,

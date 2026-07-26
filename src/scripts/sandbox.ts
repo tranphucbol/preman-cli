@@ -1,4 +1,3 @@
-import CryptoJS from "crypto-js";
 import { createContext, runInContext } from "node:vm";
 import { CliError } from "../errors.js";
 import { interpolate } from "../vars/interpolate.js";
@@ -9,6 +8,7 @@ import { emptyTlsCerts, type TlsCertOptions } from "../tls/certs.js";
 import type { ScriptOrigin } from "./chain.js";
 import { expect, makeHeaderList, makeMessageList, type MessageList, type ResponseLike } from "./expect.js";
 import type { LiveRequest } from "./live-request.js";
+import { requireSandboxModule, sandboxGlobals } from "./modules.js";
 import { sendScriptRequest } from "./send-request.js";
 
 export interface ConsoleLine {
@@ -446,12 +446,13 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       toObject: () => cookies.toObject(),
     },
     sendRequest,
+    require: requireSandboxModule,
     expect,
     test: Object.assign(test, { skip, todo: skip }),
     ...(options.response === undefined ? {} : responseFacade(options.response)),
   };
 
-  const sandbox = {
+  const sandbox: Record<string, unknown> = {
     pm,
     postman: { setEnvironmentVariable: environment.set, getEnvironmentVariable: environment.get, setGlobalVariable: globals.set },
     console: {
@@ -461,10 +462,10 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       error: record("error"),
       debug: record("debug"),
     },
-    // Bundled because Postman ships it: collections that sign or encrypt a payload
-    // in a pre-request script reach for `CryptoJS` and have no other way to do it.
-    CryptoJS,
-    // Explicitly provided so scripts can rely on them; everything else is absent.
+    require: requireSandboxModule,
+    // This is the intersection of what Postman exposes and what we are willing
+    // to expose. Function and eval are explicitly absent so the module allow-list
+    // cannot be bypassed with the most direct node:vm escape.
     Date,
     Math,
     JSON,
@@ -477,6 +478,22 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
     parseFloat,
     isNaN,
     Error,
+    Buffer,
+    atob,
+    btoa,
+    TextEncoder,
+    TextDecoder,
+    URL,
+    URLSearchParams,
+    Promise,
+    Symbol,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    RegExp,
+    Function: undefined,
+    eval: undefined,
     setTimeout: (fn: unknown, ms?: number, ...args: unknown[]): NodeJS.Timeout => {
       const handle = setTimeout(() => {
         pending.delete(handle);
@@ -497,6 +514,9 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       clearTimeout(handle);
     },
   };
+
+  // Preserve the getters so the bare library globals remain lazy.
+  Object.defineProperties(sandbox, Object.getOwnPropertyDescriptors(sandboxGlobals()));
 
   let completion: Promise<unknown>;
   try {

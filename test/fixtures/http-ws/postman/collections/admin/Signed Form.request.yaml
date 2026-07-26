@@ -16,10 +16,7 @@ scripts:
   - type: beforeRequest
     language: javascript
     code: |-
-      const fields = {};
-      pm.request.body.urlencoded.toJSON().forEach(function (entry) {
-        fields[entry.key] = entry.value;
-      });
+      const fields = _.pick(pm.request.body.urlencoded.toObject(), ["clientid", "note", "sig"]);
 
       pm.test("scripts see the authored fields, not the encoded string", function () {
         pm.expect(pm.request.body.mode).to.equal("urlencoded");
@@ -27,7 +24,7 @@ scripts:
         pm.expect(fields.sig).to.equal("");
       });
 
-      const signature = CryptoJS.SHA256(fields.clientid + "|" + fields.note).toString();
+      const signature = CryptoJS.HmacSHA256(fields.clientid + "|" + fields.note, "fixture-secret").toString();
       pm.request.body.urlencoded.upsert("sig", signature);
       pm.request.headers.upsert("X-Signature", signature);
       pm.request.url.query.add("signed", "true");
@@ -38,6 +35,6 @@ scripts:
        const sent = pm.response.json().body;
         pm.expect(pm.response.json().query.signed).to.equal("true");
         pm.expect(sent).to.contain("note=a%2Bb%2Fc%3D");
-        pm.expect(sent).to.contain("sig=" + CryptoJS.SHA256("11|a+b/c=").toString());
+         pm.expect(sent).to.contain("sig=" + CryptoJS.HmacSHA256("11|a+b/c=", "fixture-secret").toString());
       });
 order: 90
