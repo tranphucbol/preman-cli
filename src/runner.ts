@@ -28,6 +28,7 @@ import {
   type SideRequestRecord,
   type TestResult,
 } from "./scripts/sandbox.js";
+import type { TlsCertOptions } from "./tls/certs.js";
 import { interpolateStrict } from "./vars/interpolate.js";
 import { VariableStore } from "./vars/store.js";
 import {
@@ -66,6 +67,8 @@ export interface RunOptions {
   localVars: Record<string, string>;
   urlOverride: string | undefined;
   tlsOverride: boolean | undefined;
+  /** Certificate material shared by both transports; resolved once per run. */
+  tlsCerts: TlsCertOptions;
   timeoutMs: number;
   preferDescriptor: boolean;
   /** Persist script-mutated environment variables back to the YAML file. */
@@ -94,6 +97,8 @@ interface BaseRunOutcome {
   sideRequests: SideRequestRecord[];
   savedVars: Record<string, string>;
   savedTo: string | undefined;
+  /** Where each resolved certificate option came from; shown under `--verbose`. */
+  tlsSources: Record<string, string>;
   exitCode: ExitCode;
 }
 
@@ -212,6 +217,8 @@ interface ScriptSinkOptions {
   cookies: CookieJar;
   /** Budget for each `pm.sendRequest`, matching the request's own timeout. */
   requestTimeoutMs: number;
+  /** `pm.sendRequest` dials over the same trust store as the request itself. */
+  tlsCerts: TlsCertOptions;
   /**
    * Read once per script rather than captured up front: an HTTP `afterResponse`
    * script should see the url, method and headers that actually went out, which
@@ -238,6 +245,7 @@ function scriptSink(options: ScriptSinkOptions): ScriptSink {
         origin: script.origin,
         request: options.request(),
         requestTimeoutMs: options.requestTimeoutMs,
+        tlsCerts: options.tlsCerts,
         ...(response === undefined ? {} : { response }),
       });
       consoleLines.push(...result.logs);
@@ -303,6 +311,7 @@ async function runGrpcRequest(
     store,
     cookies,
     requestTimeoutMs: options.timeoutMs,
+    tlsCerts: options.tlsCerts,
     request: () => ({ url: request.url, methodPath: request.methodPath, body: rawBody }),
   });
 
@@ -361,10 +370,11 @@ async function runGrpcRequest(
     message: sentMessage,
     metadata,
     timeoutMs: options.timeoutMs,
+    tlsCerts: options.tlsCerts,
   });
 
   // 5. Post-response scripts, where the `pm.test` assertions live.
-  const warnings = [...chain.warnings, ...authWarnings, ...method.warnings];
+  const warnings = [...chain.warnings, ...authWarnings, ...method.warnings, ...invoke.warnings];
   if (invoke.ok) {
     const response: ScriptResponseInfo = {
       protocol: "grpc",
@@ -413,6 +423,7 @@ async function runGrpcRequest(
     returnCode,
     savedVars,
     savedTo,
+    tlsSources: options.tlsCerts.sources,
     exitCode,
   };
 }
@@ -444,6 +455,7 @@ async function runHttpRequest(
     store,
     cookies,
     requestTimeoutMs: options.timeoutMs,
+    tlsCerts: options.tlsCerts,
     request: () => info,
   });
 
@@ -468,6 +480,7 @@ async function runHttpRequest(
     body: built.body,
     timeoutMs: options.timeoutMs,
     jar: cookies,
+    tlsCerts: options.tlsCerts,
   });
 
   info = {
@@ -522,6 +535,7 @@ async function runHttpRequest(
     invoke,
     savedVars,
     savedTo,
+    tlsSources: options.tlsCerts.sources,
     exitCode,
   };
 }

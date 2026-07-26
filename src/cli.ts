@@ -24,7 +24,17 @@ ${pc.bold("options")}
       --url <target>    override the target: host:port for gRPC, an origin for
                         HTTP (the request's own path and query are kept)
       --tls             force TLS (https for HTTP requests)
-      --insecure        force plaintext (http for HTTP requests)
+      --plaintext       force cleartext (http for HTTP requests)
+      --ssl-extra-ca-certs <path>
+                        PEM file of CA certificates to trust in addition to the
+                        public roots
+      --ssl-client-cert <path>
+                        PEM client certificate (mTLS); may also hold the key
+      --ssl-client-key <path>
+                        PEM private key for --ssl-client-cert
+      --ssl-client-passphrase <text>
+                        passphrase for an encrypted --ssl-client-key
+  -k, --insecure        skip server certificate verification
       --timeout <ms>    call deadline (default: ${DEFAULT_TIMEOUT_MS})
       --var <k=v>       set a variable, highest precedence; repeatable
       --no-save         do not write script-modified variables back to the env file
@@ -77,7 +87,13 @@ const OPTIONS = {
   env: { type: "string", short: "e" },
   url: { type: "string" },
   tls: { type: "boolean" },
-  insecure: { type: "boolean" },
+  plaintext: { type: "boolean" },
+  // Names taken verbatim from newman so that muscle memory carries over.
+  "ssl-extra-ca-certs": { type: "string" },
+  "ssl-client-cert": { type: "string" },
+  "ssl-client-key": { type: "string" },
+  "ssl-client-passphrase": { type: "string" },
+  insecure: { type: "boolean", short: "k" },
   timeout: { type: "string" },
   var: { type: "string", multiple: true },
   "no-save": { type: "boolean" },
@@ -108,7 +124,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
     return positionals.length === 0 && !values.help ? EXIT.CLI : EXIT.OK;
   }
 
-  if (values.tls && values.insecure) throw new CliError("--tls and --insecure are mutually exclusive");
+  if (values.tls && values.plaintext) throw new CliError("--tls and --plaintext are mutually exclusive");
 
   const dir = values.dir ?? process.cwd();
   const json = values.json === true;
@@ -144,7 +160,14 @@ export async function main(argv: string[]): Promise<ExitCode> {
         selector: rest.length > 0 ? rest.join(" ") : undefined,
         env: values.env,
         url: values.url,
-        tls: values.tls === true ? true : values.insecure === true ? false : undefined,
+        tls: values.tls === true ? true : values.plaintext === true ? false : undefined,
+        tlsCerts: {
+          extraCaCerts: values["ssl-extra-ca-certs"],
+          clientCert: values["ssl-client-cert"],
+          clientKey: values["ssl-client-key"],
+          clientPassphrase: values["ssl-client-passphrase"],
+          insecure: values.insecure === true ? true : undefined,
+        },
         timeoutMs: parseTimeout(values.timeout),
         vars: parseVars(values.var ?? []),
         save: values["no-save"] !== true,

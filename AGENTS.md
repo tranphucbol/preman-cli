@@ -1,7 +1,7 @@
 # preman - Agent Guidelines
 
 CLI that runs requests from a Postman filesystem-format workspace (`.postman/` + `postman/`).
-Unary gRPC only. See `README.md` for behaviour; this file is about how to change the code.
+Unary gRPC and HTTP. See `README.md` for behaviour; this file is about how to change the code.
 
 ## Commands
 
@@ -24,9 +24,13 @@ src/workspace/        discovery, resources, collections/groups, environments, zo
 src/vars/             scoped store, {{token}} interpolation, dynamic vars
 src/scripts/          node:vm sandbox (pm shim), chai + gRPC assertions
 src/grpc/             schema resolution, target/TLS, unary invoke
+src/http/             target/URL, cookies, redirects, auth, compression, invoke
+src/tls/certs.ts      --ssl-* layering, secure context, gRPC credentials, handshake hints
 src/output/render.ts  human + --json rendering
 src/errors.ts         CliError, EXIT codes
 test/fixtures/ws/     a real Postman workspace + .proto used by every suite
+test/fixtures/http-ws/ the HTTP workspace; `Legacy Http` in `ws/` is a skipped websocket
+test/fixtures/ssl/    committed certificates; regenerate with `generate.sh`
 ```
 
 ## Conventions

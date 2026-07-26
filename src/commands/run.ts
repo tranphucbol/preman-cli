@@ -9,6 +9,8 @@ import {
   type RequestEntry,
   type RunTarget,
 } from "../workspace/collections.js";
+import { resolveTlsCerts, type TlsCertInput, type TlsCertLayer } from "../tls/certs.js";
+import { loadPremanConfig } from "../workspace/config.js";
 import { requireWorkspace } from "../workspace/discover.js";
 import { listEnvironments, loadGlobals } from "../workspace/environments.js";
 import type { EnvironmentEntry } from "../workspace/environments.js";
@@ -21,6 +23,8 @@ export interface RunArgs {
   env: string | undefined;
   url: string | undefined;
   tls: boolean | undefined;
+  /** Raw `--ssl-*` and `-k` values; resolved here, where the workspace is known. */
+  tlsCerts: TlsCertInput;
   timeoutMs: number;
   vars: Record<string, string>;
   save: boolean;
@@ -30,6 +34,10 @@ export interface RunArgs {
   json: boolean;
   verbose: boolean;
 }
+
+/** Layer labels, echoed back to the user when a certificate cannot be read. */
+const CLI_CERT_LABEL = "--ssl-*";
+const CONFIG_CERT_LABEL = ".postman/preman.yaml";
 
 export interface RunCommandResult {
   output: string;
@@ -128,8 +136,24 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
     process.stderr.write(`${pc.yellow("warn: no environment selected; only --var values are available")}\n`);
   }
 
+  // Highest precedence first: an explicit flag always beats the workspace file.
+  const config = loadPremanConfig(ws);
+  const certLayers: TlsCertLayer[] = [
+    { label: CLI_CERT_LABEL, baseDir: process.cwd(), input: args.tlsCerts },
+    ...(config === undefined
+      ? []
+      : [{ label: CONFIG_CERT_LABEL, baseDir: config.baseDir, input: config.tls }]),
+  ];
+  const tlsCerts = resolveTlsCerts(certLayers);
+  if (!args.json) {
+    for (const warning of tlsCerts.warnings) {
+      process.stderr.write(`${pc.yellow(`warn: ${warning}`)}\n`);
+    }
+  }
+
   const shared = {
     workspace: ws,
+    tlsCerts,
     resources,
     environment,
     globals: loadGlobals(ws),

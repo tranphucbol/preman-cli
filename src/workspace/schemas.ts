@@ -21,6 +21,22 @@ export const resourcesFileSchema = z
   })
   .passthrough();
 
+/** `.postman/preman.yaml` — preman's own settings, not part of the Postman format. */
+export const premanConfigSchema = z
+  .object({
+    tls: z
+      .object({
+        extraCaCerts: z.string().optional(),
+        clientCert: z.string().optional(),
+        clientKey: z.string().optional(),
+        clientPassphrase: z.string().optional(),
+        insecure: z.boolean().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
 const scriptSchema = z
   .object({
     /** `beforeInvoke` for gRPC, `prerequest` for HTTP, `test`/`afterResponse` post-call. */

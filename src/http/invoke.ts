@@ -1,6 +1,7 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from "node:zlib";
+import { httpsRequestOptions, tlsFailureHints, type TlsCertOptions } from "../tls/certs.js";
 import type { CookieJar } from "./cookies.js";
 import { findHeader, toOutgoingHeaders, type KeyValue } from "./headers.js";
 
@@ -14,6 +15,8 @@ export interface HttpInvokeOptions {
   timeoutMs: number;
   jar?: CookieJar | undefined;
   maxRedirects?: number;
+  /** Resolved certificate material; inert on an `http:` hop. */
+  tlsCerts: TlsCertOptions;
 }
 
 export interface RedirectHop {
@@ -57,6 +60,7 @@ interface RawResponse {
 
 export const NO_RESPONSE_STATUS = 0;
 
+const HTTPS_PROTOCOL = "https:";
 const DEFAULT_MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const METHOD_PRESERVING_STATUSES = new Set([307, 308]);
@@ -126,16 +130,21 @@ function send(
   headers: Record<string, string | string[]>,
   body: string | undefined,
   timeoutMs: number,
+  tlsCerts: TlsCertOptions,
 ): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
-    const driver = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const secure = url.protocol === HTTPS_PROTOCOL;
+    const driver = secure ? httpsRequest : httpRequest;
+    // Applied per hop rather than once up front, so a redirect into https still gets
+    // the certificate material even when the first hop was cleartext.
+    const tlsOptions = secure ? httpsRequestOptions(tlsCerts) : {};
     let timer: NodeJS.Timeout | undefined;
     const finish = (settle: () => void): void => {
       if (timer !== undefined) clearTimeout(timer);
       settle();
     };
 
-    const req = driver(url, { method, headers }, (res) => {
+    const req = driver(url, { ...tlsOptions, method, headers }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => chunks.push(chunk));
       res.on("error", (cause) => finish(() => reject(cause)));
@@ -201,8 +210,9 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
     let raw: RawResponse;
     try {
       if (remaining <= 0) throw new Error(`timed out after ${options.timeoutMs}ms`);
-      raw = await send(url, method, outgoing, body, remaining);
+      raw = await send(url, method, outgoing, body, remaining, options.tlsCerts);
     } catch (cause) {
+      warnings.push(...tlsFailureHints(cause));
       return {
         ok: false,
         statusCode: NO_RESPONSE_STATUS,

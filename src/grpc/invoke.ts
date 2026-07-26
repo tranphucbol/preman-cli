@@ -1,5 +1,6 @@
 import * as grpc from "@grpc/grpc-js";
 import type { MethodDefinition } from "@grpc/proto-loader";
+import { grpcChannelCredentials, tlsFailureHints, type TlsCertOptions } from "../tls/certs.js";
 import type { GrpcTarget } from "./target.js";
 
 export interface InvokeOptions {
@@ -10,6 +11,8 @@ export interface InvokeOptions {
   metadata?: Record<string, string>;
   /** Deadline for the call, in milliseconds. */
   timeoutMs: number;
+  /** Resolved certificate material; inert unless the target is TLS. */
+  tlsCerts: TlsCertOptions;
 }
 
 export interface InvokeResult {
@@ -24,6 +27,8 @@ export interface InvokeResult {
   durationMs: number;
   metadata: Record<string, string | string[]>;
   trailers: Record<string, string | string[]>;
+  /** Advice about the failure, e.g. which certificate flag would fix it. */
+  warnings: string[];
 }
 
 function flatten(md: grpc.Metadata | undefined): Record<string, string | string[]> {
@@ -57,8 +62,7 @@ function buildMetadata(entries: Record<string, string> | undefined): grpc.Metada
  */
 export function invokeUnary(options: InvokeOptions): Promise<InvokeResult> {
   const { target, method, timeoutMs } = options;
-  const credentials = target.tls ? grpc.credentials.createSsl() : grpc.credentials.createInsecure();
-  const client = new grpc.Client(target.authority, credentials);
+  const client = new grpc.Client(target.authority, grpcChannelCredentials(options.tlsCerts, target.tls));
 
   return new Promise<InvokeResult>((settle) => {
     const startedAt = process.hrtime.bigint();
@@ -89,6 +93,7 @@ export function invokeUnary(options: InvokeOptions): Promise<InvokeResult> {
             durationMs,
             metadata: flatten(responseMetadata),
             trailers: flatten(error.metadata ?? trailingMetadata),
+            warnings: tlsFailureHints(error),
           });
           return;
         }
@@ -102,6 +107,7 @@ export function invokeUnary(options: InvokeOptions): Promise<InvokeResult> {
           durationMs,
           metadata: flatten(responseMetadata),
           trailers: flatten(trailingMetadata),
+          warnings: [],
         });
       },
     );

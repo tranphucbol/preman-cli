@@ -18,7 +18,7 @@ export interface ResolveTargetOptions {
   workspaceRoot: string;
   /** `--url`, highest precedence. */
   override?: string | undefined;
-  /** `--tls` / `--insecure`; undefined means "use the heuristic". */
+  /** `--tls` / `--plaintext`; undefined means "use the heuristic". */
   tlsOverride?: boolean | undefined;
   /** Port to assume when the fallback config has no `grpc.port`. */
   defaultPort?: number;

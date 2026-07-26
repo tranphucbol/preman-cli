@@ -4,6 +4,7 @@ import type { CookieJar } from "../http/cookies.js";
 import { normalizeKeyValues, setHeaderIfAbsent, type KeyValue } from "../http/headers.js";
 import { invokeHttp, type HttpInvokeResult } from "../http/invoke.js";
 import { resolveHttpUrl } from "../http/target.js";
+import type { TlsCertOptions } from "../tls/certs.js";
 import { interpolateStrict } from "../vars/interpolate.js";
 import type { VariableStore } from "../vars/store.js";
 import type { HttpRequest, KeyValueSource } from "../workspace/schemas.js";
@@ -27,6 +28,8 @@ export interface SendScriptRequestOptions {
   /** Shared with the main request, so a login in a script authenticates it. */
   jar: CookieJar;
   timeoutMs: number;
+  /** Shared with the main request, so a script's call trusts the same CAs. */
+  tlsCerts: TlsCertOptions;
 }
 
 interface RequestShape {
@@ -114,5 +117,13 @@ export async function sendScriptRequest(options: SendScriptRequestOptions): Prom
   const contentType = mode === undefined ? undefined : MODE_CONTENT_TYPES[mode];
   if (body !== undefined && contentType !== undefined) setHeaderIfAbsent(headers, CONTENT_TYPE, contentType);
 
-  return invokeHttp({ url, method, headers, body, timeoutMs: options.timeoutMs, jar: options.jar });
+  return invokeHttp({
+    url,
+    method,
+    headers,
+    body,
+    timeoutMs: options.timeoutMs,
+    jar: options.jar,
+    tlsCerts: options.tlsCerts,
+  });
 }

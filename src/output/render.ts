@@ -196,11 +196,22 @@ function headerLines(outcome: RunOutcome): string[] {
   ];
 }
 
+/**
+ * Certificate provenance, so a surprising handshake result can be traced to the
+ * flag or config file that supplied the material.
+ */
+function certSourceLines(outcome: RunOutcome, out: string[]): void {
+  for (const [field, source] of Object.entries(outcome.tlsSources)) {
+    out.push(pc.dim(`cert ${field} ← ${source}`));
+  }
+}
+
 /** The human-facing report for a completed run. */
 export function renderOutcome(outcome: RunOutcome, options: RenderOptions): string {
   if (options.json) return JSON.stringify(toJsonReport(outcome), null, 2);
 
   const lines: string[] = headerLines(outcome);
+  if (options.verbose) certSourceLines(outcome, lines);
 
   for (const warning of outcome.warnings) lines.push(pc.yellow(`warn: ${warning}`));
 

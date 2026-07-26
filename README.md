@@ -77,7 +77,12 @@ Common options:
 | `-e, --env <name>` | Select an environment |
 | `--url <target>` | Override the gRPC target or HTTP origin |
 | `--var <key=value>` | Override a variable; repeatable |
-| `--tls` / `--insecure` | Force TLS or plaintext |
+| `--tls` / `--plaintext` | Force TLS or cleartext |
+| `--ssl-extra-ca-certs <path>` | Trust an extra CA on top of the public roots |
+| `--ssl-client-cert <path>` | Client certificate for mutual TLS |
+| `--ssl-client-key <path>` | Private key for that certificate |
+| `--ssl-client-passphrase <text>` | Passphrase for an encrypted key |
+| `-k, --insecure` | Skip server certificate verification |
 | `--no-save` | Do not write script changes back to the environment |
 | `--bail` | Stop a collection run after the first failure |
 | `--json` | Print machine-readable output |
@@ -95,6 +100,7 @@ Run `preman --help` for every option.
 - Collection- and folder-level scripts and authentication, inherited by descendant requests
 - `bearer`, `basic`, and `apikey` authentication for both HTTP and gRPC
 - `pm.test`, `pm.expect`, cookies, and `pm.sendRequest`
+- Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
 - Environment writeback and JSON output for CI
 
 Streaming gRPC and request kinds other than gRPC and HTTP are not supported. Unsupported items in

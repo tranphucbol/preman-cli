@@ -13,7 +13,7 @@ export interface ResolveHttpUrlOptions {
   rawUrl: string;
   /** `--url`; replaces the origin only. */
   override?: string | undefined;
-  /** `--tls` / `--insecure`; undefined means "trust the url's scheme". */
+  /** `--tls` / `--plaintext`; undefined means "trust the url's scheme". */
   tlsOverride?: boolean | undefined;
 }
 

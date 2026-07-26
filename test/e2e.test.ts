@@ -506,7 +506,7 @@ describe("preman run (error paths)", () => {
   });
 
   it("givenMutuallyExclusiveTlsFlags_whenRun_thenRejected", async () => {
-    await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, "--tls", "--insecure"])).rejects.toThrow(
+    await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, "--tls", "--plaintext"])).rejects.toThrow(
       /mutually exclusive/,
     );
   });

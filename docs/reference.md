@@ -29,7 +29,12 @@ preman env set <key> <value>
 | `-e, --env <name>` | Load an environment. It is selected automatically when exactly one exists. |
 | `--url <target>` | Override the target with `host:port` for gRPC or an origin for HTTP. |
 | `--tls` | Force TLS, or HTTPS for HTTP requests. |
-| `--insecure` | Force plaintext, or HTTP for HTTP requests. |
+| `--plaintext` | Force cleartext, or HTTP for HTTP requests. |
+| `--ssl-extra-ca-certs <path>` | Trust the CAs in a PEM file in addition to the public roots. |
+| `--ssl-client-cert <path>` | Present a client certificate. May be a combined PEM. |
+| `--ssl-client-key <path>` | Private key for `--ssl-client-cert`. |
+| `--ssl-client-passphrase <text>` | Passphrase for an encrypted private key. |
+| `-k, --insecure` | Skip server certificate verification. |
 | `--timeout <ms>` | Set the call deadline. The default is `30000`. |
 | `--var <key=value>` | Set a local variable at the highest precedence. Repeatable. |
 | `--no-save` | Do not write script-modified variables back to the environment file. |
@@ -138,7 +143,7 @@ The target is selected in this order:
 4. `localhost:9090`
 
 TLS is inferred from a `grpcs` or `https` scheme, port `443`, or a `.zalopay.vn` hostname. Use
-`--tls` or `--insecure` to override the inference.
+`--tls` or `--plaintext` to override the inference.
 
 ### Authentication
 
@@ -203,6 +208,47 @@ Redirects are followed for up to five hops. `authorization` and `cookie` are rem
 origin changes. Reaching the limit produces a warning. `--verbose` prints the redirect chain.
 
 `gzip`, `deflate`, and Brotli responses are decoded before scripts receive them.
+
+## TLS and certificates
+
+The certificate options apply to gRPC and HTTP alike, including calls made by `pm.sendRequest`.
+They are inert on a cleartext target rather than an error, so a single configuration can cover a
+workspace whose environments are a mix of the two.
+
+`--ssl-extra-ca-certs <path>` reads a PEM file and trusts it **in addition to** the roots Node
+already trusts. A private CA therefore does not cost you the public ones.
+
+`--ssl-client-cert <path>` and `--ssl-client-key <path>` present a client certificate. When the
+certificate file already contains the private key, `--ssl-client-key` may be omitted and the same
+file is used for both halves. A key without a certificate is an error, since it cannot identify
+anyone on its own. Encrypted keys need `--ssl-client-passphrase <text>`.
+
+Certificate material is read and validated before the first call, so an unreadable path, a
+mismatched pair, or a missing passphrase fails with exit code `1` naming the flag that supplied it.
+
+`-k, --insecure` disables verification of the server certificate and nothing else. It is unrelated
+to `--plaintext`, which turns TLS off entirely, so `--tls -k` is a valid combination.
+
+A handshake failure exits with code `2` and adds a hint naming the flag that would fix it: an
+untrusted chain suggests `--ssl-extra-ca-certs` or `-k`, and a hostname the certificate does not
+cover reports both the host dialled and the names on the certificate.
+
+### Workspace configuration
+
+Defaults for a workspace live in `.postman/preman.yaml`:
+
+```yaml
+tls:
+  extraCaCerts: ca/internal-root.pem
+  clientCert: ca/client.pem
+  clientKey: ca/client.key
+  clientPassphrase: hunter2
+  insecure: false
+```
+
+Relative paths resolve against `.postman/`, not the current directory. Every key is optional, and a
+missing file is not an error. An explicit flag replaces the corresponding value from the file
+outright. Run with `--verbose` to see which layer supplied each option.
 
 ## Variables
 

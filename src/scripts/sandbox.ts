@@ -3,6 +3,7 @@ import { CliError } from "../errors.js";
 import type { Scope, VariableStore } from "../vars/store.js";
 import { CookieJar } from "../http/cookies.js";
 import { NO_RESPONSE_STATUS } from "../http/invoke.js";
+import { emptyTlsCerts, type TlsCertOptions } from "../tls/certs.js";
 import type { ScriptOrigin } from "./chain.js";
 import { expect, makeHeaderList, makeMessageList, type MessageList, type ResponseLike } from "./expect.js";
 import { sendScriptRequest } from "./send-request.js";
@@ -103,6 +104,8 @@ export interface RunScriptOptions {
   timeoutMs?: number;
   /** Per-call budget for `pm.sendRequest`; falls back to the script budget. */
   requestTimeoutMs?: number;
+  /** Certificate material for `pm.sendRequest`; Node's defaults when omitted. */
+  tlsCerts?: TlsCertOptions;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -296,6 +299,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       store,
       jar: cookies,
       timeoutMs: options.requestTimeoutMs ?? timeoutMs,
+      tlsCerts: options.tlsCerts ?? emptyTlsCerts(),
     });
     sideRequests.push({
       method: result.method,
