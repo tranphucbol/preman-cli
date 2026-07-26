@@ -3,3 +3,7 @@ dist/
 *.log
 .DS_Store
 .idea/
+
+# Plans are working documents; only the template is tracked.
+docs/plans/*
+!docs/plans/TEMPLATE.md
