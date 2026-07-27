@@ -303,15 +303,26 @@ Variable precedence, from lowest to highest, is:
 `{{name}}` tokens are expanded recursively with cycle detection. Unresolved tokens are errors and
 name the missing variables instead of being sent on the wire.
 
-Supported dynamic variables are:
+The Postman dynamic variable set is supported by category:
 
-- `$guid`
-- `$randomUUID`
-- `$timestamp`
-- `$isoTimestamp`
-- `$randomInt`
+| Category | Variables |
+| --- | --- |
+| Common | `$guid`, `$isoTimestamp`, `$randomInt`, `$randomUUID`, `$timestamp` |
+| Text and grammar | `$randomAdjective`, `$randomIngverb`, `$randomNoun`, `$randomPhrase`, `$randomVerb`, `$randomWord`, `$randomWords` |
+| Lorem ipsum | `$randomLoremLines`, `$randomLoremParagraph`, `$randomLoremParagraphs`, `$randomLoremSentence`, `$randomLoremSentences`, `$randomLoremSlug`, `$randomLoremText`, `$randomLoremWord`, `$randomLoremWords` |
+| Names and professions | `$randomFirstName`, `$randomFullName`, `$randomJobArea`, `$randomJobDescriptor`, `$randomJobTitle`, `$randomJobType`, `$randomLastName`, `$randomNamePrefix`, `$randomNameSuffix` |
+| Addresses and phone | `$randomCity`, `$randomCountry`, `$randomCountryCode`, `$randomLatitude`, `$randomLongitude`, `$randomPhoneFormats`, `$randomPhoneNumber`, `$randomPhoneNumberExt`, `$randomStreetAddress`, `$randomStreetName`, `$randomZipCode` |
+| Internet and email | `$randomDomainName`, `$randomDomainSuffix`, `$randomDomainWord`, `$randomEmail`, `$randomExampleEmail`, `$randomIP`, `$randomIPV6`, `$randomLocale`, `$randomMACAddress`, `$randomPassword`, `$randomProtocol`, `$randomSemver`, `$randomUrl`, `$randomUserAgent`, `$randomUserName` |
+| Finance and business | `$randomBankAccount`, `$randomBankAccountBic`, `$randomBankAccountIban`, `$randomBankAccountName`, `$randomBitcoin`, `$randomBs`, `$randomBsAdjective`, `$randomBsBuzz`, `$randomBsNoun`, `$randomCatchPhrase`, `$randomCatchPhraseAdjective`, `$randomCatchPhraseDescriptor`, `$randomCatchPhraseNoun`, `$randomCompanyName`, `$randomCompanySuffix`, `$randomCreditCardMask`, `$randomCurrencyCode`, `$randomCurrencyName`, `$randomCurrencySymbol`, `$randomTransactionType` |
+| Commerce | `$randomDepartment`, `$randomPrice`, `$randomProduct`, `$randomProductAdjective`, `$randomProductMaterial`, `$randomProductName` |
+| Colours and database | `$randomAbbreviation`, `$randomColor`, `$randomDatabaseCollation`, `$randomDatabaseColumn`, `$randomDatabaseEngine`, `$randomDatabaseType`, `$randomHexColor` |
+| Dates | `$randomDateFuture`, `$randomDatePast`, `$randomDateRecent`, `$randomMonth`, `$randomWeekday` |
+| Files and images | `$randomAbstractImage`, `$randomAnimalsImage`, `$randomAvatarImage`, `$randomBusinessImage`, `$randomCatsImage`, `$randomCityImage`, `$randomCommonFileExt`, `$randomCommonFileName`, `$randomCommonFileType`, `$randomDirectoryPath`, `$randomFashionImage`, `$randomFileExt`, `$randomFileName`, `$randomFilePath`, `$randomFileType`, `$randomFoodImage`, `$randomImageDataUri`, `$randomImageUrl`, `$randomMimeType`, `$randomNatureImage`, `$randomNightlifeImage`, `$randomPeopleImage`, `$randomSportsImage`, `$randomTransportImage` |
+| Scalars | `$randomAlphaNumeric`, `$randomBoolean`, `$randomDigit`, `$randomIntFromInterval` |
 
-Each occurrence is evaluated independently.
+Each occurrence is evaluated independently, including repeated occurrences of the same token.
+An unknown dynamic variable fails the run with suggested near-matches. This deliberately differs
+from Postman, which leaves an unknown token unchanged, so unresolved braces never reach the server.
 
 ## Scripts
 

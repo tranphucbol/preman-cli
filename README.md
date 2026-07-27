@@ -106,7 +106,7 @@ Run `preman --help` for every option.
 - HTTP requests, including `urlencoded` form bodies
 - Collections and folders in Postman order
 - Repeated collection runs with JSON or CSV iteration data
-- Postman environments, globals, collection variables, and dynamic variables
+- Postman environments, globals, collection variables, and the [dynamic variable set](docs/reference.md#variables)
 - Pre-request, post-response, and gRPC `onMessage` scripts
 - Collection- and folder-level scripts and authentication, inherited by descendant requests
 - `bearer`, `basic`, and `apikey` authentication for both HTTP and gRPC

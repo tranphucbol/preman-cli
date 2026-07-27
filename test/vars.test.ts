@@ -75,6 +75,11 @@ describe("interpolate", () => {
     expect(parsed.a).not.toBe(parsed.b);
   });
 
+  it("givenTwoOccurrencesOfSameDynamicVariable_whenInterpolating_thenValuesDiffer", () => {
+    const [first, second] = interpolate("{{$randomUUID}} {{$randomUUID}}", store()).text.split(" ");
+    expect(first).not.toBe(second);
+  });
+
   it("givenTimestampVariables_whenInterpolating_thenProducesExpectedShapes", () => {
     const s = store();
     expect(interpolate("{{$timestamp}}", s).text).toMatch(/^\d{10}$/);
@@ -85,6 +90,11 @@ describe("interpolate", () => {
   it("givenNestedVariable_whenInterpolating_thenExpandsRecursively", () => {
     const s = new VariableStore({ environment: { target: "{{host}}:{{port}}", host: "example.com", port: "443" } });
     expect(interpolate("{{target}}", s).text).toBe("example.com:443");
+  });
+
+  it("givenDynamicVariableInsideResolvedToken_whenInterpolating_thenStillGenerated", () => {
+    const s = new VariableStore({ environment: { generated: "{{$randomEmail}}" } });
+    expect(interpolate("{{generated}}", s).text).toMatch(/@/);
   });
 
   it("givenSelfReferentialVariable_whenInterpolating_thenThrowsCycleError", () => {
@@ -99,21 +109,21 @@ describe("interpolate", () => {
   });
 
   it("givenUnsupportedDynamicVariable_whenInterpolating_thenReportedSeparately", () => {
-    const result = interpolate("{{$randomBankAccount}}", store());
-    expect(result.unsupported).toEqual(["$randomBankAccount"]);
+    const result = interpolate("{{$randomEmial}}", store());
+    expect(result.unsupported).toEqual(["$randomEmial"]);
     expect(result.missing).toEqual([]);
   });
 
   it("givenUnresolvedTokens_whenInterpolateStrict_thenThrowsWithActionableDetails", () => {
     try {
-      interpolateStrict("{{nope}} {{$randomBankAccount}}", store(), "message body");
+      interpolateStrict("{{nope}} {{$randomEmial}}", store(), "message body");
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(CliError);
       const cliError = error as CliError;
       expect(cliError.message).toContain("message body");
       expect(cliError.details.join("\n")).toContain("{{nope}}");
-      expect(cliError.details.join("\n")).toContain("$randomBankAccount");
+      expect(cliError.details.join("\n")).toContain("$randomEmail");
     }
   });
 

@@ -9,6 +9,7 @@ const SHEBANG = "#!/usr/bin/env node\n";
 
 /** Packages resolved from node_modules at runtime rather than inlined into dist/preman.js. */
 const EXTERNAL_PACKAGES = [
+  "@faker-js/faker",
   "@grpc/grpc-js",
   "@grpc/proto-loader",
   "@inquirer/prompts",

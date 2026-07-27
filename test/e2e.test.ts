@@ -183,6 +183,41 @@ describe("preman run (end to end against a real gRPC server)", () => {
     expect(report.response.amount).toBe("9007199254740993");
   });
 
+  it("givenRequestUsingFakerVariables_whenRunning_thenServerSeesGeneratedValues", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const request = collectionPath(clone.root, "payment", "Echo.request.yaml");
+      writeFileSync(
+        request,
+        readFileSync(request, "utf8").replace(
+          '"text": "{{greeting}} {{$guid}}"',
+          '"text": "{{$randomFirstName}}|{{$randomEmail}}"',
+        ),
+      );
+
+      const { code } = await runCli([
+        "run",
+        "Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "--json",
+      ]);
+
+      expect(code).toBe(EXIT.OK);
+      expect(received).toHaveLength(1);
+      const [firstName, email] = received[0]?.body.text?.split("|") ?? [];
+      expect(firstName).not.toBe("");
+      expect(email).toContain("@");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
   it("givenBusinessFailure_whenRun_thenTransportIsOkButExitCodeIsThree", async () => {
     const { code, stdout } = await runCli([
       "run",

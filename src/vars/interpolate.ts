@@ -1,5 +1,10 @@
 import { CliError } from "../errors.js";
-import { generateDynamicValue, isDynamicVariable, isSupportedDynamicVariable, supportedDynamicVariables } from "./dynamic.js";
+import {
+  generateDynamicValue,
+  isDynamicVariable,
+  isSupportedDynamicVariable,
+  unsupportedDynamicVariableDetails,
+} from "./dynamic/index.js";
 import type { VariableStore } from "./store.js";
 
 /** `{{ name }}` — inner text may not contain braces, surrounding whitespace is trimmed. */
@@ -74,7 +79,7 @@ export function interpolateStrict(text: string, store: VariableStore, label: str
   }
   if (result.unsupported.length > 0) {
     details.push(`unsupported dynamic variables: ${result.unsupported.map((n) => `{{${n}}}`).join(", ")}`);
-    details.push(`supported: ${supportedDynamicVariables().join(", ")}`);
+    for (const name of result.unsupported) details.push(...unsupportedDynamicVariableDetails(name));
   }
   throw new CliError(`could not resolve all variables in ${label}`, { details });
 }
