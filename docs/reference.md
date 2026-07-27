@@ -35,6 +35,8 @@ preman env set <key> <value>
 | `--ssl-client-key <path>` | Private key for `--ssl-client-cert`. |
 | `--ssl-client-passphrase <text>` | Passphrase for an encrypted private key. |
 | `-k, --insecure` | Skip server certificate verification. |
+| `--working-dir <path>` | Resolve request file paths from this directory. Defaults to the workspace root. |
+| `--insecure-file-read` | Allow request files outside the working directory. |
 | `-n, --iteration-count <n>` | Number of collection or folder passes. Defaults to the data row count, or `1`. |
 | `--iteration-data <path>` | Load iteration rows from a `.json` or `.csv` file. |
 | `--delay-request <ms>` | Delay between requests, including iteration boundaries. The default is `0`. |
@@ -220,25 +222,100 @@ nearest ancestor that declares one; a request that must be unauthenticated write
 `auth: {type: noauth}` explicitly. Inherited authentication produces a warning naming its origin,
 because silent authentication is how a stale token turns into an unexplained `401`.
 
-### Bodies, cookies, redirects, and compression
+### Bodies
 
 A text body is sent verbatim. It is not parsed and serialized again, and a body on `GET` is not
 discarded. `content-type` is inferred from `body.type` only when the request does not provide one.
+
+| `body.type` | Source | Wire body | Default content type |
+| --- | --- | --- | --- |
+| absent, `raw`, `json`, `text`, `xml`, `html`, `javascript` | `content` | Interpolated text | Inferred for the named text types |
+| `urlencoded` | `urlencoded`, structured `content`, or text `content` | Percent-encoded fields, or authored text verbatim | `application/x-www-form-urlencoded` |
+| `formdata` | `formdata` | Multipart bytes in authored order | `multipart/form-data` with a generated boundary |
+| `file` | `file.src` | File bytes | Inferred from the extension, otherwise `application/octet-stream` |
+| `graphql` | `graphql` | JSON containing `query` and parsed `variables` | `application/json` |
+
+Unknown body types still send string `content`, but produce a warning and no generated
+`content-type`. A mode with no usable source sends no body.
 
 A `urlencoded` body may instead be authored as form fields, in either key/value shape:
 
 ```yaml
 body:
   type: urlencoded
-  content:
-    clientid: "11"
-    sig: "{{sig}}"
+  urlencoded:
+    - key: clientid
+      value: "11"
+    - key: sig
+      value: "{{sig}}"
 ```
 
 Each value is interpolated on its own and then percent-encoded, so a resolved variable containing
 `+`, `/`, or `=` survives the trip. Fields keep their authored order, and `disabled: true` entries
 are dropped. A form with no fields sends no body at all. Structured `content` under any other
-`body.type` is an error. A `urlencoded` body written as a string is still sent verbatim.
+`body.type` is an error. The earlier structured `content` form remains supported. When both
+`urlencoded` and `content` are present, `urlencoded` wins with a warning. A `urlencoded` body written
+as a string is still sent verbatim.
+
+Multipart bodies accept text and file entries:
+
+```yaml
+body:
+  type: formdata
+  formdata:
+    - key: description
+      value: "Receipt for {{customer}}"
+    - key: receipt
+      type: file
+      src: ./fixtures/receipt.pdf
+      contentType: application/pdf
+```
+
+Text values and file paths are interpolated. File parts infer their content type from common file
+extensions when `contentType` is absent. Quotes and backslashes in field names and filenames are
+escaped. An explicit request `Content-Type` always wins; for multipart this produces a warning
+because an authored header without the generated boundary will break the request.
+
+A binary body uses the same path rules and sends the file unchanged:
+
+```yaml
+body:
+  type: file
+  file:
+    src: ./fixtures/pixel.png
+```
+
+GraphQL variables are a JSON string in the workspace format. They are parsed before the request is
+sent, and invalid JSON is an exit-code `1` error naming the request:
+
+```yaml
+body:
+  type: graphql
+  graphql:
+    query: "query Receipt($id: ID!) { receipt(id: $id) { id } }"
+    variables: '{"id":"{{receipt_id}}"}'
+```
+
+#### Files and the working directory
+
+Relative `src` paths resolve from the workspace root by default, independent of the shell's current
+directory. `--working-dir <path>` selects a different base. This deliberately differs from newman,
+which defaults to the process working directory.
+
+Files outside the working directory are rejected, including symlinks inside it that resolve to an
+outside path. Use `--insecure-file-read` for a workspace that intentionally reaches elsewhere.
+This safe default is the inverse of newman's permissive `--no-insecure-file-read` behavior.
+
+Uploads are buffered in memory so redirects can replay exactly the same bytes. Upload size is
+therefore bounded by available memory. File selection and reading happen before pre-request
+scripts, so scripts cannot inspect or change structured multipart fields or the selected upload
+file. A script can still replace the whole prepared body by changing `pm.request.body.mode` or
+`pm.request.body.raw`.
+
+Binary and multipart request bodies are represented as `<N bytes>` in verbose and JSON reports
+rather than decoded as text.
+
+### Cookies, redirects, and compression
 
 Each run has an in-memory cookie jar. Collection runs share it across requests, and
 `pm.sendRequest` uses the same jar. Domain and path matching follow RFC 6265. `HttpOnly` cookies are

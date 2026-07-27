@@ -39,6 +39,10 @@ ${pc.bold("options")}
       --ssl-client-passphrase <text>
                         passphrase for an encrypted --ssl-client-key
   -k, --insecure        skip server certificate verification
+      --working-dir <path>
+                        base directory for request file paths (default: workspace root)
+      --insecure-file-read
+                        allow request files outside --working-dir
   -n, --iteration-count <n>
                         number of collection or folder passes (default: data rows or 1)
       --iteration-data <path>
@@ -150,6 +154,9 @@ const OPTIONS = {
   "ssl-client-key": { type: "string" },
   "ssl-client-passphrase": { type: "string" },
   insecure: { type: "boolean", short: "k" },
+  "working-dir": { type: "string" },
+  // Unlike newman's --no-insecure-file-read, preman denies escapes by default.
+  "insecure-file-read": { type: "boolean" },
   timeout: { type: "string" },
   "timeout-request": { type: "string" },
   "timeout-script": { type: "string" },
@@ -247,6 +254,8 @@ export async function main(argv: string[]): Promise<ExitCode> {
         bail: values.bail === true,
         json,
         verbose,
+        workingDir: values["working-dir"],
+        insecureFileRead: values["insecure-file-read"] === true,
       });
       process.stdout.write(`${output}\n`);
       return exitCode;

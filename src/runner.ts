@@ -51,6 +51,7 @@ import {
 import { saveEnvironmentValues, type EnvironmentEntry } from "./workspace/environments.js";
 import type { RequestEntry } from "./workspace/collections.js";
 import type { Workspace } from "./workspace/discover.js";
+import type { FileReader } from "./workspace/files.js";
 import { resolveAuth } from "./workspace/inherit.js";
 import type { Resources } from "./workspace/resources.js";
 
@@ -80,6 +81,7 @@ export interface RunOptions {
   tlsOverride: boolean | undefined;
   /** Certificate material shared by both transports; resolved once per run. */
   tlsCerts: TlsCertOptions;
+  files: FileReader;
   timeoutMs: number;
   /** Wall-clock budget for each pre-request or post-response script. */
   scriptTimeoutMs?: number;
@@ -200,11 +202,19 @@ function replaceProperties(list: LiveHttpRequest["headers"], entries: Record<str
 }
 
 /** Make afterResponse observe the final redirect hop, including generated headers. */
-function syncFinalHttpRequest(request: LiveHttpRequest, invoke: HttpInvokeResult, initialBody: string | undefined): void {
+function syncFinalHttpRequest(
+  request: LiveHttpRequest,
+  invoke: HttpInvokeResult,
+  initialBody: string | Buffer | undefined,
+): void {
   request.url = invoke.finalUrl;
   request.method = invoke.method;
   replaceProperties(request.headers, invoke.requestHeaders);
-  if (invoke.requestBody !== initialBody) request.body = new LiveBody(undefined, invoke.requestBody ?? "");
+  if (Buffer.isBuffer(initialBody)) {
+    if (invoke.requestBody === undefined) request.body = new LiveBody(undefined, "");
+  } else if (invoke.requestBody !== initialBody) {
+    request.body = new LiveBody(undefined, invoke.requestBody ?? "");
+  }
 }
 
 function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVars" | "data">): VariableStore {
@@ -516,6 +526,7 @@ async function runHttpRequest(
     store,
     urlOverride: options.urlOverride,
     tlsOverride: options.tlsOverride,
+    files: options.files,
   });
 
   const sink = scriptSink({
@@ -535,7 +546,7 @@ async function runHttpRequest(
   await sink.run(PRE_SCRIPT_TYPES);
 
   // 2. Finalisation does not interpolate again.
-  const built = finaliseHttpRequest(live.request, live.target);
+  const built = finaliseHttpRequest(live.request, live.target, live.wireBody);
 
   // 3. Send it. The jar is shared with the rest of the run.
   const invoke = await invokeHttp({
@@ -551,7 +562,7 @@ async function runHttpRequest(
   freezeRequest(live.request);
 
   // 4. Post-response scripts see the same request object, now read-only.
-  const warnings = [...chain.warnings, ...live.warnings, ...invoke.warnings];
+  const warnings = [...chain.warnings, ...live.warnings, ...built.warnings, ...invoke.warnings];
   if (invoke.statusCode === NO_RESPONSE_STATUS) {
     if (hasScriptOf(chain.scripts, POST_SCRIPT_TYPES)) {
       warnings.push("afterResponse scripts skipped: no response was received");

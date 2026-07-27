@@ -10,7 +10,7 @@ export interface HttpInvokeOptions {
   method: string;
   /** Exact casing is preserved; a `Cookie` entry here wins over the jar. */
   headers: KeyValue[];
-  body?: string | undefined;
+  body?: string | Buffer | undefined;
   /** Budget for the whole exchange, redirects included. */
   timeoutMs: number;
   jar?: CookieJar | undefined;
@@ -128,7 +128,7 @@ function send(
   url: URL,
   method: string,
   headers: Record<string, string | string[]>,
-  body: string | undefined,
+  body: string | Buffer | undefined,
   timeoutMs: number,
   tlsCerts: TlsCertOptions,
 ): Promise<RawResponse> {
@@ -170,6 +170,10 @@ function send(
   });
 }
 
+function reportBody(body: string | Buffer | undefined): string | undefined {
+  return Buffer.isBuffer(body) ? `<${body.length} bytes>` : body;
+}
+
 /**
  * Perform one HTTP exchange, following redirects.
  *
@@ -202,7 +206,7 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
       if (cookie !== undefined) hopHeaders.push({ key: COOKIE, value: cookie });
     }
     if (body !== undefined && findHeader(hopHeaders, CONTENT_LENGTH) === undefined) {
-      hopHeaders.push({ key: CONTENT_LENGTH, value: String(Buffer.byteLength(body)) });
+      hopHeaders.push({ key: CONTENT_LENGTH, value: String(Buffer.isBuffer(body) ? body.length : Buffer.byteLength(body)) });
     }
     const outgoing = toOutgoingHeaders(hopHeaders);
 
@@ -222,7 +226,7 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
         url: initialUrl,
         finalUrl: url.toString(),
         requestHeaders: outgoing,
-        requestBody: body,
+        requestBody: reportBody(body),
         body: "",
         headers: {},
         setCookies: [],
@@ -263,7 +267,7 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
       url: initialUrl,
       finalUrl: url.toString(),
       requestHeaders: outgoing,
-      requestBody: body,
+      requestBody: reportBody(body),
       body: decoded.toString(charsetOf(firstValue(raw.headers, CONTENT_TYPE))),
       headers: raw.headers,
       setCookies: raw.setCookies,

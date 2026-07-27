@@ -125,6 +125,17 @@ const keyValueSourceSchema = z.union([
   ),
 ]);
 
+const formDataEntrySchema = z
+  .object({
+    key: z.string(),
+    type: z.enum(["text", "file"]).optional().default("text"),
+    value: scalarSchema.optional(),
+    src: z.string().optional(),
+    contentType: z.string().optional(),
+    disabled: z.boolean().optional(),
+  })
+  .passthrough();
+
 export const httpRequestSchema = z
   .object({
     $kind: z.literal("http-request"),
@@ -137,13 +148,20 @@ export const httpRequestSchema = z
     queryParams: keyValueSourceSchema.optional(),
     body: z
       .object({
-        /** `json`, `text`, `xml`, ... Only used to pick a default `content-type`. */
+        /** `raw`, `formdata`, `urlencoded`, `file`, `graphql`, or a raw content type hint. */
         type: z.string().optional(),
         /**
          * A text payload, or — for `type: urlencoded` — the form fields, in either
          * key/value shape. `src/http/body.ts` decides which reading applies.
          */
         content: z.union([z.string(), keyValueSourceSchema]).optional(),
+        formdata: z.array(formDataEntrySchema).optional(),
+        urlencoded: keyValueSourceSchema.optional(),
+        file: z.object({ src: z.string() }).passthrough().optional(),
+        graphql: z
+          .object({ query: z.string(), variables: z.string().optional() })
+          .passthrough()
+          .optional(),
       })
       .passthrough()
       .optional(),

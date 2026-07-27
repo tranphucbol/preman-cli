@@ -17,6 +17,7 @@ import { listEnvironments, loadGlobals } from "../workspace/environments.js";
 import type { EnvironmentEntry } from "../workspace/environments.js";
 import { loadResources } from "../workspace/resources.js";
 import type { Workspace } from "../workspace/discover.js";
+import { fileReader } from "../workspace/files.js";
 
 export interface RunArgs {
   dir: string;
@@ -39,6 +40,8 @@ export interface RunArgs {
   bail: boolean;
   json: boolean;
   verbose: boolean;
+  workingDir: string | undefined;
+  insecureFileRead: boolean;
 }
 
 /** Layer labels, echoed back to the user when a certificate cannot be read. */
@@ -122,6 +125,7 @@ export function resolveIterations(requested: number | undefined, rows: DataRow[]
 
 export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
   const ws = requireWorkspace(args.dir);
+  const files = fileReader({ workingDir: args.workingDir ?? ws.root, allowOutside: args.insecureFileRead });
   const resources = loadResources(ws);
   const requests = listRequests(ws);
   const data = args.iterationData === undefined ? undefined : await loadIterationData(args.iterationData);
@@ -165,6 +169,7 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
   const shared = {
     workspace: ws,
     tlsCerts,
+    files,
     resources,
     environment,
     globals: loadGlobals(ws),

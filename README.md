@@ -87,6 +87,8 @@ Common options:
 | `--ssl-client-key <path>` | Private key for that certificate |
 | `--ssl-client-passphrase <text>` | Passphrase for an encrypted key |
 | `-k, --insecure` | Skip server certificate verification |
+| `--working-dir <path>` | Resolve request file paths from this directory; defaults to the workspace root |
+| `--insecure-file-read` | Allow request files outside the working directory |
 | `-n, --iteration-count <n>` | Run a collection or folder multiple times |
 | `--iteration-data <path>` | Load iteration rows from a JSON or CSV file |
 | `--delay-request <ms>` | Wait between collection requests |
@@ -103,7 +105,7 @@ Run `preman --help` for every option.
 ## Supported
 
 - Unary gRPC using the request's `.proto` file or embedded descriptor
-- HTTP requests, including `urlencoded` form bodies
+- HTTP requests, including multipart form-data uploads, structured `urlencoded`, binary, and GraphQL bodies
 - Collections and folders in Postman order
 - Repeated collection runs with JSON or CSV iteration data
 - Postman environments, globals, collection variables, and the [dynamic variable set](docs/reference.md#variables)

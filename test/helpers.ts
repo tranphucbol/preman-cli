@@ -89,6 +89,7 @@ export interface ReceivedHttp {
   url: string;
   headers: Record<string, string | string[] | undefined>;
   body: string;
+  bodyBuffer: Buffer;
 }
 
 export interface HttpTestServer {
@@ -98,11 +99,11 @@ export interface HttpTestServer {
   close: () => Promise<void>;
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((done, fail) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => done(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => done(Buffer.concat(chunks)));
     req.on("error", fail);
   });
 }
@@ -158,6 +159,11 @@ function route(req: IncomingMessage, res: ServerResponse, body: string): void {
     res.end();
     return;
   }
+  if (url.pathname === "/redirect-preserve") {
+    res.writeHead(307, { location: "/echo?redirected=true" });
+    res.end();
+    return;
+  }
   if (url.pathname === "/gzip") {
     res.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
     res.end(gzipSync(Buffer.from(JSON.stringify({ return_code: "OK", squeezed: true }))));
@@ -175,8 +181,9 @@ function route(req: IncomingMessage, res: ServerResponse, body: string): void {
 export function startHttpServer(): Promise<HttpTestServer> {
   const received: ReceivedHttp[] = [];
   const server: Server = createServer((req, res) => {
-    void readBody(req).then((body) => {
-      received.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body });
+    void readBody(req).then((bodyBuffer) => {
+      const body = bodyBuffer.toString("utf8");
+      received.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body, bodyBuffer });
       route(req, res, body);
     });
   });

@@ -1,14 +1,6 @@
 import { CliError } from "../errors.js";
+import { BODY_CONTENT_TYPES } from "../http/body.js";
 import { FROZEN_REQUEST_MESSAGE, PropertyList, type Property } from "./property-list.js";
-
-export const BODY_CONTENT_TYPES: Record<string, string> = {
-  json: "application/json",
-  text: "text/plain",
-  xml: "application/xml",
-  html: "text/html",
-  javascript: "application/javascript",
-  urlencoded: "application/x-www-form-urlencoded",
-};
 
 const DEFAULT_PROTOCOL = "http";
 const URL_PATTERN = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i;
@@ -241,12 +233,18 @@ export class LiveBody {
   #mode: string | undefined;
   #raw: string;
   readonly #urlencoded: PropertyList;
+  #changed = false;
   #frozen = false;
 
   constructor(mode: string | undefined, raw: string, urlencoded: Property[] = []) {
     this.#mode = mode === undefined || mode.length === 0 ? undefined : mode;
     this.#raw = raw;
-    this.#urlencoded = new PropertyList(urlencoded, FORM_LIST_OPTIONS);
+    this.#urlencoded = new PropertyList(urlencoded, {
+      ...FORM_LIST_OPTIONS,
+      onChange: () => {
+        this.#changed = true;
+      },
+    });
   }
 
   get mode(): string | undefined {
@@ -255,6 +253,7 @@ export class LiveBody {
 
   set mode(value: string | undefined) {
     this.#assertMutable();
+    this.#changed = true;
     this.#mode = value === undefined || value.length === 0 ? undefined : String(value).toLowerCase();
   }
 
@@ -264,6 +263,7 @@ export class LiveBody {
 
   set raw(value: string) {
     this.#assertMutable();
+    this.#changed = true;
     this.#raw = String(value);
   }
 
@@ -274,6 +274,11 @@ export class LiveBody {
   set urlencoded(_value: PropertyList) {
     this.#assertMutable();
     throw new CliError("pm.request.body.urlencoded must be edited through its PropertyList methods");
+  }
+
+  /** Whether a pre-request script changed this body after construction. */
+  get changed(): boolean {
+    return this.#changed;
   }
 
   toWire(): { body: string | undefined; contentType: string | undefined } {

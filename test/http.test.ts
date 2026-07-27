@@ -17,6 +17,7 @@ import { buildHttpRequest, buildLiveHttpRequest, finaliseHttpRequest } from "../
 import { pathPortion, resolveHttpUrl } from "../src/http/target.js";
 import { VariableStore } from "../src/vars/store.js";
 import type { HttpRequest } from "../src/workspace/schemas.js";
+import type { FileReader } from "../src/workspace/files.js";
 
 function pairs(headers: readonly KeyValue[]): Record<string, string> {
   return Object.fromEntries(headers.map((header) => [header.key, header.value]));
@@ -301,6 +302,10 @@ describe("CookieJar", () => {
 
 describe("request bodies", () => {
   const store = () => new VariableStore({ environment: { sig: "a+b/c=", tenant: "acme" } });
+  const files: FileReader = {
+    resolve: () => "/work/receipt.txt",
+    read: () => Buffer.from("receipt"),
+  };
 
   function httpRequest(body: HttpRequest["body"]): HttpRequest {
     return { $kind: "http-request", url: "http://host/pay", method: "POST", body };
@@ -367,6 +372,68 @@ describe("request bodies", () => {
     });
     expect(built.body).toBe("sig=a%2Bb%2Fc%3D");
     expect(pairs(built.headers)["content-type"]).toBe("application/x-www-form-urlencoded");
+  });
+
+  it("givenMultipartBody_whenBuildRequest_thenContentTypeCarriesBoundary", () => {
+    const built = buildHttpRequest({
+      request: httpRequest({ type: "formdata", formdata: [{ key: "note", type: "text", value: "one" }] }),
+      auth: undefined,
+      store: store(),
+      files,
+      boundary: "test-boundary",
+    });
+    expect(Buffer.isBuffer(built.body)).toBe(true);
+    expect(pairs(built.headers)["content-type"]).toBe("multipart/form-data; boundary=test-boundary");
+  });
+
+  it("givenExplicitContentTypeWithFormData_whenBuildRequest_thenWarnsAboutBoundary", () => {
+    const built = buildHttpRequest({
+      request: {
+        ...httpRequest({ type: "formdata", formdata: [{ key: "note", type: "text", value: "one" }] }),
+        headers: { "Content-Type": "multipart/form-data; boundary=authored" },
+      },
+      auth: undefined,
+      store: store(),
+      files,
+      boundary: "generated",
+    });
+    expect(pairs(built.headers)["Content-Type"]).toBe("multipart/form-data; boundary=authored");
+    expect(built.warnings).toContain("explicit Content-Type overrides the generated multipart boundary");
+  });
+
+  it("givenRawBody_whenBuildRequest_thenItDoesNotWarnAboutAnUnknownType", () => {
+    const built = buildHttpRequest({
+      request: httpRequest({ type: "raw", content: "raw bytes" }),
+      auth: undefined,
+      store: store(),
+    });
+    expect(built.body).toBe("raw bytes");
+    expect(built.warnings).toEqual([]);
+  });
+
+  it("givenBodyWithoutType_whenBuildRequest_thenItDoesNotWarnAboutAnUnknownType", () => {
+    const built = buildHttpRequest({
+      request: httpRequest({ content: "raw bytes" }),
+      auth: undefined,
+      store: store(),
+    });
+    expect(built.body).toBe("raw bytes");
+    expect(built.warnings).toEqual([]);
+  });
+
+  it("givenScriptReplacingStructuredBody_whenFinalised_thenScriptBodyWins", () => {
+    const live = buildLiveHttpRequest({
+      request: httpRequest({ type: "file", file: { src: "receipt.txt" } }),
+      auth: undefined,
+      store: store(),
+      files,
+    });
+    live.request.body.mode = "text";
+    live.request.body.raw = "replacement";
+
+    const built = finaliseHttpRequest(live.request, live.target, live.wireBody);
+    expect(built.body).toBe("replacement");
+    expect(pairs(built.headers)["content-type"]).toBe("text/plain");
   });
 
   it("givenDisabledAuthoredEntries_whenBuiltLive_thenScriptsSeeThemButTheWireDoesNot", () => {

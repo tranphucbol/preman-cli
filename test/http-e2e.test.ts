@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
 import { EXIT } from "../src/errors.js";
@@ -351,6 +352,190 @@ function writeScriptedHttpRequest(
       .join("\n"),
   );
 }
+
+describe("structured HTTP bodies", () => {
+  it("givenFormDataUpload_whenRun_thenServerReceivesBothParts", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: [
+          "body:",
+          "  type: formdata",
+          "  formdata:",
+          "    - key: note",
+          "      value: '{{token}}'",
+          "    - key: receipt",
+          "      type: file",
+          "      src: upload/receipt.txt",
+        ].join("\n"),
+        script: "// File selection is fixed before scripts run.",
+      });
+      const { code, stdout } = await runCli(
+        clonedArgs(ws.root, "admin/Echo Get Body", "--var", "token=uploaded"),
+      );
+      const report = JSON.parse(stdout) as HttpReport;
+
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.headers["content-type"]).toMatch(/^multipart\/form-data; boundary=/);
+      expect(http.received[0]?.body).toContain('Content-Disposition: form-data; name="note"\r\n\r\nuploaded');
+      expect(http.received[0]?.body).toContain('name="receipt"; filename="receipt.txt"');
+      expect(http.received[0]?.body).toContain("receipt-id=fixture-123");
+      expect(report.request_body).toMatch(/^<\d+ bytes>$/);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenBinaryFileUpload_whenRun_thenServerReceivesIdenticalBytes", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: "body:\n  type: file\n  file:\n    src: upload/pixel.png",
+        script: "// Binary file body.",
+      });
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      const report = JSON.parse(stdout) as HttpReport;
+
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.bodyBuffer).toEqual(readFileSync(`${ws.root}/upload/pixel.png`));
+      expect(http.received[0]?.headers["content-type"]).toBe("image/png");
+      expect(report.request_body).toBe(`<${http.received[0]?.bodyBuffer.length} bytes>`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenScriptReplacingFileBody_whenRun_thenScriptBodyWins", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: "body:\n  type: file\n  file:\n    src: upload/pixel.png",
+        script: 'pm.request.body.mode = "text"; pm.request.body.raw = "replacement";',
+      });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.body).toBe("replacement");
+      expect(http.received[0]?.headers["content-type"]).toBe("text/plain");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenStructuredUrlencoded_whenRun_thenServerReceivesEncodedForm", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: "body:\n  type: urlencoded\n  urlencoded:\n    - key: note\n      value: a+b/c=",
+        script: "// Structured form body.",
+      });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.body).toBe("note=a%2Bb%2Fc%3D");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenGraphqlRequest_whenRun_thenServerReceivesQueryAndVariables", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: [
+          "body:",
+          "  type: graphql",
+          "  graphql:",
+          "    query: 'query Receipt($id: Int!) { receipt(id: $id) { id } }'",
+          "    variables: '{\"id\":7}'",
+        ].join("\n"),
+        script: "// GraphQL body.",
+      });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(JSON.parse(http.received[0]?.body ?? "")).toEqual({
+        query: "query Receipt($id: Int!) { receipt(id: $id) { id } }",
+        variables: { id: 7 },
+      });
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenUploadFollowingRedirect_whenRun_thenBodyReplayedIntact", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        path: "/redirect-preserve",
+        method: "POST",
+        body: "body:\n  type: file\n  file:\n    src: upload/pixel.png",
+        script: "// Replayable buffered body.",
+      });
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received).toHaveLength(2);
+      expect(http.received[1]?.bodyBuffer).toEqual(http.received[0]?.bodyBuffer);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenMissingUploadFile_whenRun_thenExitsOneNamingTheField", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: "body:\n  type: formdata\n  formdata:\n    - key: receipt\n      type: file\n      src: missing.pdf",
+        script: "// Missing upload.",
+      });
+      await expect(runCli(clonedArgs(ws.root, "admin/Echo Get Body"))).rejects.toThrow(/formdata field "receipt"/);
+      expect(http.received).toHaveLength(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenUploadOutsideWorkingDir_whenRun_thenExitsOneUntilInsecureFileReadPassed", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    const outside = `${ws.root}-outside.txt`;
+    try {
+      writeFileSync(outside, "outside fixture");
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: `body:\n  type: file\n  file:\n    src: ../${basename(outside)}`,
+        script: "// Outside upload.",
+      });
+      await expect(runCli(clonedArgs(ws.root, "admin/Echo Get Body"))).rejects.toThrow(/outside the working directory/);
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body", "--insecure-file-read"));
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.body).toBe("outside fixture");
+    } finally {
+      rmSync(outside, { force: true });
+      ws.cleanup();
+    }
+  });
+
+  it("givenWorkingDir_whenRun_thenRelativeUploadUsesThatDirectory", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        body: "body:\n  type: file\n  file:\n    src: receipt.txt",
+        script: "// Custom working directory.",
+      });
+      const { code } = await runCli(
+        clonedArgs(ws.root, "admin/Echo Get Body", "--working-dir", `${ws.root}/upload`),
+      );
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.body).toBe("receipt-id=fixture-123\n");
+    } finally {
+      ws.cleanup();
+    }
+  });
+});
 
 /**
  * `Echo Get Body` is the only request that reaches an endpoint which echoes what
