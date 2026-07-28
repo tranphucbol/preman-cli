@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import pc from "picocolors";
@@ -293,8 +293,11 @@ export async function main(argv: string[]): Promise<ExitCode> {
 }
 
 /* c8 ignore start -- process wiring, exercised by running the binary */
-const entrypoint = process.argv[1];
-const isDirectRun = entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href;
+export function isDirectEntrypoint(entrypoint: string | undefined, moduleUrl: string): boolean {
+  return entrypoint !== undefined && moduleUrl === pathToFileURL(realpathSync(entrypoint)).href;
+}
+
+const isDirectRun = isDirectEntrypoint(process.argv[1], import.meta.url);
 
 if (isDirectRun) {
   try {
