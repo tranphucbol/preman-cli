@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import pc from "picocolors";
@@ -5,6 +6,7 @@ import { commandEnvSet, commandEnvShow } from "./commands/env.js";
 import { commandList } from "./commands/list.js";
 import { commandRun } from "./commands/run.js";
 import { CliError, EXIT, type ExitCode } from "./errors.js";
+import { reporterNames, resolveReporterTargets } from "./output/reporter.js";
 
 const VERSION = "0.1.0";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -59,7 +61,12 @@ ${pc.bold("options")}
       --descriptor      gRPC only: use the request's embedded descriptor
                         instead of the .proto
       --bail            in a collection run, stop at the first request that fails
-      --json            machine-readable output
+  -r, --reporter <name> reporter to use; repeat or comma-separate (${reporterNames().join(", ")})
+      --reporter-json-export <path>
+                        write the JSON report to a file
+      --reporter-junit-export <path>
+                        write the JUnit report to a file
+      --json            alias for --reporter json
   -v, --verbose         show request body, script logs, headers, metadata and
                         trailers
   -h, --help            show this help
@@ -168,6 +175,9 @@ const OPTIONS = {
   "no-save": { type: "boolean" },
   descriptor: { type: "boolean" },
   bail: { type: "boolean" },
+  reporter: { type: "string", short: "r", multiple: true },
+  "reporter-json-export": { type: "string" },
+  "reporter-junit-export": { type: "string" },
   json: { type: "boolean" },
   verbose: { type: "boolean", short: "v" },
   help: { type: "boolean", short: "h" },
@@ -224,9 +234,16 @@ export async function main(argv: string[]): Promise<ExitCode> {
     }
 
     case "run": {
+      const reporters = resolveReporterTargets(
+        [...(values.reporter ?? []), ...(json ? ["json"] : [])],
+        {
+          json: values["reporter-json-export"],
+          junit: values["reporter-junit-export"],
+        },
+      );
       const timeouts = resolveTimeouts(values);
       if (timeouts.warning !== undefined) process.stderr.write(`${pc.yellow(`warn: ${timeouts.warning}`)}\n`);
-      const { output, exitCode } = await commandRun({
+      const { output, files, exitCode } = await commandRun({
         dir,
         selector: rest.length > 0 ? rest.join(" ") : undefined,
         env: values.env,
@@ -252,12 +269,21 @@ export async function main(argv: string[]): Promise<ExitCode> {
         save: values["no-save"] !== true,
         preferDescriptor: values.descriptor === true,
         bail: values.bail === true,
-        json,
+        reporters,
         verbose,
         workingDir: values["working-dir"],
         insecureFileRead: values["insecure-file-read"] === true,
       });
-      process.stdout.write(`${output}\n`);
+      if (output !== "") process.stdout.write(`${output}\n`);
+      for (const file of files) {
+        try {
+          writeFileSync(file.path, file.content);
+        } catch (cause) {
+          throw new CliError(`could not write reporter output to "${file.path}"`, {
+            details: [(cause as Error).message],
+          });
+        }
+      }
       return exitCode;
     }
 

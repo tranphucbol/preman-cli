@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { aggregateTests, type GroupRunItem, type RunOutcome } from "../src/runner.js";
 import {
   listGroups,
   listRequests,
@@ -125,5 +126,24 @@ describe("targetLabel", () => {
     const [collection, folder] = listGroups(requests);
     expect(targetLabel({ kind: "group", group: collection! })).toBe("payment (collection, 5 requests)");
     expect(targetLabel({ kind: "group", group: folder! })).toBe("payment/nested (folder, 1 request)");
+  });
+});
+
+describe("aggregateTests", () => {
+  it("givenGroupWithAssertions_whenAggregateTests_thenTotalsSummed", () => {
+    const entry = entryOf("payment/Echo");
+    const outcome = {
+      tests: [
+        { status: "passed" },
+        { status: "failed" },
+        { status: "skipped" },
+      ],
+    } as unknown as RunOutcome;
+    const items: GroupRunItem[] = [
+      { entry, iteration: 0, status: "test", outcome, error: undefined },
+      { entry, iteration: 0, status: "error", outcome: undefined, error: { message: "failed", details: [] } },
+    ];
+
+    expect(aggregateTests(items)).toEqual({ total: 3, passed: 1, failed: 1, skipped: 1 });
   });
 });

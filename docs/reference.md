@@ -47,10 +47,52 @@ preman env set <key> <value>
 | `--no-save` | Do not write script-modified variables back to the environment file. |
 | `--descriptor` | For gRPC, use the embedded descriptor instead of the `.proto` file. |
 | `--bail` | Stop a collection or folder run at the first failure. |
-| `--json` | Emit machine-readable output. |
+| `-r, --reporter <name>` | Select a reporter. Repeat the flag or comma-separate names. |
+| `--reporter-json-export <path>` | Write the JSON reporter output to a file. |
+| `--reporter-junit-export <path>` | Write the JUnit reporter output to a file. |
+| `--json` | Alias for `--reporter json`. |
 | `-v, --verbose` | Show request bodies, logs, headers, metadata, trailers, and full group reports. |
 
 Test results and failed assertions are printed without `--verbose`.
+
+## Reporters
+
+Reporters consume the completed structured run and do not change its exit code.
+
+| Reporter | Exportable | Output |
+| --- | --- | --- |
+| `cli` | No | The compact human report. This is the default. |
+| `json` | Yes | Preman's machine-readable run object. |
+| `junit` | Yes | JUnit XML for CI test-report consumers. |
+
+`-r, --reporter` is repeatable, and comma-separated names work too. Duplicate names are ignored.
+`--json` enables the JSON reporter rather than changing another reporter's format. A reporter with
+an export path writes to that file; otherwise it writes to stdout. At most one reporter may target
+stdout, so this is valid:
+
+```sh
+preman run payment -r cli,junit --reporter-junit-export junit.xml
+```
+
+`--json -r cli` is rejected because both reporters would target stdout. An export flag is also
+rejected unless its reporter is enabled.
+
+JUnit emits one `<testsuite>` per request and one `<testcase>` per `pm.test`:
+
+| Run result | JUnit representation |
+| --- | --- |
+| Passing assertion | A testcase with no child element |
+| Failing assertion | A testcase with `<failure type="AssertionError">` and the assertion message |
+| Skipped assertion | A testcase with `<skipped/>` |
+| Inherited script assertion | The testcase name includes the collection or folder origin |
+| Transport or preparation error | A synthetic `request` testcase with `<error>` |
+| Business failure | A synthetic `request` testcase with `<failure>` naming the return code or HTTP status |
+| Unsupported request | A synthetic `request` testcase with `<skipped/>` |
+| Successful request with no assertions | An empty suite with `tests="0"` |
+
+Suite `time` values are request durations in seconds. Assertion testcase times are `0` because
+preman does not time individual assertions. A run stopped by `--bail` reports only requests that
+actually ran; it does not invent skipped cases for requests never reached.
 
 ## Selecting requests
 
@@ -86,7 +128,7 @@ payment  5 requests
 ✗ payment/Descriptor Only   UNIMPLEMENTED 3ms
 ✓ payment/nested/Deep Echo  OK / OK 4ms
 
-5 requests · 3 ok · 1 failed · 1 skipped · 25ms
+5 requests · 3 ok · 1 failed · 1 skipped · 3 assertions · 3 passed · 25ms
 ```
 
 The group shares one variable store and one in-memory cookie jar. A variable or cookie created by
@@ -105,8 +147,8 @@ produces noise. The summary says which script aborted the run:
 aborted: folder ZAS script "http:beforeRequest" failed: login returned 500
 ```
 
-With `--json`, a group emits an object containing `group`, `items`, `bailed`, `bailReason`,
-`iterations`, `savedVars`, and `exitCode`. Each item carries a zero-based `iteration`.
+With the JSON reporter, a group emits an object containing `group`, `items`, `bailed`, `bailReason`,
+`iterations`, aggregate `tests`, `savedVars`, and `exitCode`. Each item carries a zero-based `iteration`.
 `bailReason` is `"bail-flag"`, `"inherited-script"`, `"timeout"`, or `null`.
 
 ## Iterations and data files

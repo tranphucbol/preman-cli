@@ -496,6 +496,103 @@ describe("preman run (test scripts)", () => {
   });
 });
 
+describe("preman run (reporters)", () => {
+  it("givenJunitReporterWithExport_whenRun_thenFileWrittenAndStdoutStillHuman", async () => {
+    const clone = cloneFixtureWorkspace();
+    const reportPath = `${clone.root}/junit.xml`;
+    try {
+      const { code, stdout } = await runCli([
+        "run",
+        "Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "-r",
+        "cli,junit",
+        "--reporter-junit-export",
+        reportPath,
+      ]);
+
+      expect(code).toBe(EXIT.OK);
+      expect(stdout).toContain("payment/Echo");
+      const xml = readFileSync(reportPath, "utf8");
+      expect(xml).toContain('<testsuites name="preman" tests="2" failures="0" errors="0"');
+      expect(xml).toContain('name="return_code is as expected"');
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenJunitReporterWithoutExport_whenRun_thenXmlOnStdout", async () => {
+    const { code, stdout } = await runCli(runArgs("Echo", "-r", "junit"));
+    expect(code).toBe(EXIT.OK);
+    expect(stdout).toMatch(/^<testsuites name="preman"/);
+    expect(stdout).toContain('<testsuite name="payment/Echo"');
+  });
+
+  it("givenJsonFlagAndCliReporter_whenRun_thenRejectsBothStdoutReportersBeforeRunning", async () => {
+    await expect(runCli(runArgs("Echo", "--json", "-r", "cli"))).rejects.toThrow(/"cli", "json".*stdout/);
+    expect(received).toHaveLength(0);
+  });
+
+  it("givenFailingRun_whenJunitExported_thenExitCodeStillReflectsFailure", async () => {
+    const clone = cloneFixtureWorkspace();
+    const reportPath = `${clone.root}/failed.xml`;
+    try {
+      const { code } = await runCli([
+        "run",
+        "Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "--var",
+        "expected_code=NOPE",
+        "-r",
+        "junit",
+        "--reporter-junit-export",
+        reportPath,
+      ]);
+      expect(code).toBe(EXIT.TEST);
+      expect(readFileSync(reportPath, "utf8")).toContain('failures="1"');
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenUnwritableExportPath_whenRun_thenErrorNamesThePath", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      await expect(
+        runCli([
+          "run",
+          "Echo",
+          "-d",
+          clone.root,
+          "-e",
+          "LOCAL",
+          "--url",
+          target(),
+          "--no-save",
+          "-r",
+          "junit",
+          "--reporter-junit-export",
+          clone.root,
+        ]),
+      ).rejects.toThrow(`could not write reporter output to "${clone.root}"`);
+    } finally {
+      clone.cleanup();
+    }
+  });
+});
+
 describe("preman run (error paths)", () => {
   it("givenUnsupportedKind_whenRun_thenRejectedWithTheSupportedKinds", async () => {
     await expect(runCli(["run", "Legacy Http", "-d", FIXTURE_WS, "-e", "LOCAL", "--json"])).rejects.toThrow(
@@ -670,6 +767,7 @@ interface GroupReport {
   }>;
   bailed: boolean;
   bailReason: string | null;
+  tests: { total: number; passed: number; failed: number; skipped: number };
   savedVars: Record<string, string>;
   savedTo: string | null;
   exitCode: number;
@@ -704,6 +802,7 @@ describe("preman run <collection> (whole-collection runs)", () => {
     // server that does not serve pe.aev2; neither stops the rest of the run.
     expect(report.items.map((i) => i.status)).toEqual(["ok", "ok", "skipped", "transport", "ok"]);
     expect(report.bailed).toBe(false);
+    expect(report.tests).toEqual({ total: 3, passed: 3, failed: 0, skipped: 0 });
 
     // The transport failure is the worst outcome, so it decides the exit code.
     expect(report.exitCode).toBe(EXIT.TRANSPORT);
@@ -1115,6 +1214,9 @@ describe("preman run <collection> (whole-collection runs)", () => {
     expect(withTests).toContain("1 with failed tests");
     expect(withTests).toContain("return_code is as expected");
     expect(withTests).toContain("1/2 tests");
+    expect(withTests).toContain("3 assertions");
+    expect(withTests).toContain("2 passed");
+    expect(withTests).toContain("1 failed");
   });
 });
 

@@ -97,7 +97,10 @@ Common options:
 | `--timeout-script <ms>` | Set each script deadline; defaults to `5000` |
 | `--no-save` | Do not write script changes back to the environment |
 | `--bail` | Stop a collection run after the first failure |
-| `--json` | Print machine-readable output |
+| `-r, --reporter <name>` | Select `cli`, `json`, or `junit`; repeat or comma-separate |
+| `--reporter-json-export <path>` | Write the JSON report to a file |
+| `--reporter-junit-export <path>` | Write the JUnit report to a file |
+| `--json` | Alias for `--reporter json` |
 | `-v, --verbose` | Show request, response, script, and transport details |
 
 Run `preman --help` for every option.
@@ -116,6 +119,13 @@ Run `preman --help` for every option.
 - Postman's common script libraries, including Lodash, CryptoJS, Moment, Cheerio, XML2JS, and UUID
 - Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
 - Environment writeback and JSON output for CI
+- JUnit reports for GitLab, Jenkins, and other CI test-report consumers
+
+Print the normal report while writing JUnit XML for the CI test tab:
+
+```sh
+preman run payment -r cli,junit --reporter-junit-export junit.xml
+```
 
 Streaming gRPC and request kinds other than gRPC and HTTP are not supported. Unsupported items in
 a collection run are reported instead of being executed.

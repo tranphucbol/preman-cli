@@ -183,6 +183,21 @@ export function countTests(tests: TestResult[]): TestSummary {
   };
 }
 
+/** Sums per-request tallies across a group. */
+export function aggregateTests(items: GroupRunItem[]): TestSummary {
+  return items.reduce<TestSummary>(
+    (total, item) => {
+      const tests = countTests(item.outcome?.tests ?? []);
+      total.total += tests.total;
+      total.passed += tests.passed;
+      total.failed += tests.failed;
+      total.skipped += tests.skipped;
+      return total;
+    },
+    { total: 0, passed: 0, failed: 0, skipped: 0 },
+  );
+}
+
 function groupProperties(entries: readonly Property[]): Record<string, string | string[]> {
   const grouped: Record<string, string | string[]> = {};
   for (const { key, value } of entries) {
@@ -658,6 +673,7 @@ export interface GroupRunOutcome {
   savedVars: Record<string, string>;
   savedTo: string | undefined;
   durationMs: number;
+  tests: TestSummary;
   exitCode: ExitCode;
 }
 
@@ -812,6 +828,7 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
     savedVars,
     savedTo,
     durationMs: performance.now() - started,
+    tests: aggregateTests(items),
     exitCode,
   };
 }

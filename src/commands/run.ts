@@ -1,7 +1,7 @@
 import pc from "picocolors";
 import { loadIterationData, type DataRow } from "../data/rows.js";
 import { CliError, type ExitCode } from "../errors.js";
-import { renderGroupOutcome, renderOutcome } from "../output/render.js";
+import type { ReportableRun, ResolvedReporter } from "../output/reporter.js";
 import { runGroup, runRequest, type GroupRunOutcome, type RunOutcome } from "../runner.js";
 import {
   listRequests,
@@ -38,7 +38,7 @@ export interface RunArgs {
   preferDescriptor: boolean;
   /** Stop a collection run at the first request that does not fully succeed. */
   bail: boolean;
-  json: boolean;
+  reporters: ResolvedReporter[];
   verbose: boolean;
   workingDir: string | undefined;
   insecureFileRead: boolean;
@@ -50,11 +50,23 @@ const CONFIG_CERT_LABEL = ".postman/preman.yaml";
 
 export interface RunCommandResult {
   output: string;
+  files: Array<{ path: string; content: string }>;
   exitCode: ExitCode;
   /** Set for a single-request run. */
   outcome: RunOutcome | undefined;
   /** Set for a collection or folder run. */
   group: GroupRunOutcome | undefined;
+}
+
+function renderReports(result: ReportableRun, reporters: ResolvedReporter[], verbose: boolean) {
+  let output = "";
+  const files: Array<{ path: string; content: string }> = [];
+  for (const { reporter, exportPath } of reporters) {
+    const content = reporter.render(result, { exportPath, verbose });
+    if (exportPath === undefined) output = content;
+    else files.push({ path: exportPath, content });
+  }
+  return { output, files };
 }
 
 function isInteractive(): boolean {
@@ -147,7 +159,8 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
   }
 
   const environment = await pickEnvironment(ws, args.env);
-  if (environment === undefined && !args.json) {
+  const humanOutput = args.reporters.some(({ reporter }) => reporter.name === "cli");
+  if (environment === undefined && humanOutput) {
     process.stderr.write(`${pc.yellow("warn: no environment selected; only --var values are available")}\n`);
   }
 
@@ -160,7 +173,7 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
       : [{ label: CONFIG_CERT_LABEL, baseDir: config.baseDir, input: config.tls }]),
   ];
   const tlsCerts = resolveTlsCerts(certLayers);
-  if (!args.json) {
+  if (humanOutput) {
     for (const warning of tlsCerts.warnings) {
       process.stderr.write(`${pc.yellow(`warn: ${warning}`)}\n`);
     }
@@ -193,8 +206,9 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
       delayRequestMs: args.delayRequestMs,
       runTimeoutMs: args.runTimeoutMs,
     });
+    const reports = renderReports({ kind: "group", outcome: group }, args.reporters, args.verbose);
     return {
-      output: renderGroupOutcome(group, { verbose: args.verbose, json: args.json }),
+      ...reports,
       exitCode: group.exitCode,
       outcome: undefined,
       group,
@@ -208,8 +222,9 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
   }
 
   const outcome = await runRequest({ ...shared, entry: target.entry, data: data?.rows[0] });
+  const reports = renderReports({ kind: "single", outcome }, args.reporters, args.verbose);
   return {
-    output: renderOutcome(outcome, { verbose: args.verbose, json: args.json }),
+    ...reports,
     exitCode: outcome.exitCode,
     outcome,
     group: undefined,

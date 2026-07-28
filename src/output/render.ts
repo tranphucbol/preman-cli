@@ -30,8 +30,6 @@ const NO_RESPONSE_LABEL = "no response";
 
 export interface RenderOptions {
   verbose: boolean;
-  /** Emit a single machine-readable JSON object instead of a human report. */
-  json: boolean;
 }
 
 /** Pretty-print with syntax colouring. Falls back to plain text when colour is off. */
@@ -96,7 +94,7 @@ function statusLabel(outcome: RunOutcome): string {
  * Decision 8: only a non-request origin is named. Inheritance must not reformat the output
  * of the request-level scripts that were the only kind preman used to run.
  */
-function originTag(origin: ScriptOrigin): string {
+export function originTag(origin: ScriptOrigin): string {
   return origin.level === "request" ? "" : ` [${origin.label}]`;
 }
 
@@ -208,8 +206,6 @@ function certSourceLines(outcome: RunOutcome, out: string[]): void {
 
 /** The human-facing report for a completed run. */
 export function renderOutcome(outcome: RunOutcome, options: RenderOptions): string {
-  if (options.json) return JSON.stringify(toJsonReport(outcome), null, 2);
-
   const lines: string[] = headerLines(outcome);
   if (options.verbose) certSourceLines(outcome, lines);
 
@@ -307,6 +303,12 @@ function countsLine(outcome: GroupRunOutcome): string {
     const n = tally(status);
     if (n > 0) parts.push(paint(label(n)));
   }
+  if (outcome.tests.total > 0) {
+    parts.push(`${outcome.tests.total} ${outcome.tests.total === 1 ? "assertion" : "assertions"}`);
+    if (outcome.tests.passed > 0) parts.push(pc.green(`${outcome.tests.passed} passed`));
+    if (outcome.tests.failed > 0) parts.push(pc.red(`${outcome.tests.failed} failed`));
+    if (outcome.tests.skipped > 0) parts.push(pc.dim(`${outcome.tests.skipped} skipped`));
+  }
   parts.push(pc.dim(`${outcome.durationMs.toFixed(0)}ms`));
   return parts.join(pc.dim(" · "));
 }
@@ -329,8 +331,6 @@ function stoppedLine(outcome: GroupRunOutcome): string | undefined {
 
 /** The human-facing report for a collection or folder run. */
 export function renderGroupOutcome(outcome: GroupRunOutcome, options: RenderOptions): string {
-  if (options.json) return JSON.stringify(toGroupJsonReport(outcome), null, 2);
-
   const lines: string[] = [];
   const total = outcome.items.length;
   lines.push(`${pc.bold(outcome.groupPath)}  ${pc.dim(`${total} ${total === 1 ? "request" : "requests"}`)}`, "");
@@ -341,7 +341,7 @@ export function renderGroupOutcome(outcome: GroupRunOutcome, options: RenderOpti
     for (const item of outcome.items) {
       const style = STATUS_STYLE[item.status];
       if (item.outcome) {
-        lines.push(renderOutcome(item.outcome, { verbose: true, json: false }), "");
+        lines.push(renderOutcome(item.outcome, { verbose: true }), "");
         continue;
       }
       lines.push(`${style.paint(style.mark)} ${pc.bold(item.entry.path)}  ${itemLabel(item)}`);
@@ -387,6 +387,7 @@ export function toGroupJsonReport(outcome: GroupRunOutcome) {
     bailed: outcome.bailed,
     bailReason: outcome.bailReason ?? null,
     iterations: outcome.iterations,
+    tests: outcome.tests,
     savedVars: outcome.savedVars,
     savedTo: outcome.savedTo ?? null,
     durationMs: Number(outcome.durationMs.toFixed(3)),
