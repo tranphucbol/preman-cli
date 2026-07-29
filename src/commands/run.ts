@@ -42,6 +42,8 @@ export interface RunArgs {
   verbose: boolean;
   workingDir: string | undefined;
   insecureFileRead: boolean;
+  /** Expose `eval` to scripts. Also settable per workspace via `.postman/preman.yaml`. */
+  safeEval: boolean;
 }
 
 /** Layer labels, echoed back to the user when a certificate cannot be read. */
@@ -191,6 +193,8 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
     tlsOverride: args.tls,
     timeoutMs: args.timeoutMs,
     scriptTimeoutMs: args.scriptTimeoutMs,
+    // The flag forces it on; the workspace config opts a checked-out repo in once.
+    safeEval: args.safeEval || config?.safeEval === true,
     preferDescriptor: args.preferDescriptor,
     save: args.save,
   };

@@ -44,6 +44,7 @@ preman env set <key> <value>
 | `--timeout-request <ms>` | Per-request deadline. The default is `30000`. |
 | `--timeout-script <ms>` | Per-script deadline. The default is `5000`. |
 | `--var <key=value>` | Set a local variable at the highest precedence. Repeatable. |
+| `--safe-eval` | Expose `eval` to scripts, for the `eval(pm.environment.get("lib_code"))` library idiom. Also settable as `safeEval: true` in `.postman/preman.yaml`. |
 | `--no-save` | Do not write script-modified variables back to the environment file. |
 | `--descriptor` | For gRPC, use the embedded descriptor instead of the `.proto` file. |
 | `--bail` | Stop a collection or folder run at the first failure. |
@@ -403,6 +404,7 @@ tls:
   clientKey: ca/client.key
   clientPassphrase: hunter2
   insecure: false
+safeEval: true
 ```
 
 Relative paths resolve against `.postman/`, not the current directory. Every key is optional, and a
@@ -524,6 +526,17 @@ The sandbox also provides `Buffer`, `atob`, `btoa`, `TextEncoder`, `TextDecoder`
 `URLSearchParams`, `Promise`, `Symbol`, `Map`, `Set`, `WeakMap`, `WeakSet`, and `RegExp` directly.
 It deliberately does not expose `Function`, `eval`, `process`, `fetch`, `setInterval`, filesystem
 access, or unrestricted Node module loading.
+
+`--safe-eval` (or `safeEval: true` in `.postman/preman.yaml`) adds `eval`, which Postman's shared
+library idiom needs:
+
+```js
+eval(pm.environment.get("lib_code"));
+const key = await lib(pm).getMacKey(pm.variables.get("app_id"));
+```
+
+The flag omits the `eval` override rather than injecting the host's, so evaluated code runs in the
+same vm realm as the script around it and sees the same allow-list. `Function` stays absent.
 
 `node:vm` is isolation by convention, not a security boundary. Library parsers and `Buffer`
 increase what a script can do, and dependencies can have vulnerabilities of their own. Preman runs

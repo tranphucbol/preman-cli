@@ -102,6 +102,11 @@ export interface RunScriptOptions {
   iterationCount?: number;
   /** Certificate material for `pm.sendRequest`; Node's defaults when omitted. */
   tlsCerts?: TlsCertOptions;
+  /**
+   * Expose `eval` so a script can rehydrate a shared library, the way Postman's
+   * `eval(pm.globals.get("pmlib_code"))` idiom does. Off by default.
+   */
+  safeEval?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -491,8 +496,8 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
     },
     require: requireSandboxModule,
     // This is the intersection of what Postman exposes and what we are willing
-    // to expose. Function and eval are explicitly absent so the module allow-list
-    // cannot be bypassed with the most direct node:vm escape.
+    // to expose. Function is absent, and eval is absent unless the run opts in,
+    // so the module allow-list is not bypassed by accident.
     Date,
     Math,
     JSON,
@@ -520,7 +525,11 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
     WeakSet,
     RegExp,
     Function: undefined,
-    eval: undefined,
+    // Under `safeEval` the key is omitted rather than assigned: that leaves the
+    // vm realm's own `eval` in place, so evaluated code is confined to this
+    // context exactly like the surrounding script. Assigning the host's `eval`
+    // would instead evaluate in the host realm and hand out `process`.
+    ...(options.safeEval === true ? {} : { eval: undefined }),
     setTimeout: (fn: unknown, ms?: number, ...args: unknown[]): NodeJS.Timeout => {
       const handle = setTimeout(() => {
         pending.delete(handle);

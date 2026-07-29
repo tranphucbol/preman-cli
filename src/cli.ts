@@ -58,6 +58,8 @@ ${pc.bold("options")}
                         per-script deadline (default: ${DEFAULT_SCRIPT_TIMEOUT_MS})
       --var <k=v>       set a variable, highest precedence; repeatable
       --no-save         do not write script-modified variables back to the env file
+      --safe-eval       expose eval to scripts, for eval(pm.environment.get("lib_code"))
+                        (also settable as safeEval: true in .postman/preman.yaml)
       --descriptor      gRPC only: use the request's embedded descriptor
                         instead of the .proto
       --bail            in a collection run, stop at the first request that fails
@@ -164,6 +166,8 @@ const OPTIONS = {
   "working-dir": { type: "string" },
   // Unlike newman's --no-insecure-file-read, preman denies escapes by default.
   "insecure-file-read": { type: "boolean" },
+  // Scripts get no eval unless asked; see .postman/preman.yaml for the sticky form.
+  "safe-eval": { type: "boolean" },
   timeout: { type: "string" },
   "timeout-request": { type: "string" },
   "timeout-script": { type: "string" },
@@ -273,6 +277,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
         verbose,
         workingDir: values["working-dir"],
         insecureFileRead: values["insecure-file-read"] === true,
+        safeEval: values["safe-eval"] === true,
       });
       if (output !== "") process.stdout.write(`${output}\n`);
       for (const file of files) {

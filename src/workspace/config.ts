@@ -8,6 +8,8 @@ import type { Workspace } from "./discover.js";
 
 export interface PremanConfig {
   tls: TlsCertInput;
+  /** Expose `eval` to scripts for every run in this workspace. */
+  safeEval: boolean;
   /** Directory the config's relative paths resolve against: `<root>/.postman`. */
   baseDir: string;
 }
@@ -45,5 +47,5 @@ export function loadPremanConfig(ws: Workspace): PremanConfig | undefined {
   }
 
   // Certificate paths are relative to `.postman/`, matching resources.yaml's specs.
-  return { tls: parsed.data.tls ?? {}, baseDir: dirname(path) };
+  return { tls: parsed.data.tls ?? {}, safeEval: parsed.data.safeEval === true, baseDir: dirname(path) };
 }

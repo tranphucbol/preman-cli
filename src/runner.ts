@@ -85,6 +85,8 @@ export interface RunOptions {
   timeoutMs: number;
   /** Wall-clock budget for each pre-request or post-response script. */
   scriptTimeoutMs?: number;
+  /** Expose `eval` to scripts so they can rehydrate a shared library. */
+  safeEval?: boolean;
   /** Zero-based collection iteration. Single-request runs use zero. */
   iteration?: number;
   /** Total requested iterations. Single-request runs use one. */
@@ -288,6 +290,8 @@ interface ScriptSinkOptions {
   requestTimeoutMs: number;
   /** Independent wall-clock budget for each script. */
   scriptTimeoutMs?: number;
+  /** Expose `eval` to scripts so they can rehydrate a shared library. */
+  safeEval?: boolean;
   iteration?: number;
   iterationCount?: number;
   /** `pm.sendRequest` dials over the same trust store as the request itself. */
@@ -318,6 +322,7 @@ function scriptSink(options: ScriptSinkOptions): ScriptSink {
         request: options.request(),
         timeoutMs: options.scriptTimeoutMs,
         requestTimeoutMs: options.requestTimeoutMs,
+        safeEval: options.safeEval,
         iteration: options.iteration,
         iterationCount: options.iterationCount,
         tlsCerts: options.tlsCerts,
@@ -417,6 +422,7 @@ async function runGrpcRequest(
     cookies,
     requestTimeoutMs: options.timeoutMs,
     scriptTimeoutMs: options.scriptTimeoutMs,
+    safeEval: options.safeEval,
     iteration: options.iteration,
     iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,
@@ -551,6 +557,7 @@ async function runHttpRequest(
     cookies,
     requestTimeoutMs: options.timeoutMs,
     scriptTimeoutMs: options.scriptTimeoutMs,
+    safeEval: options.safeEval,
     iteration: options.iteration,
     iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,

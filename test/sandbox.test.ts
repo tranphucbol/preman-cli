@@ -55,6 +55,18 @@ async function run(code: string, store = new VariableStore()) {
   return (await runFull(code, store)).logs;
 }
 
+async function runSafeEval(code: string, store = new VariableStore()) {
+  const result = await runScript({
+    code,
+    store,
+    info: { requestName: "Long Chau", eventName: "beforeRequest" },
+    origin: REQUEST_ORIGIN,
+    request: liveRequest({ url: "http://host/pay", method: "POST", body: "" }),
+    safeEval: true,
+  });
+  return result.logs;
+}
+
 describe("runScript", () => {
   it("givenRealTransIdScript_whenRun_thenSetsDatePrefixedNumericEnvironmentVariable", async () => {
     const store = new VariableStore({ environment: { trans_id: "" } });
@@ -266,6 +278,21 @@ describe("runScript", () => {
 
   it("givenScript_whenCallingFunctionConstructor_thenThrows", async () => {
     await expect(run(`Function("return process")();`)).rejects.toThrow("Function is not a function");
+  });
+
+  it("givenScript_whenCallingEvalWithoutSafeEval_thenThrows", async () => {
+    await expect(run(`eval("1 + 1");`)).rejects.toThrow("eval is not a function");
+  });
+
+  it("givenSafeEval_whenEvaluatingLibrarySource_thenDefinesUsableFunction", async () => {
+    const store = new VariableStore({ environment: { lib_code: `function lib() { return CryptoJS.MD5("x").toString().slice(0, 4); }` } });
+    const logs = await runSafeEval(`eval(pm.environment.get("lib_code")); console.log(lib());`, store);
+
+    expect(logs[0]?.text).toBe("9dd4");
+  });
+
+  it("givenSafeEval_whenCallingFunctionConstructor_thenStillThrows", async () => {
+    await expect(runSafeEval(`Function("return process")();`)).rejects.toThrow("Function is not a function");
   });
 
   it("givenScript_whenRequiringFs_thenScriptFailsWithAllowList", async () => {

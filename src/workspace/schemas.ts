@@ -34,6 +34,8 @@ export const premanConfigSchema = z
       })
       .passthrough()
       .optional(),
+    /** Expose `eval` to scripts, for the `eval(pm.environment.get("lib_code"))` idiom. */
+    safeEval: z.boolean().optional(),
   })
   .passthrough();
 
