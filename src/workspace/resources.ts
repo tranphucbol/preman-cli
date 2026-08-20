@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 import { resourcesFileSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
 

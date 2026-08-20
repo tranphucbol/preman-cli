@@ -51,7 +51,16 @@ export class VariableStore {
   }
 
   set(scope: Scope, key: string, value: unknown): void {
-    const normalised = value == null ? "" : String(value);
+    const normalised =
+      value === null
+        ? ""
+        : typeof value === "string" ||
+            typeof value === "number" ||
+            typeof value === "boolean" ||
+            typeof value === "bigint" ||
+            typeof value === "symbol"
+          ? String(value)
+          : (JSON.stringify(value) ?? "");
     if (this.scopes[scope].get(key) === normalised) return;
     this.scopes[scope].set(key, normalised);
     this.dirty[scope].add(key);

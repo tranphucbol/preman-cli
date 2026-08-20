@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CliError } from "../src/errors.js";
-import { buildBody } from "../src/http/body.js";
-import { VariableStore } from "../src/vars/store.js";
-import type { FileReader } from "../src/workspace/files.js";
+import { CliError } from "@/errors.js";
+import { buildBody } from "@/http/body.js";
+import { VariableStore } from "@/vars/store.js";
+import type { FileReader } from "@/workspace/files.js";
 
 const FILE_BYTES = Buffer.from([0, 1, 2, 255]);
 const BOUNDARY = "fixed-boundary";
@@ -74,7 +74,9 @@ describe("buildBody", () => {
       boundary: BOUNDARY,
     });
     const content = result.wire.content as Buffer;
-    expect(content.subarray(0, content.length - FILE_BYTES.length - (`\r\n--${BOUNDARY}--\r\n`).length).toString()).toContain(
+    expect(
+      content.subarray(0, content.length - FILE_BYTES.length - `\r\n--${BOUNDARY}--\r\n`.length).toString(),
+    ).toContain(
       'Content-Disposition: form-data; name="receipt"; filename="receipt.pdf"\r\nContent-Type: application/pdf',
     );
     expect(content.includes(FILE_BYTES)).toBe(true);

@@ -1,7 +1,7 @@
-import { CliError } from "../errors.js";
-import { interpolateStrict } from "../vars/interpolate.js";
-import type { VariableStore } from "../vars/store.js";
-import type { RequestAuth } from "../workspace/schemas.js";
+import { CliError } from "@/errors.js";
+import { interpolateStrict } from "@/vars/interpolate.js";
+import type { VariableStore } from "@/vars/store.js";
+import type { RequestAuth } from "@/workspace/schemas.js";
 
 const NO_AUTH = "noauth";
 const API_KEY_IN_QUERY = "query";
@@ -14,9 +14,7 @@ const BASE64 = "base64";
 export const SUPPORTED_AUTH_TYPES = ["noauth", "bearer", "basic", "apikey"] as const;
 
 export type RenderedAuth =
-  | { kind: "none" }
-  | { kind: "header"; name: string; value: string }
-  | { kind: "query"; key: string; value: string };
+  { kind: "none" } | { kind: "header"; name: string; value: string } | { kind: "query"; key: string; value: string };
 
 export interface RenderedAuthResult {
   rendered: RenderedAuth;
@@ -28,7 +26,10 @@ const NONE: RenderedAuth = { kind: "none" };
 function credential(auth: RequestAuth, name: string, store: VariableStore): string {
   const raw = auth.credentials?.[name];
   if (raw === undefined || raw === null) return "";
-  const text = typeof raw === "string" ? raw : String(raw);
+  const text =
+    typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean" || typeof raw === "bigint"
+      ? String(raw)
+      : (JSON.stringify(raw) ?? "");
   return interpolateStrict(text, store, `auth ${auth.type}.${name}`);
 }
 
@@ -73,7 +74,7 @@ export function renderAuth(auth: RequestAuth | undefined, store: VariableStore):
   if (key.length === 0) {
     return { rendered: NONE, warnings: ["apikey auth has no key; sending the request unauthenticated"] };
   }
-  const target = String(auth.credentials?.["in"] ?? "").trim().toLowerCase();
+  const target = credential(auth, "in", store).trim().toLowerCase();
   if (target === API_KEY_IN_QUERY) return { rendered: { kind: "query", key, value }, warnings: [] };
   return { rendered: { kind: "header", name: key, value }, warnings: [] };
 }

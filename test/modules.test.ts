@@ -1,12 +1,10 @@
-import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CliError, EXIT } from "../src/errors.js";
-import { chai } from "../src/scripts/expect.js";
-import {
-  requireSandboxModule,
-  SANDBOX_PACKAGES,
-} from "../src/scripts/modules.js";
+import viteConfig from "../vite.config.js";
+import { CliError, EXIT } from "@/errors.js";
+import { chai } from "@/scripts/expect.js";
+import { requireSandboxModule, SANDBOX_ALIASES, SANDBOX_PACKAGES } from "@/scripts/modules.js";
 
 const requireFromTest = createRequire(import.meta.url);
 
@@ -28,23 +26,20 @@ describe("sandbox module registry", () => {
     expect(requireSandboxModule("csv-parse/lib/sync")).toBe(requireFromTest("csv-parse/sync"));
   });
 
-  it.each(["fs", "node:fs"])(
-    "givenNodeBuiltin_whenRequire_thenThrowsCliErrorListingAllowList: %s",
-    (name) => {
-      try {
-        requireSandboxModule(name);
-        expect.unreachable("should have thrown");
-      } catch (error) {
-        expect(error).toBeInstanceOf(CliError);
-        expect(error).toMatchObject({ exitCode: EXIT.CLI });
-        expect((error as CliError).message).toContain(name);
-        expect((error as CliError).details.join("\n")).toContain("lodash");
-      }
-    },
-  );
+  it.each(["fs", "node:fs"])("givenNodeBuiltin_whenRequire_thenThrowsCliErrorListingAllowList: %s", (name) => {
+    try {
+      requireSandboxModule(name);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CliError);
+      expect(error).toMatchObject({ exitCode: EXIT.CLI });
+      expect((error as CliError).message).toContain(name);
+      expect((error as CliError).details.join("\n")).toContain("lodash");
+    }
+  });
 
   it("givenRelativeSpecifier_whenRequire_thenThrowsCliError", () => {
-    expect(() => requireSandboxModule("./helper.js")).toThrow('./helper.js');
+    expect(() => requireSandboxModule("./helper.js")).toThrow("./helper.js");
   });
 
   it("givenNoArgument_whenRequire_thenThrowsCliError", () => {
@@ -56,10 +51,18 @@ describe("sandbox module registry", () => {
     expect(chai.config.truncateThreshold).toBe(400);
   });
 
-  it("givenSandboxPackages_whenBuildExternals_thenEveryPackageIsExternal", async () => {
-    const source = await readFile(new URL("../scripts/build.ts", import.meta.url), "utf8");
-    expect(source).toContain('import { SANDBOX_ALIASES, SANDBOX_PACKAGES } from "../src/scripts/modules.js"');
-    expect(source).toContain("...SANDBOX_PACKAGES");
+  it("givenSandboxPackages_whenBuildExternals_thenEveryPackageIsExternal", () => {
+    const external = viteConfig.build?.rolldownOptions?.external;
+    expect(external).toEqual(expect.arrayContaining([...SANDBOX_PACKAGES]));
     expect(SANDBOX_PACKAGES.length).toBeGreaterThan(0);
+  });
+
+  it("givenSandboxAliases_whenBuildExternals_thenAliasTargetsAreExternal", () => {
+    const external = viteConfig.build?.rolldownOptions?.external;
+    expect(external).toEqual(expect.arrayContaining(Object.values(SANDBOX_ALIASES)));
+  });
+
+  it("givenViteConfig_whenAliasResolved_thenPointsAtSrcDirectory", () => {
+    expect(viteConfig.resolve?.alias).toMatchObject({ "@": resolve(import.meta.dirname, "../src") });
   });
 });

@@ -91,12 +91,11 @@ export const grpcRequestSchema = z
     methodPath: z.string(),
     /** base64 FileDescriptorSet embedded by the Postman client. */
     methodDescriptor: z.string().optional(),
-    message: z
-      .object({ content: z.string().optional() })
-      .passthrough()
-      .optional(),
+    message: z.object({ content: z.string().optional() }).passthrough().optional(),
     metadata: z
-      .array(z.object({ key: z.string(), value: z.string().optional(), disabled: z.boolean().optional() }).passthrough())
+      .array(
+        z.object({ key: z.string(), value: z.string().optional(), disabled: z.boolean().optional() }).passthrough(),
+      )
       .optional(),
     auth: authSchema.optional(),
     settings: z.record(z.unknown()).optional(),
@@ -160,10 +159,7 @@ export const httpRequestSchema = z
         formdata: z.array(formDataEntrySchema).optional(),
         urlencoded: keyValueSourceSchema.optional(),
         file: z.object({ src: z.string() }).passthrough().optional(),
-        graphql: z
-          .object({ query: z.string(), variables: z.string().optional() })
-          .passthrough()
-          .optional(),
+        graphql: z.object({ query: z.string(), variables: z.string().optional() }).passthrough().optional(),
       })
       .passthrough()
       .optional(),

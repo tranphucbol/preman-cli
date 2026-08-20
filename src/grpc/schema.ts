@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import * as protoLoader from "@grpc/proto-loader";
 import type { MethodDefinition, PackageDefinition, ServiceDefinition } from "@grpc/proto-loader";
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 
 /**
  * Load options are load-bearing for this repo's payloads:
@@ -109,9 +109,7 @@ function isServiceDefinition(entry: unknown): entry is ServiceDefinition {
   if (typeof entry !== "object" || entry === null) return false;
   const values = Object.values(entry as Record<string, unknown>);
   if (values.length === 0) return false;
-  return values.every(
-    (v) => typeof v === "object" && v !== null && typeof (v as { path?: unknown }).path === "string",
-  );
+  return values.every((v) => typeof v === "object" && v !== null && typeof (v as { path?: unknown }).path === "string");
 }
 
 /**

@@ -91,7 +91,8 @@ function parseSetCookie(header: string, url: URL, now: number): ParsedSetCookie 
   // Max-Age wins over Expires (RFC 6265 §5.2.2).
   if (maxAge !== undefined) cookie.expiresAt = now + maxAge * 1000;
 
-  const expired = (maxAge !== undefined && maxAge <= DELETED_MAX_AGE) || (cookie.expiresAt !== undefined && cookie.expiresAt <= now);
+  const expired =
+    (maxAge !== undefined && maxAge <= DELETED_MAX_AGE) || (cookie.expiresAt !== undefined && cookie.expiresAt <= now);
   return { cookie, expired };
 }
 
@@ -181,7 +182,9 @@ export class CookieJar {
 
   private matching(url: URL): Cookie[] {
     const host = url.hostname.toLowerCase();
-    return this.sorted(this.live().filter((cookie) => domainMatches(host, cookie) && pathMatches(url.pathname, cookie.path)));
+    return this.sorted(
+      this.live().filter((cookie) => domainMatches(host, cookie) && pathMatches(url.pathname, cookie.path)),
+    );
   }
 
   /** RFC 6265 §5.4: longer paths first, then insertion order. */

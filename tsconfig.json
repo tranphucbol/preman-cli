@@ -4,6 +4,10 @@
     "lib": ["ES2022"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "types": ["node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -16,7 +20,5 @@
     "noEmit": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
-  "//": "scripts/build.ts is excluded: it targets the Bun runtime API, not node.",
-  "exclude": ["scripts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vite.config.ts"]
 }

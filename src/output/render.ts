@@ -1,17 +1,16 @@
 import pc from "picocolors";
-import { EXIT } from "../errors.js";
-import { NO_RESPONSE_STATUS } from "../http/invoke.js";
-import {
-  countTests,
-  type GroupRunItem,
-  type GroupRunOutcome,
-  type GrpcRunOutcome,
-  type HttpRunOutcome,
-  type ItemStatus,
-  type RunOutcome,
-} from "../runner.js";
-import type { ScriptOrigin } from "../scripts/chain.js";
-import type { TestResult } from "../scripts/sandbox.js";
+import { EXIT } from "@/errors.js";
+import { NO_RESPONSE_STATUS } from "@/http/invoke.js";
+import { countTests, type TestResult } from "@/scripts/sandbox.js";
+import type {
+  GroupRunItem,
+  GroupRunOutcome,
+  GrpcRunOutcome,
+  HttpRunOutcome,
+  ItemStatus,
+  RunOutcome,
+} from "@/runner.js";
+import type { ScriptOrigin } from "@/scripts/chain.js";
 
 const TEST_MARK: Record<TestResult["status"], { mark: string; paint: (s: string) => string }> = {
   passed: { mark: "✓", paint: pc.green },
@@ -39,7 +38,13 @@ export function colorizeJson(value: unknown): string {
 
   return text.replace(
     /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-    (match, str: string | undefined, colon: string | undefined, literal: string | undefined, num: string | undefined) => {
+    (
+      match,
+      str: string | undefined,
+      colon: string | undefined,
+      literal: string | undefined,
+      num: string | undefined,
+    ) => {
       if (str !== undefined) return colon ? pc.cyan(str) + colon : pc.green(str);
       if (literal !== undefined) return pc.magenta(literal);
       if (num !== undefined) return pc.yellow(num);
@@ -216,7 +221,8 @@ export function renderOutcome(outcome: RunOutcome, options: RenderOptions): stri
       lines.push(pc.dim(`script ${line.level}${originTag(line.origin)}: ${line.text}`));
     }
     for (const side of outcome.sideRequests) {
-      const status = side.statusCode === NO_RESPONSE_STATUS ? NO_RESPONSE_LABEL : `${side.statusCode} ${side.statusMessage}`;
+      const status =
+        side.statusCode === NO_RESPONSE_STATUS ? NO_RESPONSE_LABEL : `${side.statusCode} ${side.statusMessage}`;
       lines.push(pc.dim(`script request ${side.method} ${side.url} → ${status} ${side.durationMs}ms`));
     }
     if (outcome.protocol === "grpc") grpcRequestLines(outcome, lines);

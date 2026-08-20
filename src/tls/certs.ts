@@ -4,7 +4,7 @@ import { createSecureContext, rootCertificates } from "node:tls";
 import type { SecureContextOptions } from "node:tls";
 import { credentials } from "@grpc/grpc-js";
 import type { ChannelCredentials } from "@grpc/grpc-js";
-import { CliError, EXIT } from "../errors.js";
+import { CliError, EXIT } from "@/errors.js";
 
 /** Certificate material as the user spelled it: paths, a passphrase, a switch. */
 export interface TlsCertInput {
@@ -96,7 +96,7 @@ export function resolveTlsCerts(layers: readonly TlsCertLayer[]): TlsCertOptions
     for (const layer of layers) {
       const value = layer.input[field];
       if (value === undefined || value === "") continue;
-      return [layer, value as NonNullable<TlsCertInput[K]>];
+      return [layer, value];
     }
     return undefined;
   };
@@ -215,9 +215,7 @@ export function secureContextOptions(certs: TlsCertOptions): SecureContextOption
 }
 
 /** The same options, plus the verification switch `https.request` understands. */
-export function httpsRequestOptions(
-  certs: TlsCertOptions,
-): SecureContextOptions & { rejectUnauthorized?: boolean } {
+export function httpsRequestOptions(certs: TlsCertOptions): SecureContextOptions & { rejectUnauthorized?: boolean } {
   const options: SecureContextOptions & { rejectUnauthorized?: boolean } = secureContextOptions(certs);
   if (certs.insecure) options.rejectUnauthorized = false;
   return options;

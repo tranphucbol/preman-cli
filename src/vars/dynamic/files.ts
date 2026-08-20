@@ -18,7 +18,7 @@ const IMAGE_CATEGORIES = {
 
 const categoryImageGenerators = Object.fromEntries(
   Object.entries(IMAGE_CATEGORIES).map(([name, category]) => [name, () => faker.image.urlLoremFlickr({ category })]),
-) as GeneratorTable;
+);
 
 export const fileGenerators: GeneratorTable = {
   $randomFileName: () => faker.system.fileName(),

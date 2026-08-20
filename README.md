@@ -25,7 +25,7 @@ locally without the paid Postman runner.
 
 ## Quick Start
 
-Requires Node.js 20+ and Bun to build.
+Requires Node.js 20+ to install and Bun plus Node.js 20.19+ to build.
 
 ```sh
 git clone https://github.com/tranphucbol/preman-cli.git
@@ -75,33 +75,33 @@ preman env set <key> <value>
 
 Common options:
 
-| Option | Purpose |
-| --- | --- |
-| `-d, --dir <path>` | Select a workspace |
-| `-e, --env <name>` | Select an environment |
-| `--url <target>` | Override the gRPC target or HTTP origin |
-| `--var <key=value>` | Override a variable; repeatable |
-| `--tls` / `--plaintext` | Force TLS or cleartext |
-| `--ssl-extra-ca-certs <path>` | Trust an extra CA on top of the public roots |
-| `--ssl-client-cert <path>` | Client certificate for mutual TLS |
-| `--ssl-client-key <path>` | Private key for that certificate |
-| `--ssl-client-passphrase <text>` | Passphrase for an encrypted key |
-| `-k, --insecure` | Skip server certificate verification |
-| `--working-dir <path>` | Resolve request file paths from this directory; defaults to the workspace root |
-| `--insecure-file-read` | Allow request files outside the working directory |
-| `-n, --iteration-count <n>` | Run a collection or folder multiple times |
-| `--iteration-data <path>` | Load iteration rows from a JSON or CSV file |
-| `--delay-request <ms>` | Wait between collection requests |
-| `--timeout <ms>` | Set the whole-run budget when used with `--timeout-request`; `0` is unbounded |
-| `--timeout-request <ms>` | Set each request deadline; defaults to `30000` |
-| `--timeout-script <ms>` | Set each script deadline; defaults to `5000` |
-| `--no-save` | Do not write script changes back to the environment |
-| `--bail` | Stop a collection run after the first failure |
-| `-r, --reporter <name>` | Select `cli`, `json`, or `junit`; repeat or comma-separate |
-| `--reporter-json-export <path>` | Write the JSON report to a file |
-| `--reporter-junit-export <path>` | Write the JUnit report to a file |
-| `--json` | Alias for `--reporter json` |
-| `-v, --verbose` | Show request, response, script, and transport details |
+| Option                           | Purpose                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `-d, --dir <path>`               | Select a workspace                                                             |
+| `-e, --env <name>`               | Select an environment                                                          |
+| `--url <target>`                 | Override the gRPC target or HTTP origin                                        |
+| `--var <key=value>`              | Override a variable; repeatable                                                |
+| `--tls` / `--plaintext`          | Force TLS or cleartext                                                         |
+| `--ssl-extra-ca-certs <path>`    | Trust an extra CA on top of the public roots                                   |
+| `--ssl-client-cert <path>`       | Client certificate for mutual TLS                                              |
+| `--ssl-client-key <path>`        | Private key for that certificate                                               |
+| `--ssl-client-passphrase <text>` | Passphrase for an encrypted key                                                |
+| `-k, --insecure`                 | Skip server certificate verification                                           |
+| `--working-dir <path>`           | Resolve request file paths from this directory; defaults to the workspace root |
+| `--insecure-file-read`           | Allow request files outside the working directory                              |
+| `-n, --iteration-count <n>`      | Run a collection or folder multiple times                                      |
+| `--iteration-data <path>`        | Load iteration rows from a JSON or CSV file                                    |
+| `--delay-request <ms>`           | Wait between collection requests                                               |
+| `--timeout <ms>`                 | Set the whole-run budget when used with `--timeout-request`; `0` is unbounded  |
+| `--timeout-request <ms>`         | Set each request deadline; defaults to `30000`                                 |
+| `--timeout-script <ms>`          | Set each script deadline; defaults to `5000`                                   |
+| `--no-save`                      | Do not write script changes back to the environment                            |
+| `--bail`                         | Stop a collection run after the first failure                                  |
+| `-r, --reporter <name>`          | Select `cli`, `json`, or `junit`; repeat or comma-separate                     |
+| `--reporter-json-export <path>`  | Write the JSON report to a file                                                |
+| `--reporter-junit-export <path>` | Write the JUnit report to a file                                               |
+| `--json`                         | Alias for `--reporter json`                                                    |
+| `-v, --verbose`                  | Show request, response, script, and transport details                          |
 
 Run `preman --help` for every option.
 
@@ -140,4 +140,8 @@ bun run typecheck
 bun run test
 bun run test:watch
 bun run build
+bun run lint
+bun run lint:fix
+bun run format
+bun run format:check
 ```

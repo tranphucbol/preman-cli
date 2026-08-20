@@ -1,7 +1,7 @@
 import * as grpc from "@grpc/grpc-js";
 import type { MethodDefinition } from "@grpc/proto-loader";
-import type { Property } from "../scripts/property-list.js";
-import { grpcChannelCredentials, tlsFailureHints, type TlsCertOptions } from "../tls/certs.js";
+import type { Property } from "@/scripts/property-list.js";
+import { grpcChannelCredentials, tlsFailureHints, type TlsCertOptions } from "@/tls/certs.js";
 import type { GrpcTarget } from "./target.js";
 
 export interface InvokeOptions {

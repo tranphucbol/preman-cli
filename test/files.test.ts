@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CliError } from "../src/errors.js";
-import { fileReader } from "../src/workspace/files.js";
+import { CliError } from "@/errors.js";
+import { fileReader } from "@/workspace/files.js";
 
 const roots: string[] = [];
 
@@ -22,7 +22,9 @@ describe("fileReader", () => {
     const root = tempRoot();
     const path = join(root, "receipt.txt");
     writeFileSync(path, "receipt");
-    expect(fileReader({ workingDir: root, allowOutside: false }).resolve("./receipt.txt", "upload")).toBe(realpathSync(path));
+    expect(fileReader({ workingDir: root, allowOutside: false }).resolve("./receipt.txt", "upload")).toBe(
+      realpathSync(path),
+    );
   });
 
   it("givenAbsolutePathInsideWorkingDir_whenResolve_thenAllowed", () => {
@@ -53,7 +55,9 @@ describe("fileReader", () => {
     mkdirSync(root);
     const outside = join(parent, "outside.txt");
     writeFileSync(outside, "outside");
-    expect(fileReader({ workingDir: root, allowOutside: true }).resolve("../outside.txt", "upload")).toBe(realpathSync(outside));
+    expect(fileReader({ workingDir: root, allowOutside: true }).resolve("../outside.txt", "upload")).toBe(
+      realpathSync(outside),
+    );
   });
 
   it("givenSymlinkEscapingWorkingDir_whenResolve_thenRejected", () => {
@@ -70,9 +74,9 @@ describe("fileReader", () => {
 
   it("givenMissingFile_whenRead_thenThrowsCliErrorNamingField", () => {
     const root = tempRoot();
-    expect(() => fileReader({ workingDir: root, allowOutside: false }).read("missing.txt", 'formdata field "receipt"')).toThrow(
-      /formdata field "receipt"/,
-    );
+    expect(() =>
+      fileReader({ workingDir: root, allowOutside: false }).read("missing.txt", 'formdata field "receipt"'),
+    ).toThrow(/formdata field "receipt"/);
   });
 
   it("givenDirectory_whenRead_thenThrowsCliError", () => {

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 import { readGroupDefinition } from "./definitions.js";
 import type { GroupDefinition } from "./definitions.js";
 import type { Workspace } from "./discover.js";
@@ -206,9 +206,7 @@ export function resolveRequest(requests: RequestEntry[], selector: string): Reso
 }
 
 /** What a selector resolved to: one request, or a whole collection/folder. */
-export type RunTarget =
-  | { kind: "request"; entry: RequestEntry }
-  | { kind: "group"; group: RequestGroup };
+export type RunTarget = { kind: "request"; entry: RequestEntry } | { kind: "group"; group: RequestGroup };
 
 export function targetPath(target: RunTarget): string {
   return target.kind === "request" ? target.entry.path : target.group.path;

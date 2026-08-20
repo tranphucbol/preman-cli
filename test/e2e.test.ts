@@ -2,11 +2,11 @@ import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { main } from "../src/cli.js";
-import { CliError, EXIT } from "../src/errors.js";
-import { LOAD_OPTIONS } from "../src/grpc/schema.js";
-import { extractReturnCode, isBusinessSuccess } from "../src/runner.js";
-import { loadEnvironment } from "../src/workspace/environments.js";
+import { main } from "@/cli.js";
+import { CliError, EXIT } from "@/errors.js";
+import { LOAD_OPTIONS } from "@/grpc/schema.js";
+import { extractReturnCode, isBusinessSuccess } from "@/runner.js";
+import { loadEnvironment } from "@/workspace/environments.js";
 import {
   cloneFixtureWorkspace,
   collectionPath,
@@ -166,9 +166,7 @@ describe("preman run (end to end against a real gRPC server)", () => {
     const sent = received[0]!;
     expect(sent.method).toBe("Echo");
     // greeting=hello comes from the environment, overriding the globals value.
-    expect(sent.body.text).toMatch(
-      /^hello [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    expect(sent.body.text).toMatch(/^hello [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(sent.body.mode).toBe("SUCCEED");
     // 64-bit values survive as strings: 9007199254740993 > Number.MAX_SAFE_INTEGER.
     expect(sent.body.amount).toBe("9007199254740993");
@@ -342,7 +340,17 @@ describe("preman run (end to end against a real gRPC server)", () => {
       const before = readFileSync(clone.workspace.postmanDir + "/environments/LOCAL.environment.yaml", "utf8");
       expect(before).toContain("# Local development environment.");
 
-      const { code, stdout } = await runCli(["run", "Echo", "-d", clone.root, "-e", "LOCAL", "--url", target(), "--json"]);
+      const { code, stdout } = await runCli([
+        "run",
+        "Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--json",
+      ]);
       expect(code).toBe(EXIT.OK);
 
       const report = JSON.parse(stdout) as { savedVars: Record<string, string>; savedTo: string };
@@ -371,7 +379,18 @@ describe("preman run (end to end against a real gRPC server)", () => {
     try {
       const envPath = `${clone.workspace.postmanDir}/environments/LOCAL.environment.yaml`;
       const before = readFileSync(envPath, "utf8");
-      const { code } = await runCli(["run", "Echo", "-d", clone.root, "-e", "LOCAL", "--url", target(), "--no-save", "--json"]);
+      const { code } = await runCli([
+        "run",
+        "Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "--json",
+      ]);
       expect(code).toBe(EXIT.OK);
       expect(readFileSync(envPath, "utf8")).toBe(before);
     } finally {
@@ -470,7 +489,12 @@ describe("preman run (test scripts)", () => {
     expect(code).toBe(EXIT.OK);
     const report = JSON.parse(stdout) as TestReport;
     expect(report.tests).toEqual([
-      { name: "message echoes what we sent", status: "passed", error: null, origin: { level: "request", label: "request" } },
+      {
+        name: "message echoes what we sent",
+        status: "passed",
+        error: null,
+        origin: { level: "request", label: "request" },
+      },
     ]);
   });
 
@@ -1653,7 +1677,8 @@ describe("mutable pm.request (gRPC)", () => {
     const clone = cloneFixtureWorkspace();
     try {
       writeScriptedGrpcRequest(clone.root, {
-        script: 'const body = JSON.parse(pm.request.body.raw); body.text = "edited"; pm.request.body.raw = JSON.stringify(body);',
+        script:
+          'const body = JSON.parse(pm.request.body.raw); body.text = "edited"; pm.request.body.raw = JSON.stringify(body);',
       });
       const { code } = await runCli(runArgs("Echo", "-d", clone.root, "--json"));
       expect(code).toBe(EXIT.OK);
@@ -1794,7 +1819,11 @@ describe("group-level auth (gRPC)", () => {
         "payment/nested",
         definitionWithAuth("nested", "  type: bearer\n  credentials:\n    token: folder-token\n"),
       );
-      appendToRequest(clone.root, "payment/nested/Deep Echo", "metadata:\n  - key: authorization\n    value: Bearer explicit\n");
+      appendToRequest(
+        clone.root,
+        "payment/nested/Deep Echo",
+        "metadata:\n  - key: authorization\n    value: Bearer explicit\n",
+      );
 
       const { code, stdout } = await runCli(deepEcho(clone.root));
 
@@ -1813,7 +1842,10 @@ describe("group-level auth (gRPC)", () => {
       writeDefinition(
         clone.root,
         "payment/nested",
-        definitionWithAuth("nested", '  type: apikey\n  credentials:\n    key: X-Api-Key\n    value: abc\n    in: query\n'),
+        definitionWithAuth(
+          "nested",
+          "  type: apikey\n  credentials:\n    key: X-Api-Key\n    value: abc\n    in: query\n",
+        ),
       );
 
       const { code, stdout } = await runCli(deepEcho(clone.root));

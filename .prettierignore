@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.idea/
+bun.lock
+docs/plans/
+test/fixtures/

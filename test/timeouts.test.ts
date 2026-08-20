@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTimeouts } from "../src/cli.js";
+import { resolveTimeouts } from "@/cli.js";
 
 describe("resolveTimeouts", () => {
   it("givenTimeoutOnly_whenResolving_thenTreatedAsRequestDeadlineWithWarning", () => {

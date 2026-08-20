@@ -1,4 +1,4 @@
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 
 export interface HttpTarget {
   /** `scheme://host[:port]` actually used. */

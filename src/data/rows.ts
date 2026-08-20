@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { parse } from "csv-parse/sync";
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 
 export type DataRow = Record<string, string>;
 
@@ -16,7 +16,18 @@ const SUPPORTED_EXTENSIONS: readonly string[] = [JSON_EXTENSION, CSV_EXTENSION];
 
 function normaliseRow(row: Record<string, unknown>): DataRow {
   return Object.fromEntries(
-    Object.entries(row).map(([key, value]) => [key, value === null ? "" : String(value)]),
+    Object.entries(row).map(([key, value]) => [
+      key,
+      value === null
+        ? ""
+        : typeof value === "string" ||
+            typeof value === "number" ||
+            typeof value === "boolean" ||
+            typeof value === "bigint" ||
+            typeof value === "symbol"
+          ? String(value)
+          : (JSON.stringify(value) ?? ""),
+    ]),
   );
 }
 
@@ -44,7 +55,7 @@ function parseJsonRows(path: string, source: string): DataRow[] {
 function parseCsvRows(path: string, source: string): DataRow[] {
   let rows: Array<Record<string, unknown>>;
   try {
-    rows = parse(source, { columns: true, skip_empty_lines: true, trim: true }) as Array<Record<string, unknown>>;
+    rows = parse(source, { columns: true, skip_empty_lines: true, trim: true });
   } catch (cause) {
     throw new CliError(`could not parse iteration data "${path}" as CSV`, {
       details: [(cause as Error).message],

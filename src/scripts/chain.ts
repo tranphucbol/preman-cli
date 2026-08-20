@@ -1,5 +1,5 @@
-import type { GroupDefinition } from "../workspace/definitions.js";
-import type { RequestScript } from "../workspace/schemas.js";
+import type { GroupDefinition } from "@/workspace/definitions.js";
+import type { RequestScript } from "@/workspace/schemas.js";
 
 /** The two wire protocols preman can invoke. Also the legal group-level script prefixes. */
 export type Protocol = "grpc" | "http";
@@ -18,11 +18,7 @@ export const MESSAGE_SCRIPT_TYPES = new Set(["onmessage"]);
 export const POST_SCRIPT_TYPES = new Set(["afterresponse", "test", "postresponse", "post-response"]);
 
 /** Every type that maps to a run stage. A script outside this set is reported, never dropped. */
-export const KNOWN_SCRIPT_TYPES = new Set([
-  ...PRE_SCRIPT_TYPES,
-  ...MESSAGE_SCRIPT_TYPES,
-  ...POST_SCRIPT_TYPES,
-]);
+export const KNOWN_SCRIPT_TYPES = new Set([...PRE_SCRIPT_TYPES, ...MESSAGE_SCRIPT_TYPES, ...POST_SCRIPT_TYPES]);
 
 /**
  * Separates the protocol scope from the event in a group-level script type, e.g. the `:` in
@@ -91,7 +87,10 @@ function splitType(rawType: string): SplitType {
   }
   return {
     prefix: rawType.slice(0, index).trim().toLowerCase(),
-    event: rawType.slice(index + SCRIPT_SCOPE_SEPARATOR.length).trim().toLowerCase(),
+    event: rawType
+      .slice(index + SCRIPT_SCOPE_SEPARATOR.length)
+      .trim()
+      .toLowerCase(),
   };
 }
 

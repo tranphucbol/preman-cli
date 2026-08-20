@@ -1,8 +1,8 @@
-import { EXIT } from "../../errors.js";
-import type { GroupRunItem, RunOutcome } from "../../runner.js";
-import { originTag } from "../render.js";
-import type { ReportableRun, Reporter } from "../reporter.js";
-import { renderXml, type XmlElement } from "../xml.js";
+import { EXIT } from "@/errors.js";
+import type { GroupRunItem, RunOutcome } from "@/runner.js";
+import { originTag } from "@/output/render.js";
+import type { ReportableRun, Reporter } from "@/output/reporter.js";
+import { renderXml, type XmlElement } from "@/output/xml.js";
 
 const SUITES_NAME = "preman";
 const CLASSNAME_SEPARATOR = "/";
@@ -117,8 +117,7 @@ function renderJunit(result: ReportableRun): string {
     result.kind === "single"
       ? [suite(result.outcome.entry.path, result.outcome.invoke.durationMs, outcomeCases(result.outcome))]
       : result.outcome.items.map(groupSuite);
-  const durationMs =
-    result.kind === "single" ? result.outcome.invoke.durationMs : result.outcome.durationMs;
+  const durationMs = result.kind === "single" ? result.outcome.invoke.durationMs : result.outcome.durationMs;
   const total = (field: "tests" | "failures" | "errors") => suites.reduce((sum, item) => sum + item[field], 0);
 
   return renderXml({

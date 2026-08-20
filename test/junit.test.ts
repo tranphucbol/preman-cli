@@ -1,9 +1,9 @@
 import { parseStringPromise } from "xml2js";
 import { describe, expect, it } from "vitest";
-import { EXIT } from "../src/errors.js";
-import { junitReporter } from "../src/output/reporters/junit.js";
-import type { GroupRunItem, GroupRunOutcome, RunOutcome } from "../src/runner.js";
-import type { TestResult } from "../src/scripts/sandbox.js";
+import { EXIT } from "@/errors.js";
+import { junitReporter } from "@/output/reporters/junit.js";
+import type { GroupRunItem, GroupRunOutcome, RunOutcome } from "@/runner.js";
+import type { TestResult } from "@/scripts/sandbox.js";
 
 const REQUEST_ORIGIN = { level: "request", label: "request" } as const;
 
@@ -11,14 +11,16 @@ function test(name: string, status: TestResult["status"], error?: string): TestR
   return { name, status, error, origin: REQUEST_ORIGIN };
 }
 
-function outcome(options: {
-  path?: string;
-  tests?: TestResult[];
-  exitCode?: RunOutcome["exitCode"];
-  returnCode?: string;
-  message?: string;
-  durationMs?: number;
-} = {}): RunOutcome {
+function outcome(
+  options: {
+    path?: string;
+    tests?: TestResult[];
+    exitCode?: RunOutcome["exitCode"];
+    returnCode?: string;
+    message?: string;
+    durationMs?: number;
+  } = {},
+): RunOutcome {
   const path = options.path ?? "payment/Echo";
   return {
     protocol: "grpc",
@@ -72,7 +74,10 @@ describe("JUnit reporter", () => {
   });
 
   it("givenInheritedScriptTest_whenRender_thenNameIncludesOrigin", () => {
-    const inherited = { ...test("shared check", "passed"), origin: { level: "collection", label: "collection payment" } as const };
+    const inherited = {
+      ...test("shared check", "passed"),
+      origin: { level: "collection", label: "collection payment" } as const,
+    };
     expect(render(outcome({ tests: [inherited] }))).toContain('name="shared check [collection payment]"');
   });
 
@@ -97,7 +102,10 @@ describe("JUnit reporter", () => {
       outcome: undefined,
       error: { message: "unsupported", details: [] },
     };
-    const xml = junitReporter.render({ kind: "group", outcome: group([skipped]) }, { exportPath: undefined, verbose: false });
+    const xml = junitReporter.render(
+      { kind: "group", outcome: group([skipped]) },
+      { exportPath: undefined, verbose: false },
+    );
     expect(xml).toContain('<testsuite name="payment/Legacy" tests="1"');
     expect(xml).toContain("<skipped/>");
   });

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 import { groupDefinitionSchema } from "./schemas.js";
 import type { RequestAuth, RequestScript } from "./schemas.js";
 

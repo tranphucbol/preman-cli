@@ -1,5 +1,5 @@
-import { renderGroupOutcome, renderOutcome } from "../render.js";
-import type { Reporter } from "../reporter.js";
+import { renderGroupOutcome, renderOutcome } from "@/output/render.js";
+import type { Reporter } from "@/output/reporter.js";
 
 export const cliReporter: Reporter = {
   name: "cli",

@@ -1,8 +1,8 @@
-import { CliError } from "../errors.js";
-import type { Property } from "../scripts/property-list.js";
-import type { KeyValueSource } from "../workspace/schemas.js";
+import { CliError } from "@/errors.js";
+import type { Property } from "@/scripts/property-list.js";
+import type { KeyValueSource } from "@/workspace/schemas.js";
 
-export interface KeyValue extends Property {}
+export type KeyValue = Property;
 
 function scalarToString(value: unknown): string {
   if (value === undefined || value === null) return "";
@@ -23,7 +23,8 @@ export function normalizeProperties(source: KeyValueSource | undefined, label: s
   try {
     // A scalar here means the YAML said `headers: something`, which cannot be read
     // as either shape. Guessing would silently drop the author's intent.
-    if (typeof source !== "object" || source === null) throw new CliError(`expected a map or a list, got ${typeof source}`);
+    if (typeof source !== "object" || source === null)
+      throw new CliError(`expected a map or a list, got ${typeof source}`);
     if (Array.isArray(source)) {
       return source
         .map((entry) => ({

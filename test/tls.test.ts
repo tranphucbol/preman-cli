@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { rootCertificates } from "node:tls";
 import { describe, expect, it } from "vitest";
-import { CliError, EXIT } from "../src/errors.js";
+import { CliError, EXIT } from "@/errors.js";
 import {
   emptyTlsCerts,
   grpcChannelCredentials,
@@ -10,7 +10,7 @@ import {
   secureContextOptions,
   tlsFailureHints,
   type TlsCertLayer,
-} from "../src/tls/certs.js";
+} from "@/tls/certs.js";
 import { SSL_DIR, sslPath } from "./helpers.js";
 
 const CLI_LABEL = "--ssl-*";
@@ -139,9 +139,7 @@ describe("tlsFailureHints", () => {
 
   it("givenHostnameMismatchError_whenBuildingHints_thenTheHostAndCertNameAreEchoed", () => {
     const reason = "Host: 127.0.0.1. is not in the cert's altnames: DNS:wrong.example";
-    const hints = tlsFailureHints(
-      Object.assign(new Error(reason), { code: "ERR_TLS_CERT_ALTNAME_INVALID", reason }),
-    );
+    const hints = tlsFailureHints(Object.assign(new Error(reason), { code: "ERR_TLS_CERT_ALTNAME_INVALID", reason }));
 
     expect(hints).toHaveLength(1);
     expect(hints[0]).toContain("127.0.0.1");

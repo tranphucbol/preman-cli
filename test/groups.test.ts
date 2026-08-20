@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateTests, type GroupRunItem, type RunOutcome } from "../src/runner.js";
+import { aggregateTests, type GroupRunItem, type RunOutcome } from "@/runner.js";
 import {
   listGroups,
   listRequests,
@@ -8,7 +8,7 @@ import {
   targetPath,
   type RequestEntry,
   type RunTarget,
-} from "../src/workspace/collections.js";
+} from "@/workspace/collections.js";
 import { fixtureWorkspace } from "./helpers.js";
 
 const requests = listRequests(fixtureWorkspace());
@@ -133,11 +133,7 @@ describe("aggregateTests", () => {
   it("givenGroupWithAssertions_whenAggregateTests_thenTotalsSummed", () => {
     const entry = entryOf("payment/Echo");
     const outcome = {
-      tests: [
-        { status: "passed" },
-        { status: "failed" },
-        { status: "skipped" },
-      ],
+      tests: [{ status: "passed" }, { status: "failed" }, { status: "skipped" }],
     } as unknown as RunOutcome;
     const items: GroupRunItem[] = [
       { entry, iteration: 0, status: "test", outcome, error: undefined },

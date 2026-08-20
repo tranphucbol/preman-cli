@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { basename, extname } from "node:path";
-import { CliError } from "../errors.js";
-import { interpolateStrict } from "../vars/interpolate.js";
-import type { VariableStore } from "../vars/store.js";
-import type { Property } from "../scripts/property-list.js";
-import type { HttpRequest } from "../workspace/schemas.js";
-import type { FileReader } from "../workspace/files.js";
+import { CliError } from "@/errors.js";
+import { interpolateStrict } from "@/vars/interpolate.js";
+import type { VariableStore } from "@/vars/store.js";
+import type { Property } from "@/scripts/property-list.js";
+import type { HttpRequest } from "@/workspace/schemas.js";
+import type { FileReader } from "@/workspace/files.js";
 import { normalizeProperties, type KeyValue } from "./headers.js";
 
 export const BODY_CONTENT_TYPES: Record<string, string> = {
@@ -85,8 +85,11 @@ function escapeDisposition(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+const CONTROL_CHARACTER_RANGE = "\\u0000-\\u001f\\u007f";
+const CONTROL_CHARACTER_PATTERN = new RegExp(`[${CONTROL_CHARACTER_RANGE}]`);
+
 function partHeaderValue(value: string, label: string): string {
-  if (/[\u0000-\u001f\u007f]/.test(value)) {
+  if (CONTROL_CHARACTER_PATTERN.test(value)) {
     throw new CliError(`${label} contains a control character that cannot be used in multipart headers`);
   }
   return value;
@@ -141,7 +144,8 @@ export function buildBody(options: BuildBodyOptions): { wire: WireBody; warnings
   }
   if (mode === FILE_MODE) {
     const src = body.file?.src;
-    if (src === undefined || src.length === 0) return { wire: { content: undefined, contentType: undefined }, warnings };
+    if (src === undefined || src.length === 0)
+      return { wire: { content: undefined, contentType: undefined }, warnings };
     const interpolated = interpolateStrict(src, options.store, "file body source");
     options.files.resolve(interpolated, "file body");
     return {
@@ -166,7 +170,10 @@ export function buildBody(options: BuildBodyOptions): { wire: WireBody; warnings
       }
     }
     return {
-      wire: { content: JSON.stringify({ query, ...(variables === undefined ? {} : { variables }) }), contentType: GRAPHQL_CONTENT_TYPE },
+      wire: {
+        content: JSON.stringify({ query, ...(variables === undefined ? {} : { variables }) }),
+        contentType: GRAPHQL_CONTENT_TYPE,
+      },
       warnings,
     };
   }
@@ -177,12 +184,20 @@ export function buildBody(options: BuildBodyOptions): { wire: WireBody; warnings
       entries.length === 0
         ? undefined
         : serializeUrlencoded(
-            entries.map(({ key, value }) => ({ key, value: interpolateStrict(value, options.store, `body field "${key}"`) })),
+            entries.map(({ key, value }) => ({
+              key,
+              value: interpolateStrict(value, options.store, `body field "${key}"`),
+            })),
           );
     return { wire: { content, contentType: content === undefined ? undefined : URLENCODED_CONTENT_TYPE }, warnings };
   }
 
-  const parsed = readRequestBody({ $kind: "http-request", url: options.requestLabel ?? "request", method: "GET", body });
+  const parsed = readRequestBody({
+    $kind: "http-request",
+    url: options.requestLabel ?? "request",
+    method: "GET",
+    body,
+  });
   const content = renderBody(parsed, options.store);
   const contentType = content === undefined || mode.length === 0 ? undefined : BODY_CONTENT_TYPES[mode];
   if (content !== undefined && mode.length > 0 && mode !== RAW_MODE && contentType === undefined) {
@@ -215,7 +230,10 @@ export function readRequestBody(request: HttpRequest): RequestBody {
   // serialising it would send bytes the author never wrote.
   if (mode !== URLENCODED_MODE) {
     throw new CliError(`body.content in ${request.url} must be text unless body.type is ${URLENCODED_MODE}`, {
-      details: [`body.type is ${mode.length > 0 ? `"${mode}"` : "not set"}`, "write the payload as a string, or set body.type: urlencoded"],
+      details: [
+        `body.type is ${mode.length > 0 ? `"${mode}"` : "not set"}`,
+        "write the payload as a string, or set body.type: urlencoded",
+      ],
     });
   }
 

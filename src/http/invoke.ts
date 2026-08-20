@@ -1,7 +1,7 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from "node:zlib";
-import { httpsRequestOptions, tlsFailureHints, type TlsCertOptions } from "../tls/certs.js";
+import { httpsRequestOptions, tlsFailureHints, type TlsCertOptions } from "@/tls/certs.js";
 import type { CookieJar } from "./cookies.js";
 import { findHeader, toOutgoingHeaders, type KeyValue } from "./headers.js";
 
@@ -138,9 +138,8 @@ function send(
     // Applied per hop rather than once up front, so a redirect into https still gets
     // the certificate material even when the first hop was cleartext.
     const tlsOptions = secure ? httpsRequestOptions(tlsCerts) : {};
-    let timer: NodeJS.Timeout | undefined;
     const finish = (settle: () => void): void => {
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
       settle();
     };
 
@@ -164,7 +163,7 @@ function send(
 
     req.on("error", (cause) => finish(() => reject(cause)));
     // Covers a slow drip as well as a dead peer, which req.setTimeout alone does not.
-    timer = setTimeout(() => req.destroy(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+    const timer = setTimeout(() => req.destroy(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
     if (body !== undefined) req.write(body);
     req.end();
   });
@@ -206,7 +205,10 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
       if (cookie !== undefined) hopHeaders.push({ key: COOKIE, value: cookie });
     }
     if (body !== undefined && findHeader(hopHeaders, CONTENT_LENGTH) === undefined) {
-      hopHeaders.push({ key: CONTENT_LENGTH, value: String(Buffer.isBuffer(body) ? body.length : Buffer.byteLength(body)) });
+      hopHeaders.push({
+        key: CONTENT_LENGTH,
+        value: String(Buffer.isBuffer(body) ? body.length : Buffer.byteLength(body)),
+      });
     }
     const outgoing = toOutgoingHeaders(hopHeaders);
 

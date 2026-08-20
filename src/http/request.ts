@@ -1,10 +1,10 @@
-import { CliError } from "../errors.js";
-import { LiveBody, LiveHttpRequest, Url } from "../scripts/live-request.js";
-import { interpolateStrict } from "../vars/interpolate.js";
-import type { VariableStore } from "../vars/store.js";
-import type { ResolvedAuth } from "../workspace/inherit.js";
-import type { HttpRequest } from "../workspace/schemas.js";
-import type { FileReader } from "../workspace/files.js";
+import { CliError } from "@/errors.js";
+import { LiveBody, LiveHttpRequest, Url } from "@/scripts/live-request.js";
+import { interpolateStrict } from "@/vars/interpolate.js";
+import type { VariableStore } from "@/vars/store.js";
+import type { ResolvedAuth } from "@/workspace/inherit.js";
+import type { HttpRequest } from "@/workspace/schemas.js";
+import type { FileReader } from "@/workspace/files.js";
 import { applyAuth } from "./auth.js";
 import {
   BODY_CONTENT_TYPES,
@@ -115,16 +115,14 @@ export function buildLiveHttpRequest(options: BuildHttpRequestOptions): BuiltLiv
   const headers = dropEmptyValues(
     normalizeProperties(request.headers, `headers in ${request.url}`).map((header) => ({
       key: header.key,
-      value:
-        header.disabled === true ? header.value : interpolateStrict(header.value, store, `header "${header.key}"`),
+      value: header.disabled === true ? header.value : interpolateStrict(header.value, store, `header "${header.key}"`),
       ...(header.disabled === undefined ? {} : { disabled: header.disabled }),
     })),
   );
 
   const params = normalizeProperties(request.queryParams, `queryParams in ${request.url}`).map((param) => ({
     key: param.key,
-    value:
-      param.disabled === true ? param.value : interpolateStrict(param.value, store, `query param "${param.key}"`),
+    value: param.disabled === true ? param.value : interpolateStrict(param.value, store, `query param "${param.key}"`),
     ...(param.disabled === undefined ? {} : { disabled: param.disabled }),
   }));
   const duplicated = mergeQuery(

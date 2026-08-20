@@ -1,4 +1,4 @@
-import { CliError } from "../../errors.js";
+import { CliError } from "@/errors.js";
 import { addressGenerators } from "./addresses.js";
 import { assembleGeneratorTables } from "./assemble.js";
 import { colorGenerators } from "./colors.js";

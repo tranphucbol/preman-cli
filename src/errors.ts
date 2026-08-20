@@ -24,10 +24,7 @@ export class CliError extends Error {
    */
   readonly abortsGroup: boolean;
 
-  constructor(
-    message: string,
-    options: { exitCode?: ExitCode; details?: string[]; abortsGroup?: boolean } = {},
-  ) {
+  constructor(message: string, options: { exitCode?: ExitCode; details?: string[]; abortsGroup?: boolean } = {}) {
     super(message);
     this.name = "CliError";
     this.exitCode = options.exitCode ?? EXIT.CLI;

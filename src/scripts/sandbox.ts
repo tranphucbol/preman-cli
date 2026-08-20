@@ -1,10 +1,10 @@
 import { createContext, runInContext } from "node:vm";
-import { CliError } from "../errors.js";
-import { interpolate } from "../vars/interpolate.js";
-import type { Scope, VariableStore } from "../vars/store.js";
-import { CookieJar } from "../http/cookies.js";
-import { NO_RESPONSE_STATUS } from "../http/invoke.js";
-import { emptyTlsCerts, type TlsCertOptions } from "../tls/certs.js";
+import { CliError } from "@/errors.js";
+import { interpolate } from "@/vars/interpolate.js";
+import type { Scope, VariableStore } from "@/vars/store.js";
+import { CookieJar } from "@/http/cookies.js";
+import { NO_RESPONSE_STATUS } from "@/http/invoke.js";
+import { emptyTlsCerts, type TlsCertOptions } from "@/tls/certs.js";
 import type { ScriptOrigin } from "./chain.js";
 import { expect, makeHeaderList, makeMessageList, type MessageList, type ResponseLike } from "./expect.js";
 import type { LiveRequest } from "./live-request.js";
@@ -62,6 +62,22 @@ export interface TestResult {
   error: string | undefined;
   /** Which collection / folder / request declared the script that ran this test. */
   origin: ScriptOrigin;
+}
+
+export interface TestSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+}
+
+export function countTests(tests: TestResult[]): TestSummary {
+  return {
+    total: tests.length,
+    passed: tests.filter((test) => test.status === "passed").length,
+    failed: tests.filter((test) => test.status === "failed").length,
+    skipped: tests.filter((test) => test.status === "skipped").length,
+  };
 }
 
 /** One `pm.sendRequest` call, kept so the report can show what a script did. */
@@ -214,7 +230,7 @@ function makeGrpcResponse(info: GrpcScriptResponse): ResponseLike & { messages: 
 
   // Non-enumerable so `console.log(pm.response)` does not recurse into chai.
   Object.defineProperty(response, "to", { get: () => expect(response).to, enumerable: false });
-  return response as ResponseLike & { messages: MessageList };
+  return response;
 }
 
 /**
@@ -234,13 +250,13 @@ function makeHttpResponse(info: HttpScriptResponse): ResponseLike {
       try {
         return JSON.parse(info.body) as unknown;
       } catch (cause) {
-        throw new Error(`response body is not valid JSON: ${messageOf(cause)}`);
+        throw new Error(`response body is not valid JSON: ${messageOf(cause)}`, { cause });
       }
     },
   };
 
   Object.defineProperty(response, "to", { get: () => expect(response).to, enumerable: false });
-  return response as ResponseLike;
+  return response;
 }
 
 /**
@@ -262,9 +278,11 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   const logs: ConsoleLine[] = [];
   const tests: TestResult[] = [];
 
-  const record = (level: ConsoleLine["level"]) => (...args: unknown[]) => {
-    logs.push({ level, text: args.map(formatArg).join(" "), origin });
-  };
+  const record =
+    (level: ConsoleLine["level"]) =>
+    (...args: unknown[]) => {
+      logs.push({ level, text: args.map(formatArg).join(" "), origin });
+    };
 
   /**
    * Timers a script leaves pending would keep the CLI alive long after its
@@ -295,8 +313,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       details,
       abortsGroup: inherited,
     });
-  const failure = (cause: unknown): CliError =>
-    scriptError(`script "${info.eventName}" failed: ${messageOf(cause)}`);
+  const failure = (cause: unknown): CliError => scriptError(`script "${info.eventName}" failed: ${messageOf(cause)}`);
 
   /**
    * Postman's `pm.sendRequest`, in both the callback and the awaited form. It
@@ -398,7 +415,9 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   /** Waits for calls the script left running, then reports one it never looked at. */
   const drainSideRequests = async (): Promise<void> => {
     while (inFlight.size > 0) await Promise.all([...inFlight]);
-    if (unobservedFailure !== undefined) throw unobservedFailure;
+    if (unobservedFailure !== undefined) {
+      throw new Error(messageOf(unobservedFailure), { cause: unobservedFailure });
+    }
   };
 
   const environment = makeScopeApi(store, "environment");
@@ -486,7 +505,11 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
 
   const sandbox: Record<string, unknown> = {
     pm,
-    postman: { setEnvironmentVariable: environment.set, getEnvironmentVariable: environment.get, setGlobalVariable: globals.set },
+    postman: {
+      setEnvironmentVariable: environment.set,
+      getEnvironmentVariable: environment.get,
+      setGlobalVariable: globals.set,
+    },
     console: {
       log: record("log"),
       info: record("info"),

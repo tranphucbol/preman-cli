@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveScriptChain, type Protocol } from "../src/scripts/chain.js";
-import type { RequestEntry } from "../src/workspace/collections.js";
-import type { GroupDefinition, GroupKind } from "../src/workspace/definitions.js";
-import { resolveAuth } from "../src/workspace/inherit.js";
-import type { RequestAuth, RequestScript } from "../src/workspace/schemas.js";
+import { resolveScriptChain, type Protocol } from "@/scripts/chain.js";
+import type { RequestEntry } from "@/workspace/collections.js";
+import type { GroupDefinition, GroupKind } from "@/workspace/definitions.js";
+import { resolveAuth } from "@/workspace/inherit.js";
+import type { RequestAuth, RequestScript } from "@/workspace/schemas.js";
 
 function group(
   kind: GroupKind,
@@ -25,11 +25,7 @@ function script(type: string, code = "pm.variables.set('x', 1);"): RequestScript
   return { type, code };
 }
 
-function chain(
-  ancestors: GroupDefinition[],
-  requestScripts: RequestScript[] | undefined,
-  protocol: Protocol = "grpc",
-) {
+function chain(ancestors: GroupDefinition[], requestScripts: RequestScript[] | undefined, protocol: Protocol = "grpc") {
   return resolveScriptChain({ ancestors, requestScripts, protocol });
 }
 
@@ -65,11 +61,7 @@ describe("resolveScriptChain", () => {
     );
 
     expect(result.scripts.map((s) => s.code)).toEqual(["// c", "// f", "// r"]);
-    expect(result.scripts.map((s) => s.origin.label)).toEqual([
-      "collection payment",
-      "folder nested",
-      "request",
-    ]);
+    expect(result.scripts.map((s) => s.origin.label)).toEqual(["collection payment", "folder nested", "request"]);
     expect(result.warnings).toEqual([]);
   });
 
@@ -138,9 +130,10 @@ describe("resolveScriptChain", () => {
   });
 
   it("givenBlankCode_whenResolved_thenSkippedWithoutWarning", () => {
-    const result = chain([group("folder", "nested", { scripts: [script("grpc:beforeInvoke", "   \n")] })], [
-      { type: "beforeInvoke" },
-    ]);
+    const result = chain(
+      [group("folder", "nested", { scripts: [script("grpc:beforeInvoke", "   \n")] })],
+      [{ type: "beforeInvoke" }],
+    );
 
     expect(result.scripts).toEqual([]);
     expect(result.warnings).toEqual([]);

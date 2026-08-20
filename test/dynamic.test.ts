@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CliError } from "../src/errors.js";
+import { CliError } from "@/errors.js";
 import {
   assembleGeneratorTables,
   generateDynamicValue,
   supportedDynamicVariables,
   type GeneratorTable,
-} from "../src/vars/dynamic/index.js";
+} from "@/vars/dynamic/index.js";
 
 const RANDOM_INT_MIN = 0;
 const RANDOM_INT_MAX = 1000;
@@ -28,11 +28,11 @@ describe("dynamic variables", () => {
   it("givenSeedSet_whenGeneratingTwice_thenValuesMatch", async () => {
     vi.stubEnv("PREMAN_FAKER_SEED", FAKER_SEED);
     vi.resetModules();
-    const firstModule = await import("../src/vars/dynamic/index.js");
+    const firstModule = await import("@/vars/dynamic/index.js");
     const first = firstModule.generateDynamicValue("$randomEmail");
 
     vi.resetModules();
-    const secondModule = await import("../src/vars/dynamic/index.js");
+    const secondModule = await import("@/vars/dynamic/index.js");
     const second = secondModule.generateDynamicValue("$randomEmail");
 
     expect(second).toBe(first);
@@ -54,7 +54,9 @@ describe("dynamic variables", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(CliError);
-      expect((error as CliError).details.join("\n")).toContain(`${supportedDynamicVariables().length} dynamic variables`);
+      expect((error as CliError).details.join("\n")).toContain(
+        `${supportedDynamicVariables().length} dynamic variables`,
+      );
     }
   });
 

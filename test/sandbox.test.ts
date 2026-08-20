@@ -1,10 +1,10 @@
 import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CliError } from "../src/errors.js";
-import { REQUEST_ORIGIN } from "../src/scripts/chain.js";
-import { freezeRequest, LiveBody, LiveGrpcRequest, LiveHttpRequest, type LiveRequest } from "../src/scripts/live-request.js";
-import { runScript, type GrpcScriptResponse, type ScriptResponseInfo } from "../src/scripts/sandbox.js";
-import { VariableStore } from "../src/vars/store.js";
+import { CliError } from "@/errors.js";
+import { REQUEST_ORIGIN } from "@/scripts/chain.js";
+import { freezeRequest, LiveBody, LiveGrpcRequest, LiveHttpRequest, type LiveRequest } from "@/scripts/live-request.js";
+import { runScript, type GrpcScriptResponse, type ScriptResponseInfo } from "@/scripts/sandbox.js";
+import { VariableStore } from "@/vars/store.js";
 
 /** Verbatim `beforeInvoke` script from postman/collections/payment/Long Chau.request.yaml. */
 const REAL_TRANS_ID_SCRIPT = `const date = new Date();
@@ -257,7 +257,9 @@ describe("runScript", () => {
   });
 
   it("givenScript_whenUsingBufferBase64_thenRoundTrips", async () => {
-    const logs = await run(`const value = Buffer.from("preman").toString("base64"); console.log(Buffer.from(value, "base64").toString());`);
+    const logs = await run(
+      `const value = Buffer.from("preman").toString("base64"); console.log(Buffer.from(value, "base64").toString());`,
+    );
     expect(logs[0]?.text).toBe("preman");
   });
 
@@ -267,12 +269,16 @@ describe("runScript", () => {
   });
 
   it("givenScript_whenUsingXml2js_thenParsesToObject", async () => {
-    const logs = await run(`const parsed = await require("xml2js").parseStringPromise("<root><id>7</id></root>"); console.log(parsed.root.id[0]);`);
+    const logs = await run(
+      `const parsed = await require("xml2js").parseStringPromise("<root><id>7</id></root>"); console.log(parsed.root.id[0]);`,
+    );
     expect(logs[0]?.text).toBe("7");
   });
 
   it("givenScript_whenUsingCheerio_thenSelectsElement", async () => {
-    const logs = await run(`const $ = require("cheerio").load("<p class='value'>seven</p>"); console.log($(".value").text());`);
+    const logs = await run(
+      `const $ = require("cheerio").load("<p class='value'>seven</p>"); console.log($(".value").text());`,
+    );
     expect(logs[0]?.text).toBe("seven");
   });
 
@@ -285,7 +291,9 @@ describe("runScript", () => {
   });
 
   it("givenSafeEval_whenEvaluatingLibrarySource_thenDefinesUsableFunction", async () => {
-    const store = new VariableStore({ environment: { lib_code: `function lib() { return CryptoJS.MD5("x").toString().slice(0, 4); }` } });
+    const store = new VariableStore({
+      environment: { lib_code: `function lib() { return CryptoJS.MD5("x").toString().slice(0, 4); }` },
+    });
     const logs = await runSafeEval(`eval(pm.environment.get("lib_code")); console.log(lib());`, store);
 
     expect(logs[0]?.text).toBe("9dd4");
@@ -374,23 +382,20 @@ describe("runScript", () => {
     `pm.request.url.host[0] = "other";`,
     `Object.setPrototypeOf(pm.request.url.path, null);`,
     `Object.preventExtensions(pm.request.url.host);`,
-  ])(
-    "givenFrozenRequest_whenReplacingNestedObject_thenThrowsFrozenError: %s",
-    async (code) => {
-      const request = liveRequest({ url: "http://host/pay", method: "POST", body: "" });
-      freezeRequest(request);
+  ])("givenFrozenRequest_whenReplacingNestedObject_thenThrowsFrozenError: %s", async (code) => {
+    const request = liveRequest({ url: "http://host/pay", method: "POST", body: "" });
+    freezeRequest(request);
 
-      await expect(
-        runScript({
-          code,
-          store: new VariableStore(),
-          info: { requestName: "Pay", eventName: "afterResponse" },
-          origin: REQUEST_ORIGIN,
-          request,
-        }),
-      ).rejects.toThrow("pm.request is read-only after the request has been sent");
-    },
-  );
+    await expect(
+      runScript({
+        code,
+        store: new VariableStore(),
+        info: { requestName: "Pay", eventName: "afterResponse" },
+        origin: REQUEST_ORIGIN,
+        request,
+      }),
+    ).rejects.toThrow("pm.request is read-only after the request has been sent");
+  });
 
   it("givenFrozenGrpcRequest_whenReplacingMetadata_thenThrowsFrozenError", async () => {
     const request = liveRequest({ url: "grpc://host:9090", methodPath: "test.Echo", body: "{}" });

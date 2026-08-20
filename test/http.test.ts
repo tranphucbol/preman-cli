@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { CliError } from "../src/errors.js";
-import { applyAuth } from "../src/http/auth.js";
-import { readRequestBody, renderBody } from "../src/http/body.js";
-import { CookieJar } from "../src/http/cookies.js";
+import { CliError } from "@/errors.js";
+import { applyAuth } from "@/http/auth.js";
+import { readRequestBody, renderBody } from "@/http/body.js";
+import { CookieJar } from "@/http/cookies.js";
 import {
   dropEmptyValues,
   findHeader,
@@ -11,13 +11,13 @@ import {
   setHeaderIfAbsent,
   toOutgoingHeaders,
   type KeyValue,
-} from "../src/http/headers.js";
-import { mergeQuery } from "../src/http/query.js";
-import { buildHttpRequest, buildLiveHttpRequest, finaliseHttpRequest } from "../src/http/request.js";
-import { pathPortion, resolveHttpUrl } from "../src/http/target.js";
-import { VariableStore } from "../src/vars/store.js";
-import type { HttpRequest } from "../src/workspace/schemas.js";
-import type { FileReader } from "../src/workspace/files.js";
+} from "@/http/headers.js";
+import { mergeQuery } from "@/http/query.js";
+import { buildHttpRequest, buildLiveHttpRequest, finaliseHttpRequest } from "@/http/request.js";
+import { pathPortion, resolveHttpUrl } from "@/http/target.js";
+import { VariableStore } from "@/vars/store.js";
+import type { HttpRequest } from "@/workspace/schemas.js";
+import type { FileReader } from "@/workspace/files.js";
 
 function pairs(headers: readonly KeyValue[]): Record<string, string> {
   return Object.fromEntries(headers.map((header) => [header.key, header.value]));
@@ -464,7 +464,10 @@ describe("request bodies", () => {
     expect(live.request.body.urlencoded.toJSON()).toContainEqual({ key: "skip-form", value: "2", disabled: true });
 
     const built = finaliseHttpRequest(live.request, live.target);
-    expect(built.headers).toEqual([{ key: "X-Keep", value: "yes" }, { key: "content-type", value: "application/x-www-form-urlencoded" }]);
+    expect(built.headers).toEqual([
+      { key: "X-Keep", value: "yes" },
+      { key: "content-type", value: "application/x-www-form-urlencoded" },
+    ]);
     expect(built.url.toString()).toBe("http://host/pay?keep=yes");
     expect(built.body).toBe("keep=1");
   });

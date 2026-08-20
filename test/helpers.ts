@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { requireWorkspace, type Workspace } from "../src/workspace/discover.js";
+import { requireWorkspace, type Workspace } from "@/workspace/discover.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -108,7 +108,12 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
   });
 }
 
-function sendJson(res: ServerResponse, status: number, payload: unknown, headers: Record<string, string | string[]> = {}): void {
+function sendJson(
+  res: ServerResponse,
+  status: number,
+  payload: unknown,
+  headers: Record<string, string | string[]> = {},
+): void {
   res.writeHead(status, { "content-type": "application/json", ...headers });
   res.end(JSON.stringify(payload));
 }

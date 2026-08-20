@@ -1,6 +1,6 @@
-import { renderAuth, SUPPORTED_AUTH_TYPES } from "../auth/credentials.js";
-import type { VariableStore } from "../vars/store.js";
-import type { RequestAuth } from "../workspace/schemas.js";
+import { renderAuth, SUPPORTED_AUTH_TYPES } from "@/auth/credentials.js";
+import type { VariableStore } from "@/vars/store.js";
+import type { RequestAuth } from "@/workspace/schemas.js";
 import { findHeader, type KeyValue } from "./headers.js";
 
 const AUTH_HEADER = "Authorization";

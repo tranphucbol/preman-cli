@@ -1,4 +1,4 @@
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 
 export const FROZEN_REQUEST_MESSAGE = "pm.request is read-only after the request has been sent";
 const MISSING_KEY_MESSAGE = "add() needs a key";

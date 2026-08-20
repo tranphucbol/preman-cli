@@ -2,8 +2,8 @@ import { createHmac } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { main } from "../src/cli.js";
-import { EXIT } from "../src/errors.js";
+import { main } from "@/cli.js";
+import { EXIT } from "@/errors.js";
 import {
   cloneFixtureHttpWorkspace,
   collectionPath,
@@ -295,19 +295,7 @@ describe("preman run (end to end against a real HTTP server)", () => {
 
 /** `args()` against a clone rather than the shared fixture. */
 function clonedArgs(root: string, selector: string, ...extra: string[]): string[] {
-  return [
-    "run",
-    selector,
-    "-d",
-    root,
-    "-e",
-    "QC",
-    "--var",
-    `http_url=${http.origin}`,
-    "--no-save",
-    "--json",
-    ...extra,
-  ];
+  return ["run", selector, "-d", root, "-e", "QC", "--var", `http_url=${http.origin}`, "--no-save", "--json", ...extra];
 }
 
 /** The whole `admin` definition, so the caller controls every inherited key. */
@@ -371,9 +359,7 @@ describe("structured HTTP bodies", () => {
         ].join("\n"),
         script: "// File selection is fixed before scripts run.",
       });
-      const { code, stdout } = await runCli(
-        clonedArgs(ws.root, "admin/Echo Get Body", "--var", "token=uploaded"),
-      );
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body", "--var", "token=uploaded"));
       const report = JSON.parse(stdout) as HttpReport;
 
       expect(code).toBe(EXIT.OK);
@@ -526,9 +512,7 @@ describe("structured HTTP bodies", () => {
         body: "body:\n  type: file\n  file:\n    src: receipt.txt",
         script: "// Custom working directory.",
       });
-      const { code } = await runCli(
-        clonedArgs(ws.root, "admin/Echo Get Body", "--working-dir", `${ws.root}/upload`),
-      );
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body", "--working-dir", `${ws.root}/upload`));
       expect(code).toBe(EXIT.OK);
       expect(http.received[0]?.body).toBe("receipt-id=fixture-123\n");
     } finally {
@@ -545,14 +529,9 @@ describe("structured HTTP bodies", () => {
 function stripRequestAuth(root: string): void {
   writeFileSync(
     `${collectionPath(root, "admin", "Echo Get Body")}.request.yaml`,
-    [
-      "$kind: http-request",
-      "name: Echo Get Body",
-      `url: "{{http_url}}/echo"`,
-      "method: GET",
-      "order: 40",
-      "",
-    ].join("\n"),
+    ["$kind: http-request", "name: Echo Get Body", `url: "{{http_url}}/echo"`, "method: GET", "order: 40", ""].join(
+      "\n",
+    ),
   );
 }
 
@@ -565,9 +544,7 @@ describe("group-level scripts and auth (HTTP)", () => {
       writeAdminDefinition(ws.root, BEARER_TOKEN_AUTH);
       stripRequestAuth(ws.root);
 
-      const { code, stdout } = await runCli(
-        clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`),
-      );
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`));
       const report = JSON.parse(stdout) as HttpReport;
 
       expect(code).toBe(EXIT.OK);
@@ -586,9 +563,7 @@ describe("group-level scripts and auth (HTTP)", () => {
       // The request keeps its own `auth: {type: noauth}`, which must win.
       writeAdminDefinition(ws.root, BEARER_TOKEN_AUTH);
 
-      const { code, stdout } = await runCli(
-        clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`),
-      );
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`));
       const report = JSON.parse(stdout) as HttpReport;
 
       expect(code).toBe(EXIT.OK);
@@ -677,7 +652,7 @@ describe("mutable pm.request (HTTP)", () => {
     try {
       writeScriptedHttpRequest(ws.root, {
         method: "POST",
-        body: 'body:\n  type: json\n  content: \'{"a":1}\'',
+        body: "body:\n  type: json\n  content: '{\"a\":1}'",
         script: 'pm.request.headers.upsert("Content-Type", "application/vnd.test+json");',
       });
       const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
@@ -723,9 +698,7 @@ describe("mutable pm.request (HTTP)", () => {
         headers: 'headers:\n  X-Template: "{{token}}"',
         script: 'pm.request.headers.add("X-Seen", pm.request.headers.get("x-template"));',
       });
-      const { code } = await runCli(
-        clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`),
-      );
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body", "--var", `token=${HTTP_TOKEN}`));
       expect(code).toBe(EXIT.OK);
       expect(http.received[0]?.headers["x-seen"]).toBe(HTTP_TOKEN);
     } finally {
@@ -740,7 +713,7 @@ describe("mutable pm.request (HTTP)", () => {
         path: "/redirect-echo",
         method: "POST",
         headers: "headers:\n  X-Initial: yes",
-        body: 'body:\n  type: json\n  content: \'{"a":1}\'',
+        body: "body:\n  type: json\n  content: '{\"a\":1}'",
         script: 'pm.request.headers.add("X-Scripted", "yes");',
         afterScript: [
           'pm.test("request is the final hop", function () {',

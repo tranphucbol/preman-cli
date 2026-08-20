@@ -1,5 +1,5 @@
-import { CliError } from "../errors.js";
-import type { GroupRunOutcome, RunOutcome } from "../runner.js";
+import { CliError } from "@/errors.js";
+import type { GroupRunOutcome, RunOutcome } from "@/runner.js";
 import { cliReporter } from "./reporters/cli.js";
 import { jsonReporter } from "./reporters/json.js";
 import { junitReporter } from "./reporters/junit.js";
@@ -22,9 +22,7 @@ export interface Reporter {
 }
 
 /** Either shape a run can end in. */
-export type ReportableRun =
-  | { kind: "single"; outcome: RunOutcome }
-  | { kind: "group"; outcome: GroupRunOutcome };
+export type ReportableRun = { kind: "single"; outcome: RunOutcome } | { kind: "group"; outcome: GroupRunOutcome };
 
 export interface ResolvedReporter {
   reporter: Reporter;
@@ -78,9 +76,12 @@ export function resolveReporterTargets(
   });
   const stdout = resolved.filter((item) => item.exportPath === undefined);
   if (stdout.length > 1) {
-    throw new CliError(`reporters ${stdout.map((item) => `"${item.reporter.name}"`).join(", ")} all target ${STDOUT_TARGET}`, {
-      details: ["give each additional reporter an export path"],
-    });
+    throw new CliError(
+      `reporters ${stdout.map((item) => `"${item.reporter.name}"`).join(", ")} all target ${STDOUT_TARGET}`,
+      {
+        details: ["give each additional reporter an export path"],
+      },
+    );
   }
   return resolved;
 }

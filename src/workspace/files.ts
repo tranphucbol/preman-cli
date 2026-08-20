@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 
 export interface FileReaderOptions {
   /** Root that relative paths resolve against and, by default, may not escape. */

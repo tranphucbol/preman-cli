@@ -1,9 +1,9 @@
 import pc from "picocolors";
-import { CliError } from "../errors.js";
-import { requireWorkspace } from "../workspace/discover.js";
-import { findEnvironment, listEnvironments, saveEnvironmentValues } from "../workspace/environments.js";
-import type { EnvironmentEntry } from "../workspace/environments.js";
-import type { Workspace } from "../workspace/discover.js";
+import { CliError } from "@/errors.js";
+import { requireWorkspace } from "@/workspace/discover.js";
+import { findEnvironment, listEnvironments, saveEnvironmentValues } from "@/workspace/environments.js";
+import type { EnvironmentEntry } from "@/workspace/environments.js";
+import type { Workspace } from "@/workspace/discover.js";
 
 export interface EnvArgs {
   dir: string;
@@ -55,6 +55,7 @@ export function commandEnvSet(args: EnvArgs & { key: string; value: string }): s
   const env = selectEnvironment(ws, args.env);
   saveEnvironmentValues(env.filePath, { [args.key]: args.value });
 
-  if (args.json) return JSON.stringify({ name: env.name, file: env.filePath, key: args.key, value: args.value }, null, 2);
+  if (args.json)
+    return JSON.stringify({ name: env.name, file: env.filePath, key: args.key, value: args.value }, null, 2);
   return `set ${pc.cyan(args.key)}=${args.value} in ${env.name} ${pc.dim(`(${env.filePath})`)}`;
 }

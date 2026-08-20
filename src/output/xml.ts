@@ -1,4 +1,5 @@
-const INVALID_XML_CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g;
+const INVALID_XML_CONTROL_CHARACTER_RANGE = "\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f";
+const INVALID_XML_CONTROL_CHARACTERS = new RegExp(`[${INVALID_XML_CONTROL_CHARACTER_RANGE}]`, "g");
 const XML_ENTITIES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",

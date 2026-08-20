@@ -1,13 +1,13 @@
-import { CliError } from "../errors.js";
-import { applyAuth } from "../http/auth.js";
-import type { CookieJar } from "../http/cookies.js";
-import { normalizeKeyValues, setHeaderIfAbsent, type KeyValue } from "../http/headers.js";
-import { invokeHttp, type HttpInvokeResult } from "../http/invoke.js";
-import { resolveHttpUrl } from "../http/target.js";
-import type { TlsCertOptions } from "../tls/certs.js";
-import { interpolateStrict } from "../vars/interpolate.js";
-import type { VariableStore } from "../vars/store.js";
-import type { HttpRequest, KeyValueSource } from "../workspace/schemas.js";
+import { CliError } from "@/errors.js";
+import { applyAuth } from "@/http/auth.js";
+import type { CookieJar } from "@/http/cookies.js";
+import { normalizeKeyValues, setHeaderIfAbsent, type KeyValue } from "@/http/headers.js";
+import { invokeHttp, type HttpInvokeResult } from "@/http/invoke.js";
+import { resolveHttpUrl } from "@/http/target.js";
+import type { TlsCertOptions } from "@/tls/certs.js";
+import { interpolateStrict } from "@/vars/interpolate.js";
+import type { VariableStore } from "@/vars/store.js";
+import type { HttpRequest, KeyValueSource } from "@/workspace/schemas.js";
 
 const DEFAULT_METHOD = "GET";
 const CONTENT_TYPE = "content-type";
@@ -44,13 +44,13 @@ interface RequestShape {
 
 function badInput(detail: string): CliError {
   return new CliError("pm.sendRequest could not read the request", {
-    details: [detail, 'pass a url string, or { url, method, header, body: { mode, raw } }'],
+    details: [detail, "pass a url string, or { url, method, header, body: { mode, raw } }"],
   });
 }
 
 function asShape(input: unknown): RequestShape {
   if (typeof input === "string") return { url: input };
-  if (typeof input === "object" && input !== null) return input as RequestShape;
+  if (typeof input === "object" && input !== null) return input;
   throw badInput(`expected a string or an object, got ${typeof input}`);
 }
 
@@ -97,7 +97,8 @@ export async function sendScriptRequest(options: SendScriptRequestOptions): Prom
   const shape = asShape(options.input);
   const { store } = options;
 
-  const rawMethod = shape.method === undefined ? DEFAULT_METHOD : String(shape.method);
+  const rawMethod =
+    typeof shape.method === "string" || typeof shape.method === "number" ? String(shape.method) : DEFAULT_METHOD;
   const method = rawMethod.trim().toUpperCase();
 
   const { url } = resolveHttpUrl({ rawUrl: interpolateStrict(readUrl(shape), store, "pm.sendRequest url") });
@@ -112,7 +113,8 @@ export async function sendScriptRequest(options: SendScriptRequestOptions): Prom
   applyAuth({ auth: shape.auth as HttpRequest["auth"], headers, url, store });
 
   const { content, mode } = readBody(shape);
-  const body = content === undefined || content === "" ? undefined : interpolateStrict(content, store, "pm.sendRequest body");
+  const body =
+    content === undefined || content === "" ? undefined : interpolateStrict(content, store, "pm.sendRequest body");
 
   const contentType = mode === undefined ? undefined : MODE_CONTENT_TYPES[mode];
   if (body !== undefined && contentType !== undefined) setHeaderIfAbsent(headers, CONTENT_TYPE, contentType);

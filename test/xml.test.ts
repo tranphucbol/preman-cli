@@ -1,6 +1,6 @@
 import { parseStringPromise } from "xml2js";
 import { describe, expect, it } from "vitest";
-import { escapeXml, renderXml } from "../src/output/xml.js";
+import { escapeXml, renderXml } from "@/output/xml.js";
 
 describe("escapeXml", () => {
   it("givenAmpersandAndAngles_whenEscape_thenEntitiesEmitted", () => {
@@ -25,8 +25,6 @@ describe("renderXml", () => {
   });
 
   it("givenUndefinedAttribute_whenRender_thenOmitted", () => {
-    expect(renderXml({ name: "node", attributes: { present: 1, absent: undefined } })).toBe(
-      '<node present="1"/>',
-    );
+    expect(renderXml({ name: "node", attributes: { present: 1, absent: undefined } })).toBe('<node present="1"/>');
   });
 });

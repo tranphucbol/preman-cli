@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CliError } from "../src/errors.js";
-import { interpolate, interpolateStrict } from "../src/vars/interpolate.js";
-import { VariableStore } from "../src/vars/store.js";
+import { CliError } from "@/errors.js";
+import { interpolate, interpolateStrict } from "@/vars/interpolate.js";
+import { VariableStore } from "@/vars/store.js";
 
 describe("VariableStore", () => {
   it("givenSameKeyInEveryScope_whenGet_thenLocalWinsThenEnvironmentThenCollectionThenGlobals", () => {

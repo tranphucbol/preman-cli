@@ -1,4 +1,4 @@
-import { originOf, REQUEST_ORIGIN, type ScriptOrigin } from "../scripts/chain.js";
+import { originOf, REQUEST_ORIGIN, type ScriptOrigin } from "@/scripts/chain.js";
 import type { RequestEntry } from "./collections.js";
 import type { RequestAuth } from "./schemas.js";
 

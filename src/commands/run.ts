@@ -1,23 +1,23 @@
 import pc from "picocolors";
-import { loadIterationData, type DataRow } from "../data/rows.js";
-import { CliError, type ExitCode } from "../errors.js";
-import type { ReportableRun, ResolvedReporter } from "../output/reporter.js";
-import { runGroup, runRequest, type GroupRunOutcome, type RunOutcome } from "../runner.js";
+import { loadIterationData, type DataRow } from "@/data/rows.js";
+import { CliError, type ExitCode } from "@/errors.js";
+import type { ReportableRun, ResolvedReporter } from "@/output/reporter.js";
+import { runGroup, runRequest, type GroupRunOutcome, type RunOutcome } from "@/runner.js";
 import {
   listRequests,
   resolveSelector,
   targetLabel,
   type RequestEntry,
   type RunTarget,
-} from "../workspace/collections.js";
-import { resolveTlsCerts, type TlsCertInput, type TlsCertLayer } from "../tls/certs.js";
-import { loadPremanConfig } from "../workspace/config.js";
-import { requireWorkspace } from "../workspace/discover.js";
-import { listEnvironments, loadGlobals } from "../workspace/environments.js";
-import type { EnvironmentEntry } from "../workspace/environments.js";
-import { loadResources } from "../workspace/resources.js";
-import type { Workspace } from "../workspace/discover.js";
-import { fileReader } from "../workspace/files.js";
+} from "@/workspace/collections.js";
+import { resolveTlsCerts, type TlsCertInput, type TlsCertLayer } from "@/tls/certs.js";
+import { loadPremanConfig } from "@/workspace/config.js";
+import { requireWorkspace } from "@/workspace/discover.js";
+import { listEnvironments, loadGlobals } from "@/workspace/environments.js";
+import type { EnvironmentEntry } from "@/workspace/environments.js";
+import { loadResources } from "@/workspace/resources.js";
+import type { Workspace } from "@/workspace/discover.js";
+import { fileReader } from "@/workspace/files.js";
 
 export interface RunArgs {
   dir: string;
@@ -170,9 +170,7 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
   const config = loadPremanConfig(ws);
   const certLayers: TlsCertLayer[] = [
     { label: CLI_CERT_LABEL, baseDir: process.cwd(), input: args.tlsCerts },
-    ...(config === undefined
-      ? []
-      : [{ label: CONFIG_CERT_LABEL, baseDir: config.baseDir, input: config.tls }]),
+    ...(config === undefined ? [] : [{ label: CONFIG_CERT_LABEL, baseDir: config.baseDir, input: config.tls }]),
   ];
   const tlsCerts = resolveTlsCerts(certLayers);
   if (humanOutput) {

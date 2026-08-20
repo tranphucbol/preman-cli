@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "../errors.js";
+import { CliError } from "@/errors.js";
 
 export interface GrpcTarget {
   /** `host:port` authority passed to grpc-js. */
@@ -83,7 +83,7 @@ export function readLocalGrpcPort(workspaceRoot: string): number | undefined {
   try {
     const doc = parseYaml(readFileSync(configPath, "utf8")) as { grpc?: { port?: unknown } } | null;
     const port = doc?.grpc?.port;
-    const parsed = typeof port === "number" ? port : Number.parseInt(String(port ?? ""), 10);
+    const parsed = typeof port === "number" ? port : typeof port === "string" ? Number.parseInt(port, 10) : Number.NaN;
     return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
   } catch {
     return undefined;

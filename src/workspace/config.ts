@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "../errors.js";
-import type { TlsCertInput } from "../tls/certs.js";
+import { CliError } from "@/errors.js";
+import type { TlsCertInput } from "@/tls/certs.js";
 import { premanConfigSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
 

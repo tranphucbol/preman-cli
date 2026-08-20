@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { CliError, EXIT } from "../src/errors.js";
-import { PropertyList, type Property } from "../src/scripts/property-list.js";
+import { CliError, EXIT } from "@/errors.js";
+import { PropertyList, type Property } from "@/scripts/property-list.js";
 
 const HEADER_OPTIONS = { caseInsensitive: true, label: "request headers" };
 const QUERY_OPTIONS = { caseInsensitive: false, label: "request query parameters" };
@@ -118,11 +118,7 @@ describe("PropertyList", () => {
     const list = new PropertyList([], HEADER_OPTIONS);
     list.freeze();
 
-    for (const mutate of [
-      () => list.add("new", "1"),
-      () => list.upsert("new", "1"),
-      () => list.remove("new"),
-    ]) {
+    for (const mutate of [() => list.add("new", "1"), () => list.upsert("new", "1"), () => list.remove("new")]) {
       try {
         mutate();
         expect.unreachable("should have thrown");

@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CliError } from "../src/errors.js";
-import { listMethods, resolveMethod, splitMethodPath } from "../src/grpc/schema.js";
-import { parseAuthority, readLocalGrpcPort, resolveTarget, shouldUseTls } from "../src/grpc/target.js";
+import { CliError } from "@/errors.js";
+import { listMethods, resolveMethod, splitMethodPath } from "@/grpc/schema.js";
+import { parseAuthority, readLocalGrpcPort, resolveTarget, shouldUseTls } from "@/grpc/target.js";
 import { FIXTURE_INCLUDE_DIR, FIXTURE_WS, FIXTURES_DIR, requestPath } from "./helpers.js";
 
 /** The real base64 FileDescriptorSet captured by Postman for pe.aev2.ExchangeService.Exchange. */
@@ -86,11 +86,21 @@ describe("resolveMethod", () => {
   it("givenCapturedDescriptor_whenListingMethods_thenOnlyTheCapturedMethodIsPresent", () => {
     // The Postman client captures only the invoked method: Exchange is there, Query is not.
     const exchange = () =>
-      resolveMethod({ ...base, schemaLocation: undefined, methodDescriptor: REAL_DESCRIPTOR, methodPath: "pe.aev2.ExchangeService.Exchange" });
+      resolveMethod({
+        ...base,
+        schemaLocation: undefined,
+        methodDescriptor: REAL_DESCRIPTOR,
+        methodPath: "pe.aev2.ExchangeService.Exchange",
+      });
     expect(exchange().source).toBe("descriptor");
 
     try {
-      resolveMethod({ ...base, schemaLocation: undefined, methodDescriptor: REAL_DESCRIPTOR, methodPath: "pe.aev2.ExchangeService.Query" });
+      resolveMethod({
+        ...base,
+        schemaLocation: undefined,
+        methodDescriptor: REAL_DESCRIPTOR,
+        methodPath: "pe.aev2.ExchangeService.Query",
+      });
       expect.unreachable("Query should be absent from the captured descriptor");
     } catch (error) {
       expect(error).toBeInstanceOf(CliError);
@@ -143,7 +153,12 @@ describe("resolveMethod", () => {
       resolveMethod({ ...base, schemaLocation: undefined, methodDescriptor: "", methodPath: "a.B.C" }),
     ).toThrow(CliError);
     expect(() =>
-      resolveMethod({ ...base, schemaLocation: undefined, methodDescriptor: "bm90LWEtZGVzY3JpcHRvcg==", methodPath: "a.B.C" }),
+      resolveMethod({
+        ...base,
+        schemaLocation: undefined,
+        methodDescriptor: "bm90LWEtZGVzY3JpcHRvcg==",
+        methodPath: "a.B.C",
+      }),
     ).toThrow(CliError);
   });
 });
@@ -234,7 +249,9 @@ describe("resolveTarget", () => {
 
   it("givenTlsOverride_whenResolved_thenHeuristicIsIgnoredBothWays", () => {
     expect(resolveTarget({ url: "localhost:9090", workspaceRoot: FIXTURE_WS, tlsOverride: true }).tls).toBe(true);
-    expect(resolveTarget({ url: "aev2.zalopay.vn:443", workspaceRoot: FIXTURE_WS, tlsOverride: false }).tls).toBe(false);
+    expect(resolveTarget({ url: "aev2.zalopay.vn:443", workspaceRoot: FIXTURE_WS, tlsOverride: false }).tls).toBe(
+      false,
+    );
   });
 
   it("givenUrlWithoutPort_whenResolved_thenThrowsWithHint", () => {

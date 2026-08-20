@@ -13,7 +13,6 @@ import { buildLiveHttpRequest, finaliseHttpRequest } from "./http/request.js";
 import type { HttpTarget } from "./http/target.js";
 import {
   hasScriptOf,
-  KNOWN_SCRIPT_TYPES,
   MESSAGE_SCRIPT_TYPES,
   POST_SCRIPT_TYPES,
   PRE_SCRIPT_TYPES,
@@ -22,17 +21,19 @@ import {
   type Protocol,
 } from "./scripts/chain.js";
 import {
+  countTests,
   runScript,
   type ConsoleLine,
   type ScriptResponseInfo,
   type SideRequestRecord,
+  type TestSummary,
   type TestResult,
 } from "./scripts/sandbox.js";
 import {
   freezeRequest,
   LiveBody,
   LiveGrpcRequest,
-  LiveHttpRequest,
+  type LiveHttpRequest,
   Url,
   type LiveRequest,
 } from "./scripts/live-request.js";
@@ -46,7 +47,6 @@ import {
   otherRequestSchema,
   type GrpcRequest,
   type HttpRequest,
-  type RequestScript,
 } from "./workspace/schemas.js";
 import { saveEnvironmentValues, type EnvironmentEntry } from "./workspace/environments.js";
 import type { RequestEntry } from "./workspace/collections.js";
@@ -66,6 +66,7 @@ const RETURN_CODE_FIELDS = ["return_code", "returnCode"] as const;
 const RETURN_CODE_OK = "OK";
 
 export type { Protocol };
+export { countTests, type TestSummary };
 
 export interface RunOptions {
   workspace: Workspace;
@@ -155,7 +156,7 @@ export function extractReturnCode(response: unknown): string | undefined {
   const record = response as Record<string, unknown>;
   for (const field of RETURN_CODE_FIELDS) {
     const value = record[field];
-    if (value !== undefined && value !== null) return String(value);
+    if (typeof value === "string" || typeof value === "number") return String(value);
   }
   return undefined;
 }
@@ -167,22 +168,6 @@ export function extractReturnCode(response: unknown): string | undefined {
  */
 export function isBusinessSuccess(returnCode: string | undefined): boolean {
   return returnCode === RETURN_CODE_OK || returnCode === "1";
-}
-
-export interface TestSummary {
-  total: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-}
-
-export function countTests(tests: TestResult[]): TestSummary {
-  return {
-    total: tests.length,
-    passed: tests.filter((t) => t.status === "passed").length,
-    failed: tests.filter((t) => t.status === "failed").length,
-    skipped: tests.filter((t) => t.status === "skipped").length,
-  };
 }
 
 /** Sums per-request tallies across a group. */
@@ -252,7 +237,7 @@ function shapeError(entry: RequestEntry, error: ZodError): CliError {
 type ParsedRequest = { protocol: "grpc"; request: GrpcRequest } | { protocol: "http"; request: HttpRequest };
 
 function parseRequest(entry: RequestEntry): ParsedRequest {
-  const raw = parseYaml(readFileSync(entry.filePath, "utf8")) ?? {};
+  const raw: unknown = parseYaml(readFileSync(entry.filePath, "utf8")) ?? {};
   const kind = (raw as { $kind?: unknown }).$kind;
 
   if (kind === GRPC_KIND) {
@@ -462,7 +447,10 @@ async function runGrpcRequest(
     workspaceRoot: workspace.root,
     tlsOverride: options.tlsOverride,
   });
-  const target = changedUrl === Url.parse(liveUrlText).toString() ? { ...resolvedTarget, source: initialTarget.source } : resolvedTarget;
+  const target =
+    changedUrl === Url.parse(liveUrlText).toString()
+      ? { ...resolvedTarget, source: initialTarget.source }
+      : resolvedTarget;
 
   // 3. Invoke.
   const invoke = await invokeUnary({
@@ -647,8 +635,10 @@ export interface GroupRunItem {
   error: { message: string; details: string[] } | undefined;
 }
 
-export interface GroupRunOptions
-  extends Omit<RunOptions, "entry" | "store" | "cookies" | "data" | "iteration" | "iterationCount"> {
+export interface GroupRunOptions extends Omit<
+  RunOptions,
+  "entry" | "store" | "cookies" | "data" | "iteration" | "iterationCount"
+> {
   /** Requests to run, in order. */
   entries: RequestEntry[];
   /** Collection or folder path, for reporting. */

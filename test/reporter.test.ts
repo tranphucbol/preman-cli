@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CliError } from "../src/errors.js";
-import { reporterNames, resolveReporters, resolveReporterTargets } from "../src/output/reporter.js";
+import { CliError } from "@/errors.js";
+import { reporterNames, resolveReporters, resolveReporterTargets } from "@/output/reporter.js";
 
 describe("reporter resolution", () => {
   it("givenNoReporterFlag_whenResolve_thenCliOnly", () => {

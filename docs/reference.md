@@ -23,36 +23,36 @@ preman env show
 preman env set <key> <value>
 ```
 
-| Option | Behavior |
-| --- | --- |
-| `-d, --dir <path>` | Select a workspace instead of searching upward from the current directory. |
-| `-e, --env <name>` | Load an environment. It is selected automatically when exactly one exists. |
-| `--url <target>` | Override the target with `host:port` for gRPC or an origin for HTTP. |
-| `--tls` | Force TLS, or HTTPS for HTTP requests. |
-| `--plaintext` | Force cleartext, or HTTP for HTTP requests. |
-| `--ssl-extra-ca-certs <path>` | Trust the CAs in a PEM file in addition to the public roots. |
-| `--ssl-client-cert <path>` | Present a client certificate. May be a combined PEM. |
-| `--ssl-client-key <path>` | Private key for `--ssl-client-cert`. |
-| `--ssl-client-passphrase <text>` | Passphrase for an encrypted private key. |
-| `-k, --insecure` | Skip server certificate verification. |
-| `--working-dir <path>` | Resolve request file paths from this directory. Defaults to the workspace root. |
-| `--insecure-file-read` | Allow request files outside the working directory. |
-| `-n, --iteration-count <n>` | Number of collection or folder passes. Defaults to the data row count, or `1`. |
-| `--iteration-data <path>` | Load iteration rows from a `.json` or `.csv` file. |
-| `--delay-request <ms>` | Delay between requests, including iteration boundaries. The default is `0`. |
-| `--timeout <ms>` | Whole-run budget when paired with `--timeout-request`; `0` means unbounded. Alone, temporarily retains its old per-request meaning and prints a deprecation warning. |
-| `--timeout-request <ms>` | Per-request deadline. The default is `30000`. |
-| `--timeout-script <ms>` | Per-script deadline. The default is `5000`. |
-| `--var <key=value>` | Set a local variable at the highest precedence. Repeatable. |
-| `--safe-eval` | Expose `eval` to scripts, for the `eval(pm.environment.get("lib_code"))` library idiom. Also settable as `safeEval: true` in `.postman/preman.yaml`. |
-| `--no-save` | Do not write script-modified variables back to the environment file. |
-| `--descriptor` | For gRPC, use the embedded descriptor instead of the `.proto` file. |
-| `--bail` | Stop a collection or folder run at the first failure. |
-| `-r, --reporter <name>` | Select a reporter. Repeat the flag or comma-separate names. |
-| `--reporter-json-export <path>` | Write the JSON reporter output to a file. |
-| `--reporter-junit-export <path>` | Write the JUnit reporter output to a file. |
-| `--json` | Alias for `--reporter json`. |
-| `-v, --verbose` | Show request bodies, logs, headers, metadata, trailers, and full group reports. |
+| Option                           | Behavior                                                                                                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-d, --dir <path>`               | Select a workspace instead of searching upward from the current directory.                                                                                           |
+| `-e, --env <name>`               | Load an environment. It is selected automatically when exactly one exists.                                                                                           |
+| `--url <target>`                 | Override the target with `host:port` for gRPC or an origin for HTTP.                                                                                                 |
+| `--tls`                          | Force TLS, or HTTPS for HTTP requests.                                                                                                                               |
+| `--plaintext`                    | Force cleartext, or HTTP for HTTP requests.                                                                                                                          |
+| `--ssl-extra-ca-certs <path>`    | Trust the CAs in a PEM file in addition to the public roots.                                                                                                         |
+| `--ssl-client-cert <path>`       | Present a client certificate. May be a combined PEM.                                                                                                                 |
+| `--ssl-client-key <path>`        | Private key for `--ssl-client-cert`.                                                                                                                                 |
+| `--ssl-client-passphrase <text>` | Passphrase for an encrypted private key.                                                                                                                             |
+| `-k, --insecure`                 | Skip server certificate verification.                                                                                                                                |
+| `--working-dir <path>`           | Resolve request file paths from this directory. Defaults to the workspace root.                                                                                      |
+| `--insecure-file-read`           | Allow request files outside the working directory.                                                                                                                   |
+| `-n, --iteration-count <n>`      | Number of collection or folder passes. Defaults to the data row count, or `1`.                                                                                       |
+| `--iteration-data <path>`        | Load iteration rows from a `.json` or `.csv` file.                                                                                                                   |
+| `--delay-request <ms>`           | Delay between requests, including iteration boundaries. The default is `0`.                                                                                          |
+| `--timeout <ms>`                 | Whole-run budget when paired with `--timeout-request`; `0` means unbounded. Alone, temporarily retains its old per-request meaning and prints a deprecation warning. |
+| `--timeout-request <ms>`         | Per-request deadline. The default is `30000`.                                                                                                                        |
+| `--timeout-script <ms>`          | Per-script deadline. The default is `5000`.                                                                                                                          |
+| `--var <key=value>`              | Set a local variable at the highest precedence. Repeatable.                                                                                                          |
+| `--safe-eval`                    | Expose `eval` to scripts, for the `eval(pm.environment.get("lib_code"))` library idiom. Also settable as `safeEval: true` in `.postman/preman.yaml`.                 |
+| `--no-save`                      | Do not write script-modified variables back to the environment file.                                                                                                 |
+| `--descriptor`                   | For gRPC, use the embedded descriptor instead of the `.proto` file.                                                                                                  |
+| `--bail`                         | Stop a collection or folder run at the first failure.                                                                                                                |
+| `-r, --reporter <name>`          | Select a reporter. Repeat the flag or comma-separate names.                                                                                                          |
+| `--reporter-json-export <path>`  | Write the JSON reporter output to a file.                                                                                                                            |
+| `--reporter-junit-export <path>` | Write the JUnit reporter output to a file.                                                                                                                           |
+| `--json`                         | Alias for `--reporter json`.                                                                                                                                         |
+| `-v, --verbose`                  | Show request bodies, logs, headers, metadata, trailers, and full group reports.                                                                                      |
 
 Test results and failed assertions are printed without `--verbose`.
 
@@ -60,11 +60,11 @@ Test results and failed assertions are printed without `--verbose`.
 
 Reporters consume the completed structured run and do not change its exit code.
 
-| Reporter | Exportable | Output |
-| --- | --- | --- |
-| `cli` | No | The compact human report. This is the default. |
-| `json` | Yes | Preman's machine-readable run object. |
-| `junit` | Yes | JUnit XML for CI test-report consumers. |
+| Reporter | Exportable | Output                                         |
+| -------- | ---------- | ---------------------------------------------- |
+| `cli`    | No         | The compact human report. This is the default. |
+| `json`   | Yes        | Preman's machine-readable run object.          |
+| `junit`  | Yes        | JUnit XML for CI test-report consumers.        |
 
 `-r, --reporter` is repeatable, and comma-separated names work too. Duplicate names are ignored.
 `--json` enables the JSON reporter rather than changing another reporter's format. A reporter with
@@ -80,16 +80,16 @@ rejected unless its reporter is enabled.
 
 JUnit emits one `<testsuite>` per request and one `<testcase>` per `pm.test`:
 
-| Run result | JUnit representation |
-| --- | --- |
-| Passing assertion | A testcase with no child element |
-| Failing assertion | A testcase with `<failure type="AssertionError">` and the assertion message |
-| Skipped assertion | A testcase with `<skipped/>` |
-| Inherited script assertion | The testcase name includes the collection or folder origin |
-| Transport or preparation error | A synthetic `request` testcase with `<error>` |
-| Business failure | A synthetic `request` testcase with `<failure>` naming the return code or HTTP status |
-| Unsupported request | A synthetic `request` testcase with `<skipped/>` |
-| Successful request with no assertions | An empty suite with `tests="0"` |
+| Run result                            | JUnit representation                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------- |
+| Passing assertion                     | A testcase with no child element                                                      |
+| Failing assertion                     | A testcase with `<failure type="AssertionError">` and the assertion message           |
+| Skipped assertion                     | A testcase with `<skipped/>`                                                          |
+| Inherited script assertion            | The testcase name includes the collection or folder origin                            |
+| Transport or preparation error        | A synthetic `request` testcase with `<error>`                                         |
+| Business failure                      | A synthetic `request` testcase with `<failure>` naming the return code or HTTP status |
+| Unsupported request                   | A synthetic `request` testcase with `<skipped/>`                                      |
+| Successful request with no assertions | An empty suite with `tests="0"`                                                       |
 
 Suite `time` values are request durations in seconds. Assertion testcase times are `0` because
 preman does not time individual assertions. A run stopped by `--bail` reports only requests that
@@ -140,7 +140,7 @@ An unsupported request kind is skipped and does not fail the run. A request that
 supported but cannot be prepared, such as one with a missing schema or unresolved variable, is an
 error. `--bail` stops after the first non-successful request; skipped requests do not trigger it.
 
-A group also stops early when an *inherited* script throws, even without `--bail`, because a shared
+A group also stops early when an _inherited_ script throws, even without `--bail`, because a shared
 precondition is broken and rerunning the same failing login for every remaining request only
 produces noise. The summary says which script aborted the run:
 
@@ -174,13 +174,13 @@ target the parent collection or folder.
 
 ## Exit codes
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Success |
-| `1` | Usage, configuration, request preparation, or script error |
-| `2` | A gRPC status other than `OK`, or an HTTP request that received no response |
-| `3` | A gRPC response whose `return_code` is not `OK`, or a non-2xx HTTP response |
-| `4` | The call and payload succeeded, but a `pm.test` assertion failed |
+| Code | Meaning                                                                     |
+| ---- | --------------------------------------------------------------------------- |
+| `0`  | Success                                                                     |
+| `1`  | Usage, configuration, request preparation, or script error                  |
+| `2`  | A gRPC status other than `OK`, or an HTTP request that received no response |
+| `3`  | A gRPC response whose `return_code` is not `OK`, or a non-2xx HTTP response |
+| `4`  | The call and payload succeeded, but a `pm.test` assertion failed            |
 
 A collection run returns its worst result in this order: `1`, `2`, `3`, `4`, `0`.
 
@@ -270,13 +270,13 @@ because silent authentication is how a stale token turns into an unexplained `40
 A text body is sent verbatim. It is not parsed and serialized again, and a body on `GET` is not
 discarded. `content-type` is inferred from `body.type` only when the request does not provide one.
 
-| `body.type` | Source | Wire body | Default content type |
-| --- | --- | --- | --- |
-| absent, `raw`, `json`, `text`, `xml`, `html`, `javascript` | `content` | Interpolated text | Inferred for the named text types |
-| `urlencoded` | `urlencoded`, structured `content`, or text `content` | Percent-encoded fields, or authored text verbatim | `application/x-www-form-urlencoded` |
-| `formdata` | `formdata` | Multipart bytes in authored order | `multipart/form-data` with a generated boundary |
-| `file` | `file.src` | File bytes | Inferred from the extension, otherwise `application/octet-stream` |
-| `graphql` | `graphql` | JSON containing `query` and parsed `variables` | `application/json` |
+| `body.type`                                                | Source                                                | Wire body                                         | Default content type                                              |
+| ---------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------- |
+| absent, `raw`, `json`, `text`, `xml`, `html`, `javascript` | `content`                                             | Interpolated text                                 | Inferred for the named text types                                 |
+| `urlencoded`                                               | `urlencoded`, structured `content`, or text `content` | Percent-encoded fields, or authored text verbatim | `application/x-www-form-urlencoded`                               |
+| `formdata`                                                 | `formdata`                                            | Multipart bytes in authored order                 | `multipart/form-data` with a generated boundary                   |
+| `file`                                                     | `file.src`                                            | File bytes                                        | Inferred from the extension, otherwise `application/octet-stream` |
+| `graphql`                                                  | `graphql`                                             | JSON containing `query` and parsed `variables`    | `application/json`                                                |
 
 Unknown body types still send string `content`, but produce a warning and no generated
 `content-type`. A mode with no usable source sends no body.
@@ -426,20 +426,20 @@ name the missing variables instead of being sent on the wire.
 
 The Postman dynamic variable set is supported by category:
 
-| Category | Variables |
-| --- | --- |
-| Common | `$guid`, `$isoTimestamp`, `$randomInt`, `$randomUUID`, `$timestamp` |
-| Text and grammar | `$randomAdjective`, `$randomIngverb`, `$randomNoun`, `$randomPhrase`, `$randomVerb`, `$randomWord`, `$randomWords` |
-| Lorem ipsum | `$randomLoremLines`, `$randomLoremParagraph`, `$randomLoremParagraphs`, `$randomLoremSentence`, `$randomLoremSentences`, `$randomLoremSlug`, `$randomLoremText`, `$randomLoremWord`, `$randomLoremWords` |
-| Names and professions | `$randomFirstName`, `$randomFullName`, `$randomJobArea`, `$randomJobDescriptor`, `$randomJobTitle`, `$randomJobType`, `$randomLastName`, `$randomNamePrefix`, `$randomNameSuffix` |
-| Addresses and phone | `$randomCity`, `$randomCountry`, `$randomCountryCode`, `$randomLatitude`, `$randomLongitude`, `$randomPhoneFormats`, `$randomPhoneNumber`, `$randomPhoneNumberExt`, `$randomStreetAddress`, `$randomStreetName`, `$randomZipCode` |
-| Internet and email | `$randomDomainName`, `$randomDomainSuffix`, `$randomDomainWord`, `$randomEmail`, `$randomExampleEmail`, `$randomIP`, `$randomIPV6`, `$randomLocale`, `$randomMACAddress`, `$randomPassword`, `$randomProtocol`, `$randomSemver`, `$randomUrl`, `$randomUserAgent`, `$randomUserName` |
-| Finance and business | `$randomBankAccount`, `$randomBankAccountBic`, `$randomBankAccountIban`, `$randomBankAccountName`, `$randomBitcoin`, `$randomBs`, `$randomBsAdjective`, `$randomBsBuzz`, `$randomBsNoun`, `$randomCatchPhrase`, `$randomCatchPhraseAdjective`, `$randomCatchPhraseDescriptor`, `$randomCatchPhraseNoun`, `$randomCompanyName`, `$randomCompanySuffix`, `$randomCreditCardMask`, `$randomCurrencyCode`, `$randomCurrencyName`, `$randomCurrencySymbol`, `$randomTransactionType` |
-| Commerce | `$randomDepartment`, `$randomPrice`, `$randomProduct`, `$randomProductAdjective`, `$randomProductMaterial`, `$randomProductName` |
-| Colours and database | `$randomAbbreviation`, `$randomColor`, `$randomDatabaseCollation`, `$randomDatabaseColumn`, `$randomDatabaseEngine`, `$randomDatabaseType`, `$randomHexColor` |
-| Dates | `$randomDateFuture`, `$randomDatePast`, `$randomDateRecent`, `$randomMonth`, `$randomWeekday` |
-| Files and images | `$randomAbstractImage`, `$randomAnimalsImage`, `$randomAvatarImage`, `$randomBusinessImage`, `$randomCatsImage`, `$randomCityImage`, `$randomCommonFileExt`, `$randomCommonFileName`, `$randomCommonFileType`, `$randomDirectoryPath`, `$randomFashionImage`, `$randomFileExt`, `$randomFileName`, `$randomFilePath`, `$randomFileType`, `$randomFoodImage`, `$randomImageDataUri`, `$randomImageUrl`, `$randomMimeType`, `$randomNatureImage`, `$randomNightlifeImage`, `$randomPeopleImage`, `$randomSportsImage`, `$randomTransportImage` |
-| Scalars | `$randomAlphaNumeric`, `$randomBoolean`, `$randomDigit`, `$randomIntFromInterval` |
+| Category              | Variables                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Common                | `$guid`, `$isoTimestamp`, `$randomInt`, `$randomUUID`, `$timestamp`                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Text and grammar      | `$randomAdjective`, `$randomIngverb`, `$randomNoun`, `$randomPhrase`, `$randomVerb`, `$randomWord`, `$randomWords`                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Lorem ipsum           | `$randomLoremLines`, `$randomLoremParagraph`, `$randomLoremParagraphs`, `$randomLoremSentence`, `$randomLoremSentences`, `$randomLoremSlug`, `$randomLoremText`, `$randomLoremWord`, `$randomLoremWords`                                                                                                                                                                                                                                                                                                                                     |
+| Names and professions | `$randomFirstName`, `$randomFullName`, `$randomJobArea`, `$randomJobDescriptor`, `$randomJobTitle`, `$randomJobType`, `$randomLastName`, `$randomNamePrefix`, `$randomNameSuffix`                                                                                                                                                                                                                                                                                                                                                            |
+| Addresses and phone   | `$randomCity`, `$randomCountry`, `$randomCountryCode`, `$randomLatitude`, `$randomLongitude`, `$randomPhoneFormats`, `$randomPhoneNumber`, `$randomPhoneNumberExt`, `$randomStreetAddress`, `$randomStreetName`, `$randomZipCode`                                                                                                                                                                                                                                                                                                            |
+| Internet and email    | `$randomDomainName`, `$randomDomainSuffix`, `$randomDomainWord`, `$randomEmail`, `$randomExampleEmail`, `$randomIP`, `$randomIPV6`, `$randomLocale`, `$randomMACAddress`, `$randomPassword`, `$randomProtocol`, `$randomSemver`, `$randomUrl`, `$randomUserAgent`, `$randomUserName`                                                                                                                                                                                                                                                         |
+| Finance and business  | `$randomBankAccount`, `$randomBankAccountBic`, `$randomBankAccountIban`, `$randomBankAccountName`, `$randomBitcoin`, `$randomBs`, `$randomBsAdjective`, `$randomBsBuzz`, `$randomBsNoun`, `$randomCatchPhrase`, `$randomCatchPhraseAdjective`, `$randomCatchPhraseDescriptor`, `$randomCatchPhraseNoun`, `$randomCompanyName`, `$randomCompanySuffix`, `$randomCreditCardMask`, `$randomCurrencyCode`, `$randomCurrencyName`, `$randomCurrencySymbol`, `$randomTransactionType`                                                              |
+| Commerce              | `$randomDepartment`, `$randomPrice`, `$randomProduct`, `$randomProductAdjective`, `$randomProductMaterial`, `$randomProductName`                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Colours and database  | `$randomAbbreviation`, `$randomColor`, `$randomDatabaseCollation`, `$randomDatabaseColumn`, `$randomDatabaseEngine`, `$randomDatabaseType`, `$randomHexColor`                                                                                                                                                                                                                                                                                                                                                                                |
+| Dates                 | `$randomDateFuture`, `$randomDatePast`, `$randomDateRecent`, `$randomMonth`, `$randomWeekday`                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Files and images      | `$randomAbstractImage`, `$randomAnimalsImage`, `$randomAvatarImage`, `$randomBusinessImage`, `$randomCatsImage`, `$randomCityImage`, `$randomCommonFileExt`, `$randomCommonFileName`, `$randomCommonFileType`, `$randomDirectoryPath`, `$randomFashionImage`, `$randomFileExt`, `$randomFileName`, `$randomFilePath`, `$randomFileType`, `$randomFoodImage`, `$randomImageDataUri`, `$randomImageUrl`, `$randomMimeType`, `$randomNatureImage`, `$randomNightlifeImage`, `$randomPeopleImage`, `$randomSportsImage`, `$randomTransportImage` |
+| Scalars               | `$randomAlphaNumeric`, `$randomBoolean`, `$randomDigit`, `$randomIntFromInterval`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 Each occurrence is evaluated independently, including repeated occurrences of the same token.
 An unknown dynamic variable fails the run with suggested near-matches. This deliberately differs
@@ -449,11 +449,11 @@ from Postman, which leaves an unknown token unchanged, so unresolved braces neve
 
 Scripts run in a `node:vm` sandbox in this order:
 
-| Request event type | When it runs |
-| --- | --- |
-| `beforeInvoke`, `prerequest`, `pre-request` | Before the request |
-| `onMessage` | Once for the unary gRPC response message |
-| `afterResponse`, `test`, `postResponse`, `post-response` | After the response |
+| Request event type                                       | When it runs                             |
+| -------------------------------------------------------- | ---------------------------------------- |
+| `beforeInvoke`, `prerequest`, `pre-request`              | Before the request                       |
+| `onMessage`                                              | Once for the unary gRPC response message |
+| `afterResponse`, `test`, `postResponse`, `post-response` | After the response                       |
 
 ### Collection and folder scripts
 
@@ -463,16 +463,16 @@ request inherits them — including when that request is run on its own, not as 
 Above the request level the event type must be prefixed with the protocol it applies to, because a
 group usually holds both gRPC and HTTP requests:
 
-| Group event type | Equivalent request event |
-| --- | --- |
-| `grpc:beforeInvoke` | `beforeInvoke` |
-| `grpc:onMessage` | `onMessage` |
-| `grpc:afterResponse` | `afterResponse` |
-| `http:beforeRequest` | `prerequest` |
-| `http:afterResponse` | `afterResponse` |
+| Group event type     | Equivalent request event |
+| -------------------- | ------------------------ |
+| `grpc:beforeInvoke`  | `beforeInvoke`           |
+| `grpc:onMessage`     | `onMessage`              |
+| `grpc:afterResponse` | `afterResponse`          |
+| `http:beforeRequest` | `prerequest`             |
+| `http:afterResponse` | `afterResponse`          |
 
 A prefix that names the other protocol is skipped silently — that is the point of the prefix. An
-*unprefixed* type at group level is skipped with a warning, since it cannot be attributed to either
+_unprefixed_ type at group level is skipped with a warning, since it cannot be attributed to either
 protocol. Request-level types stay unprefixed, and additionally tolerate a prefix.
 
 Within each stage, scripts run outermost first: collection, then each folder from outermost to
@@ -503,19 +503,19 @@ the legacy `postman.setEnvironmentVariable` family.
 
 Scripts can load this fixed library set through either `require(name)` or `pm.require(name)`:
 
-| Name | Purpose |
-| --- | --- |
-| `ajv` | JSON Schema validation |
-| `atob`, `btoa` | Base64 conversion packages |
-| `chai` | The configured Chai instance also used by `pm.expect` |
-| `cheerio` | HTML parsing and traversal |
-| `crypto-js` | Hashing, signing, and encryption |
+| Name                 | Purpose                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `ajv`                | JSON Schema validation                                              |
+| `atob`, `btoa`       | Base64 conversion packages                                          |
+| `chai`               | The configured Chai instance also used by `pm.expect`               |
+| `cheerio`            | HTML parsing and traversal                                          |
+| `crypto-js`          | Hashing, signing, and encryption                                    |
 | `csv-parse/lib/sync` | Synchronous CSV parsing; mapped to the package's modern entry point |
-| `lodash` | Collection and object helpers |
-| `moment` | Postman-compatible date parsing and formatting |
-| `tv4` | JSON Schema draft-04 validation |
-| `uuid` | UUID parsing and generation |
-| `xml2js` | XML parsing and building |
+| `lodash`             | Collection and object helpers                                       |
+| `moment`             | Postman-compatible date parsing and formatting                      |
+| `tv4`                | JSON Schema draft-04 validation                                     |
+| `uuid`               | UUID parsing and generation                                         |
+| `xml2js`             | XML parsing and building                                            |
 
 Modules are loaded from preman's own installation, lazily on first use, and memoised. `require()`
 does not search the workspace. Any name outside the table, including `fs`, `node:fs`, and relative
@@ -553,10 +553,10 @@ again.
 
 The protocol-specific fields are:
 
-| Protocol | Fields |
-| --- | --- |
-| HTTP | `url`, `method`, `headers`, `body` |
-| gRPC | `url`, `methodPath`, `metadata`, `body` |
+| Protocol | Fields                                  |
+| -------- | --------------------------------------- |
+| HTTP     | `url`, `method`, `headers`, `body`      |
+| gRPC     | `url`, `methodPath`, `metadata`, `body` |
 
 HTTP requests do not expose `metadata`, and gRPC requests do not expose `headers`. gRPC metadata is
 string-only; binary `-bin` values are not supported in scripts.

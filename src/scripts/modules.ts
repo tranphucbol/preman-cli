@@ -1,27 +1,9 @@
 import { createRequire } from "node:module";
-import { CliError, EXIT } from "../errors.js";
+import { CliError, EXIT } from "@/errors.js";
 import { chai } from "./expect.js";
+import { SANDBOX_ALIASES, SANDBOX_PACKAGES } from "./module-names.js";
 
-/** Names a script may pass to require(); also the bundler's external list. */
-export const SANDBOX_PACKAGES = [
-  "ajv",
-  "atob",
-  "btoa",
-  "chai",
-  "cheerio",
-  "crypto-js",
-  "csv-parse/lib/sync",
-  "lodash",
-  "moment",
-  "tv4",
-  "uuid",
-  "xml2js",
-] as const satisfies readonly string[];
-
-/** Extra specifiers accepted by require() that are not bare package names. */
-export const SANDBOX_ALIASES: Readonly<Record<string, string>> = {
-  "csv-parse/lib/sync": "csv-parse/sync",
-};
+export { SANDBOX_ALIASES, SANDBOX_PACKAGES };
 
 const UNKNOWN_MODULE_EXIT = EXIT.CLI;
 const LODASH_GLOBAL = "_";
@@ -69,14 +51,17 @@ export function requireSandboxModule(name: string): unknown {
 
 /** Names bound as lazily loaded bare globals inside every script context. */
 export function sandboxGlobals(): Record<string, unknown> {
-  return Object.defineProperties({}, {
-    [LODASH_GLOBAL]: {
-      enumerable: true,
-      get: () => requireSandboxModule(LODASH_PACKAGE),
+  return Object.defineProperties(
+    {},
+    {
+      [LODASH_GLOBAL]: {
+        enumerable: true,
+        get: () => requireSandboxModule(LODASH_PACKAGE),
+      },
+      [CRYPTO_GLOBAL]: {
+        enumerable: true,
+        get: () => requireSandboxModule(CRYPTO_PACKAGE),
+      },
     },
-    [CRYPTO_GLOBAL]: {
-      enumerable: true,
-      get: () => requireSandboxModule(CRYPTO_PACKAGE),
-    },
-  }) as Record<string, unknown>;
+  );
 }

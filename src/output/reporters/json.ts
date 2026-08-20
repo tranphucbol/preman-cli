@@ -1,5 +1,5 @@
-import { toGroupJsonReport, toJsonReport } from "../render.js";
-import type { Reporter } from "../reporter.js";
+import { toGroupJsonReport, toJsonReport } from "@/output/render.js";
+import type { Reporter } from "@/output/reporter.js";
 
 export const jsonReporter: Reporter = {
   name: "json",

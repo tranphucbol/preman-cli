@@ -1,4 +1,5 @@
-import { realpathSync, writeFileSync } from "node:fs";
+#!/usr/bin/env node
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import pc from "picocolors";
@@ -8,12 +9,16 @@ import { commandRun } from "./commands/run.js";
 import { CliError, EXIT, type ExitCode } from "./errors.js";
 import { reporterNames, resolveReporterTargets } from "./output/reporter.js";
 
-const VERSION = "0.1.0";
+declare const __PREMAN_VERSION__: string;
+
+const VERSION =
+  typeof __PREMAN_VERSION__ === "undefined"
+    ? (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version
+    : __PREMAN_VERSION__;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SCRIPT_TIMEOUT_MS = 5_000;
 const DEFAULT_RUN_TIMEOUT_MS = 0;
-const TIMEOUT_DEPRECATION =
-  "--timeout now means the whole-run budget; use --timeout-request for the per-call deadline";
+const TIMEOUT_DEPRECATION = "--timeout now means the whole-run budget; use --timeout-request for the per-call deadline";
 
 const HELP = `${pc.bold("preman")} — run Postman-format gRPC and HTTP requests from the CLI
 
@@ -238,13 +243,10 @@ export async function main(argv: string[]): Promise<ExitCode> {
     }
 
     case "run": {
-      const reporters = resolveReporterTargets(
-        [...(values.reporter ?? []), ...(json ? ["json"] : [])],
-        {
-          json: values["reporter-json-export"],
-          junit: values["reporter-junit-export"],
-        },
-      );
+      const reporters = resolveReporterTargets([...(values.reporter ?? []), ...(json ? ["json"] : [])], {
+        json: values["reporter-json-export"],
+        junit: values["reporter-junit-export"],
+      });
       const timeouts = resolveTimeouts(values);
       if (timeouts.warning !== undefined) process.stderr.write(`${pc.yellow(`warn: ${timeouts.warning}`)}\n`);
       const { output, files, exitCode } = await commandRun({

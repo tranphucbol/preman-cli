@@ -1,8 +1,8 @@
 import pc from "picocolors";
-import { listRequests } from "../workspace/collections.js";
-import { listEnvironments } from "../workspace/environments.js";
-import { requireWorkspace } from "../workspace/discover.js";
-import { loadResources } from "../workspace/resources.js";
+import { listRequests } from "@/workspace/collections.js";
+import { listEnvironments } from "@/workspace/environments.js";
+import { requireWorkspace } from "@/workspace/discover.js";
+import { loadResources } from "@/workspace/resources.js";
 
 export interface ListArgs {
   dir: string;

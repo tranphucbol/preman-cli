@@ -1,5 +1,5 @@
-import { CliError } from "../errors.js";
-import { BODY_CONTENT_TYPES } from "../http/body.js";
+import { CliError } from "@/errors.js";
+import { BODY_CONTENT_TYPES } from "@/http/body.js";
 import { FROZEN_REQUEST_MESSAGE, PropertyList, type Property } from "./property-list.js";
 
 const DEFAULT_PROTOCOL = "http";
@@ -187,7 +187,12 @@ export class Url {
       .enabled()
       .map(({ key, value }) => `${encodeQueryPart(key)}=${encodeQueryPart(value)}`)
       .join("&");
-    const search = !this.#queryChanged && this.#rawQuery !== undefined ? `?${this.#rawQuery}` : query.length === 0 ? "" : `?${query}`;
+    const search =
+      !this.#queryChanged && this.#rawQuery !== undefined
+        ? `?${this.#rawQuery}`
+        : query.length === 0
+          ? ""
+          : `?${query}`;
     const hash = this.#hash === undefined ? "" : `#${this.#hash}`;
     return `${this.#protocol}://${host}${port}${path}${search}${hash}`;
   }
@@ -292,7 +297,10 @@ export class LiveBody {
     } else {
       body = this.#raw.length === 0 ? undefined : this.#raw;
     }
-    return { body, contentType: body === undefined || this.#mode === undefined ? undefined : BODY_CONTENT_TYPES[this.#mode] };
+    return {
+      body,
+      contentType: body === undefined || this.#mode === undefined ? undefined : BODY_CONTENT_TYPES[this.#mode],
+    };
   }
 
   freeze(): void {

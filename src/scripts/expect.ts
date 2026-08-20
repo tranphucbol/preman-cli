@@ -108,9 +108,7 @@ function partialMatch(actual: unknown, expected: unknown): boolean {
   if (Array.isArray(actual)) return false;
 
   const target = actual as Record<string, unknown>;
-  return Object.entries(expected as Record<string, unknown>).every(([key, value]) =>
-    partialMatch(target[key], value),
-  );
+  return Object.entries(expected as Record<string, unknown>).every(([key, value]) => partialMatch(target[key], value));
 }
 
 function describe(value: unknown): string {
@@ -225,7 +223,7 @@ chai.use((instance, utils) => {
     function (_super: (...args: unknown[]) => unknown) {
       return function (this: object, ...args: unknown[]) {
         const self = this as PluginAssertion;
-        const target = utils.flag(this, "object");
+        const target = utils.flag(this, "object") as unknown;
         if (!isMessageList(target)) {
           _super.apply(this, args);
           return;

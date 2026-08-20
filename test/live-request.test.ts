@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LiveBody, Url } from "../src/scripts/live-request.js";
+import { LiveBody, Url } from "@/scripts/live-request.js";
 
 describe("Url", () => {
   it("givenAbsoluteUrl_whenParse_thenPartsSplit", () => {
@@ -33,9 +33,7 @@ describe("Url", () => {
   });
 
   it("givenUnresolvedToken_whenParse_thenLeftVerbatim", () => {
-    expect(Url.parse("http://{{host}}/v1/{{path}}?id={{id}}").toString()).toBe(
-      "http://{{host}}/v1/{{path}}?id={{id}}",
-    );
+    expect(Url.parse("http://{{host}}/v1/{{path}}?id={{id}}").toString()).toBe("http://{{host}}/v1/{{path}}?id={{id}}");
   });
 
   it("givenParsedUrl_whenToString_thenRoundTrips", () => {

@@ -5,10 +5,10 @@ import { createServer, type Server } from "node:https";
 import { join } from "node:path";
 import { rootCertificates, type TLSSocket } from "node:tls";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { main } from "../src/cli.js";
-import { EXIT } from "../src/errors.js";
-import { LOAD_OPTIONS } from "../src/grpc/schema.js";
-import { httpsRequestOptions, resolveTlsCerts } from "../src/tls/certs.js";
+import { main } from "@/cli.js";
+import { CliError, EXIT } from "@/errors.js";
+import { LOAD_OPTIONS } from "@/grpc/schema.js";
+import { httpsRequestOptions, resolveTlsCerts } from "@/tls/certs.js";
 import {
   cloneFixtureHttpWorkspace,
   cloneFixtureWorkspace,
@@ -238,9 +238,7 @@ describe("private certificate authorities", () => {
   });
 
   it("givenHostnameNotInSan_whenRun_thenErrorNamesTheHostAndTheCertName", async () => {
-    const { code, stdout } = await runCli(
-      httpArgs(httpsWrongHost.origin, "--ssl-extra-ca-certs", sslPath("ca.crt")),
-    );
+    const { code, stdout } = await runCli(httpArgs(httpsWrongHost.origin, "--ssl-extra-ca-certs", sslPath("ca.crt")));
     expect(code).toBe(EXIT.TRANSPORT);
     expect(stdout).toContain(TLS_HOST);
     expect(stdout).toContain("wrong.example");
@@ -284,8 +282,8 @@ describe("mutual TLS", () => {
   });
 
   it("givenEncryptedClientKey_whenRunWithoutPassphrase_thenCliError", async () => {
-    await expect(
-      runCli(
+    try {
+      await runCli(
         httpArgs(
           httpsMutual.origin,
           "--ssl-extra-ca-certs",
@@ -295,11 +293,14 @@ describe("mutual TLS", () => {
           "--ssl-client-key",
           sslPath("client-encrypted.key"),
         ),
-      ),
-    ).rejects.toMatchObject({
-      exitCode: EXIT.CLI,
-      details: expect.arrayContaining([expect.stringContaining("--ssl-client-passphrase")]),
-    });
+      );
+      expect.unreachable("expected encrypted key without passphrase to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CliError);
+      const cliError = error as CliError;
+      expect(cliError.exitCode).toBe(EXIT.CLI);
+      expect(cliError.details.some((detail) => detail.includes("--ssl-client-passphrase"))).toBe(true);
+    }
   });
 
   it("givenEncryptedClientKey_whenRunWithPassphrase_thenRequestSucceeds", async () => {

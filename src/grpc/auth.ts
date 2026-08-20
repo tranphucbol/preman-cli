@@ -1,7 +1,7 @@
-import { renderAuth } from "../auth/credentials.js";
-import type { PropertyList } from "../scripts/property-list.js";
-import type { VariableStore } from "../vars/store.js";
-import type { RequestAuth } from "../workspace/schemas.js";
+import { renderAuth } from "@/auth/credentials.js";
+import type { PropertyList } from "@/scripts/property-list.js";
+import type { VariableStore } from "@/vars/store.js";
+import type { RequestAuth } from "@/workspace/schemas.js";
 
 export interface ApplyGrpcAuthOptions {
   auth: RequestAuth | undefined;
