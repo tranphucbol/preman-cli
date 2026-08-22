@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { rootCertificates } from "node:tls";
 import { describe, expect, it } from "vitest";
-import { CliError, EXIT } from "@preman/core/errors.js";
+import { PremanError, EXIT } from "@preman/core/errors.js";
 import {
   emptyTlsCerts,
   grpcChannelCredentials,
@@ -49,15 +49,15 @@ describe("resolveTlsCerts", () => {
     expect(certs.sources.extraCaCerts).toBe(`${CONFIG_LABEL} (${sslPath("ca.crt")})`);
   });
 
-  it("givenMissingCertPath_whenResolving_thenCliErrorNamesTheFlagAndPath", () => {
-    let thrown: CliError | undefined;
+  it("givenMissingCertPath_whenResolving_thenPremanErrorNamesTheFlagAndPath", () => {
+    let thrown: PremanError | undefined;
     try {
       resolveTlsCerts([cliLayer({ extraCaCerts: "nope.crt" })]);
     } catch (error) {
-      thrown = error as CliError;
+      thrown = error as PremanError;
     }
 
-    expect(thrown).toBeInstanceOf(CliError);
+    expect(thrown).toBeInstanceOf(PremanError);
     expect(thrown?.exitCode).toBe(EXIT.CLI);
     expect(thrown?.message).toContain("--ssl-extra-ca-certs");
     expect(thrown?.details.join("\n")).toContain(sslPath("nope.crt"));
@@ -72,7 +72,7 @@ describe("resolveTlsCerts", () => {
     expect(context.key).toEqual(certs.clientCert);
   });
 
-  it("givenClientKeyWithoutCert_whenResolving_thenCliError", () => {
+  it("givenClientKeyWithoutCert_whenResolving_thenPremanError", () => {
     expect(() => resolveTlsCerts([cliLayer({ clientKey: "client.key" })])).toThrowError(
       /--ssl-client-key needs --ssl-client-cert/,
     );

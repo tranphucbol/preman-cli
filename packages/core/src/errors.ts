@@ -14,7 +14,7 @@ export const EXIT = {
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
 /** An error we caused on purpose and whose message is safe to show verbatim. */
-export class CliError extends Error {
+export class PremanError extends Error {
   readonly exitCode: ExitCode;
   /** Extra lines printed under the message, e.g. a list of available methods. */
   readonly details: string[];
@@ -26,7 +26,7 @@ export class CliError extends Error {
 
   constructor(message: string, options: { exitCode?: ExitCode; details?: string[]; abortsGroup?: boolean } = {}) {
     super(message);
-    this.name = "CliError";
+    this.name = "PremanError";
     this.exitCode = options.exitCode ?? EXIT.CLI;
     this.details = options.details ?? [];
     this.abortsGroup = options.abortsGroup ?? false;

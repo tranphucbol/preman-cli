@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CliError, EXIT } from "@preman/core/errors.js";
+import { PremanError, EXIT } from "@preman/core/errors.js";
 import { PropertyList, type Property } from "@preman/core/scripts/property-list.js";
 
 const HEADER_OPTIONS = { caseInsensitive: true, label: "request headers" };
@@ -59,15 +59,15 @@ describe("PropertyList", () => {
     ]);
   });
 
-  it("givenNoKey_whenAdd_thenThrowsCliError", () => {
+  it("givenNoKey_whenAdd_thenThrowsPremanError", () => {
     const list = new PropertyList([], HEADER_OPTIONS);
 
     try {
       list.add({ value: "v" } as Property);
       expect.unreachable("should have thrown");
     } catch (cause) {
-      expect(cause).toBeInstanceOf(CliError);
-      const error = cause as CliError;
+      expect(cause).toBeInstanceOf(PremanError);
+      const error = cause as PremanError;
       expect(error.message).toBe("add() needs a key");
       expect(error.details).toEqual(["Could not add to request headers."]);
     }
@@ -114,7 +114,7 @@ describe("PropertyList", () => {
     expect(list.enabled()).toEqual([{ key: "on", value: "2" }]);
   });
 
-  it("givenFrozenList_whenAdd_thenThrowsCliError", () => {
+  it("givenFrozenList_whenAdd_thenThrowsPremanError", () => {
     const list = new PropertyList([], HEADER_OPTIONS);
     list.freeze();
 
@@ -123,8 +123,8 @@ describe("PropertyList", () => {
         mutate();
         expect.unreachable("should have thrown");
       } catch (cause) {
-        expect(cause).toBeInstanceOf(CliError);
-        const error = cause as CliError;
+        expect(cause).toBeInstanceOf(PremanError);
+        const error = cause as PremanError;
         expect(error.message).toBe("pm.request is read-only after the request has been sent");
         expect(error.exitCode).toBe(EXIT.CLI);
       }

@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { interpolateStrict } from "@preman/core/vars/interpolate.js";
 import type { VariableStore } from "@preman/core/vars/store.js";
 import type { RequestAuth } from "@preman/core/workspace/schemas.js";
@@ -48,7 +48,7 @@ export function renderAuth(auth: RequestAuth | undefined, store: VariableStore):
   if (type.length === 0 || type === NO_AUTH) return { rendered: NONE, warnings: [] };
 
   if (!SUPPORTED_AUTH_TYPES.includes(type as (typeof SUPPORTED_AUTH_TYPES)[number])) {
-    throw new CliError(`auth type "${auth.type}" is not supported`, {
+    throw new PremanError(`auth type "${auth.type}" is not supported`, {
       details: [`supported types: ${SUPPORTED_AUTH_TYPES.join(", ")}`],
     });
   }

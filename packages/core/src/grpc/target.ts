@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 
 export interface GrpcTarget {
   /** `host:port` authority passed to grpc-js. */
@@ -100,9 +100,9 @@ export function readLocalGrpcPort(workspaceRoot: string): number | undefined {
  */
 export function resolveTarget(options: ResolveTargetOptions): GrpcTarget {
   const applyTls = (parsed: ParsedAuthority, source: string): GrpcTarget => {
-    if (parsed.authority.length === 0) throw new CliError(`could not determine a gRPC target from ${source}`);
+    if (parsed.authority.length === 0) throw new PremanError(`could not determine a gRPC target from ${source}`);
     if (parsed.port === undefined || parsed.port.length === 0) {
-      throw new CliError(`gRPC target "${parsed.authority}" from ${source} has no port`, {
+      throw new PremanError(`gRPC target "${parsed.authority}" from ${source} has no port`, {
         details: ["pass an explicit host:port via --url"],
       });
     }

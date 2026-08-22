@@ -1,6 +1,6 @@
 import pc from "picocolors";
 import { loadIterationData, type DataRow } from "@preman/core/data/rows.js";
-import { CliError, type ExitCode } from "@preman/core/errors.js";
+import { PremanError, type ExitCode } from "@preman/core/errors.js";
 import type { ReportableRun, ResolvedReporter } from "@preman/cli/reporters/index.js";
 import { runGroup, runRequest, type GroupRunOutcome, type RunOutcome } from "@preman/core/runner.js";
 import {
@@ -84,13 +84,13 @@ async function pickTarget(
     candidates.length > 0 ? candidates : requests.map((entry) => ({ kind: "request", entry }));
 
   if (choices.length === 0) {
-    throw new CliError("no requests found under postman/collections");
+    throw new PremanError("no requests found under postman/collections");
   }
   if (choices.length === 1) return choices[0]!;
 
   if (!isInteractive()) {
     const heading = selector === undefined ? "several requests exist; name one" : `"${selector}" is ambiguous`;
-    throw new CliError(heading, { details: ["candidates:", ...choices.map((t) => `  ${targetLabel(t)}`)] });
+    throw new PremanError(heading, { details: ["candidates:", ...choices.map((t) => `  ${targetLabel(t)}`)] });
   }
 
   const { search } = await import("@inquirer/prompts");
@@ -112,7 +112,7 @@ async function pickEnvironment(ws: Workspace, name: string | undefined): Promise
     const needle = name.trim().toLowerCase();
     const found = all.find((e) => e.name.toLowerCase() === needle);
     if (found) return found;
-    throw new CliError(`environment "${name}" not found`, {
+    throw new PremanError(`environment "${name}" not found`, {
       details: all.length > 0 ? ["available:", ...all.map((e) => `  ${e.name}`)] : ["no environments exist"],
     });
   }
@@ -121,7 +121,7 @@ async function pickEnvironment(ws: Workspace, name: string | undefined): Promise
   if (all.length === 1) return all[0]!;
 
   if (!isInteractive()) {
-    throw new CliError("multiple environments exist; pass -e <NAME>", {
+    throw new PremanError("multiple environments exist; pass -e <NAME>", {
       details: ["available:", ...all.map((e) => `  ${e.name}`)],
     });
   }
@@ -154,7 +154,7 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
     } else if (resolved.candidates.length > 0) {
       target = await pickTarget(requests, resolved.candidates, args.selector);
     } else {
-      throw new CliError(`no request or collection matches "${args.selector}"`, {
+      throw new PremanError(`no request or collection matches "${args.selector}"`, {
         details: requests.length > 0 ? ["available:", ...requests.map((r) => `  ${r.path}`)] : ["no requests found"],
       });
     }
@@ -218,7 +218,7 @@ export async function commandRun(args: RunArgs): Promise<RunCommandResult> {
   }
 
   if ((args.iterationCount ?? 1) > 1 || (data?.rows.length ?? 0) > 1) {
-    throw new CliError(`iterations require a collection or folder; "${target.entry.path}" is a single request`, {
+    throw new PremanError(`iterations require a collection or folder; "${target.entry.path}" is a single request`, {
       details: ["run its parent collection or folder instead"],
     });
   }

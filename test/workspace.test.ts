@@ -11,7 +11,7 @@ import {
   saveEnvironmentValues,
 } from "@preman/core/workspace/environments.js";
 import { deriveIncludeDirs, loadResources } from "@preman/core/workspace/resources.js";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import {
   cloneFixtureWorkspace,
   collectionPath,
@@ -28,11 +28,11 @@ describe("discover", () => {
     expect(ws?.postmanDir).toBe(join(FIXTURE_WS, "postman"));
   });
 
-  it("givenDirectoryWithoutPostman_whenRequireWorkspace_thenThrowsCliError", () => {
+  it("givenDirectoryWithoutPostman_whenRequireWorkspace_thenThrowsPremanError", () => {
     const empty = mkdtempSync(join(tmpdir(), "preman-empty-"));
     try {
       expect(findWorkspace(empty)).toBeNull();
-      expect(() => requireWorkspace(empty)).toThrow(CliError);
+      expect(() => requireWorkspace(empty)).toThrow(PremanError);
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
@@ -147,20 +147,20 @@ describe("collection tree ordering", () => {
     }
   });
 
-  it("givenMalformedDefinitionYaml_whenListing_thenCliErrorNamesTheFile", () => {
+  it("givenMalformedDefinitionYaml_whenListing_thenPremanErrorNamesTheFile", () => {
     const clone = cloneFixtureWorkspace();
     try {
       writeDefinition(clone, ["payment"], "$kind: collection\nname: [unclosed\n");
 
       // A file that may carry auth and scripts must never be silently ignored.
-      expect(() => listRequests(clone.workspace)).toThrow(CliError);
+      expect(() => listRequests(clone.workspace)).toThrow(PremanError);
       expect(() => listRequests(clone.workspace)).toThrow(definitionPath(clone.root, "payment"));
     } finally {
       clone.cleanup();
     }
   });
 
-  it("givenDefinitionYamlWithWrongTypes_whenListing_thenCliErrorListsTheZodIssue", () => {
+  it("givenDefinitionYamlWithWrongTypes_whenListing_thenPremanErrorListsTheZodIssue", () => {
     const clone = cloneFixtureWorkspace();
     try {
       writeDefinition(clone, ["payment"], "$kind: collection\nname: payment\norder: soon\n");
@@ -169,8 +169,8 @@ describe("collection tree ordering", () => {
         listRequests(clone.workspace);
         expect.unreachable("listRequests should have thrown");
       } catch (cause) {
-        expect(cause).toBeInstanceOf(CliError);
-        const error = cause as CliError;
+        expect(cause).toBeInstanceOf(PremanError);
+        const error = cause as PremanError;
         expect(error.message).toContain(definitionPath(clone.root, "payment"));
         expect(error.details.join("\n")).toContain("order");
       }

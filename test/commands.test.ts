@@ -2,7 +2,7 @@ import { rmSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { commandEnvSet, commandEnvShow } from "@preman/cli/commands/env.js";
 import { commandList } from "@preman/cli/commands/list.js";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { loadEnvironment } from "@preman/core/workspace/environments.js";
 import { cloneFixtureWorkspace, FIXTURE_WS } from "./helpers.js";
 
@@ -97,7 +97,7 @@ describe("commandEnvShow", () => {
     const clone = cloneFixtureWorkspace();
     try {
       rmSync(`${clone.workspace.postmanDir}/environments`, { recursive: true, force: true });
-      expect(() => commandEnvShow({ dir: clone.root, env: undefined, json: false })).toThrow(CliError);
+      expect(() => commandEnvShow({ dir: clone.root, env: undefined, json: false })).toThrow(PremanError);
       expect(() => commandEnvShow({ dir: clone.root, env: undefined, json: false })).toThrow(
         "no environments found under postman/environments",
       );

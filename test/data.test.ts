@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadIterationData, rowFor } from "@preman/core/data/rows.js";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { dataPath } from "./helpers.js";
 
 describe("loadIterationData", () => {
@@ -15,11 +15,11 @@ describe("loadIterationData", () => {
     ]);
   });
 
-  it("givenJsonObject_whenLoading_thenCliError", async () => {
+  it("givenJsonObject_whenLoading_thenPremanError", async () => {
     await expect(loadIterationData(dataPath("not-an-array.json"))).rejects.toThrow(/expects an array of objects/);
   });
 
-  it("givenJsonArrayOfScalars_whenLoading_thenCliError", async () => {
+  it("givenJsonArrayOfScalars_whenLoading_thenPremanError", async () => {
     const dir = mkdtempSync(join(tmpdir(), "preman-data-"));
     const path = join(dir, "scalars.json");
     try {
@@ -35,16 +35,16 @@ describe("loadIterationData", () => {
     expect(loaded.rows[0]).toEqual({ msisdn: "84900000001", label: "first" });
   });
 
-  it("givenCsvWithHeaderOnly_whenLoading_thenCliError", async () => {
+  it("givenCsvWithHeaderOnly_whenLoading_thenPremanError", async () => {
     await expect(loadIterationData(dataPath("empty.csv"))).rejects.toThrow(/contains no rows/);
   });
 
-  it("givenUnknownExtension_whenLoading_thenCliErrorNamesSupported", async () => {
+  it("givenUnknownExtension_whenLoading_thenPremanErrorNamesSupported", async () => {
     await expect(loadIterationData("users.txt")).rejects.toThrow(/expects \.json or \.csv/);
   });
 
-  it("givenMissingFile_whenLoading_thenCliErrorNamesPath", async () => {
-    await expect(loadIterationData(dataPath("missing.json"))).rejects.toBeInstanceOf(CliError);
+  it("givenMissingFile_whenLoading_thenPremanErrorNamesPath", async () => {
+    await expect(loadIterationData(dataPath("missing.json"))).rejects.toBeInstanceOf(PremanError);
     await expect(loadIterationData(dataPath("missing.json"))).rejects.toThrow(/missing\.json/);
   });
 

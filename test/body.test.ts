@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { buildBody } from "@preman/core/http/body.js";
 import { VariableStore } from "@preman/core/vars/store.js";
 import type { FileReader } from "@preman/core/workspace/files.js";
@@ -174,7 +174,7 @@ describe("buildBody", () => {
     });
   });
 
-  it("givenGraphqlBodyWithInvalidVariables_whenBuild_thenThrowsCliError", () => {
+  it("givenGraphqlBodyWithInvalidVariables_whenBuild_thenThrowsPremanError", () => {
     expect(() =>
       buildBody({
         body: { type: "graphql", graphql: { query: "query Q", variables: "{" } },
@@ -182,7 +182,7 @@ describe("buildBody", () => {
         files: files(),
         requestLabel: "Admin Query",
       }),
-    ).toThrow(CliError);
+    ).toThrow(PremanError);
     expect(() =>
       buildBody({
         body: { type: "graphql", graphql: { query: "query Q", variables: "{" } },

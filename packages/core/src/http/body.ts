@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { basename, extname } from "node:path";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { interpolateStrict } from "@preman/core/vars/interpolate.js";
 import type { VariableStore } from "@preman/core/vars/store.js";
 import type { Property } from "@preman/core/scripts/property-list.js";
@@ -90,7 +90,7 @@ const CONTROL_CHARACTER_PATTERN = new RegExp(`[${CONTROL_CHARACTER_RANGE}]`);
 
 function partHeaderValue(value: string, label: string): string {
   if (CONTROL_CHARACTER_PATTERN.test(value)) {
-    throw new CliError(`${label} contains a control character that cannot be used in multipart headers`);
+    throw new PremanError(`${label} contains a control character that cannot be used in multipart headers`);
   }
   return value;
 }
@@ -106,7 +106,7 @@ function multipartBody(options: BuildBodyOptions, entries: NonNullable<HttpReque
     chunks.push(Buffer.from(`--${boundary}${CRLF}`));
     if (entry.type === "file") {
       if (entry.src === undefined || entry.src.length === 0) {
-        throw new CliError(`formdata field "${entry.key}" has no file source`);
+        throw new PremanError(`formdata field "${entry.key}" has no file source`);
       }
       const src = interpolateStrict(entry.src, options.store, `formdata field "${entry.key}" source`);
       options.files.resolve(src, `formdata field "${entry.key}"`);
@@ -164,7 +164,7 @@ export function buildBody(options: BuildBodyOptions): { wire: WireBody; warnings
         variables = JSON.parse(source);
       } catch (cause) {
         const label = options.requestLabel === undefined ? "request" : `request ${options.requestLabel}`;
-        throw new CliError(`GraphQL variables in ${label} are not valid JSON`, {
+        throw new PremanError(`GraphQL variables in ${label} are not valid JSON`, {
           details: [cause instanceof Error ? cause.message : String(cause)],
         });
       }
@@ -229,7 +229,7 @@ export function readRequestBody(request: HttpRequest): RequestBody {
   // Any other type with a structured payload is a mistake worth naming: silently
   // serialising it would send bytes the author never wrote.
   if (mode !== URLENCODED_MODE) {
-    throw new CliError(`body.content in ${request.url} must be text unless body.type is ${URLENCODED_MODE}`, {
+    throw new PremanError(`body.content in ${request.url} must be text unless body.type is ${URLENCODED_MODE}`, {
       details: [
         `body.type is ${mode.length > 0 ? `"${mode}"` : "not set"}`,
         "write the payload as a string, or set body.type: urlencoded",

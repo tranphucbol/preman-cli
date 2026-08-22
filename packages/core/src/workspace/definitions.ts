@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { groupDefinitionSchema } from "./schemas.js";
 import type { RequestAuth, RequestScript } from "./schemas.js";
 
@@ -32,7 +32,7 @@ export interface GroupDefinition {
  * Read a group's definition file.
  *
  * A missing file is normal and yields the directory basename with no scripts or
- * auth. A file that exists but does not parse is a `CliError`: it may carry the
+ * auth. A file that exists but does not parse is a `PremanError`: it may carry the
  * auth and scripts every request beneath it depends on, so falling back to the
  * basename would turn a typo into an unexplained 401.
  *
@@ -59,12 +59,12 @@ export function readGroupDefinition(dir: string, parentPath: string | undefined,
   try {
     raw = parseYaml(readFileSync(filePath, "utf8")) ?? {};
   } catch (cause) {
-    throw new CliError(`failed to parse ${filePath}: ${(cause as Error).message}`);
+    throw new PremanError(`failed to parse ${filePath}: ${(cause as Error).message}`);
   }
 
   const parsed = groupDefinitionSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new CliError(`failed to read ${filePath}`, {
+    throw new PremanError(`failed to read ${filePath}`, {
       details: parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`),
     });
   }

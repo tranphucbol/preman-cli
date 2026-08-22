@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import type { ZodError } from "zod";
-import { CliError, EXIT, type ExitCode } from "./errors.js";
+import { PremanError, EXIT, type ExitCode } from "./errors.js";
 import { rowFor, type DataRow } from "./data/rows.js";
 import { applyGrpcAuth } from "./grpc/auth.js";
 import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
@@ -228,8 +228,8 @@ function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVa
   });
 }
 
-function shapeError(entry: RequestEntry, error: ZodError): CliError {
-  return new CliError(`unexpected shape in ${entry.filePath}`, {
+function shapeError(entry: RequestEntry, error: ZodError): PremanError {
+  return new PremanError(`unexpected shape in ${entry.filePath}`, {
     details: error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
   });
 }
@@ -254,7 +254,7 @@ function parseRequest(entry: RequestEntry): ParsedRequest {
 
   const other = otherRequestSchema.safeParse(raw);
   const shown = other.success ? other.data.$kind : String(kind);
-  throw new CliError(`"${entry.name}" is a ${shown}, which preman does not support yet`, {
+  throw new PremanError(`"${entry.name}" is a ${shown}, which preman does not support yet`, {
     details: [`supported kinds: ${[...RUNNABLE_KINDS].join(", ")}`],
   });
 }
@@ -427,7 +427,7 @@ async function runGrpcRequest(
     try {
       sentMessage = JSON.parse(liveRequest.body.raw);
     } catch (cause) {
-      throw new CliError(`request body is not valid JSON after pre-request scripts: ${(cause as Error).message}`);
+      throw new PremanError(`request body is not valid JSON after pre-request scripts: ${(cause as Error).message}`);
     }
   }
 
@@ -688,7 +688,7 @@ function statusOf(outcome: RunOutcome): ItemStatus {
 }
 
 function toErrorInfo(cause: unknown): { message: string; details: string[] } {
-  if (cause instanceof CliError) return { message: cause.message, details: cause.details };
+  if (cause instanceof PremanError) return { message: cause.message, details: cause.details };
   const error = cause as Error;
   // An unexpected failure is still reported per-request rather than aborting the
   // whole run, but keep the stack so it cannot be mistaken for a config problem.
@@ -736,7 +736,7 @@ function replaceData(store: VariableStore, data: DataRow | undefined): void {
  */
 export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcome> {
   if (options.entries.length === 0) {
-    throw new CliError(`"${options.groupPath}" contains no requests`);
+    throw new PremanError(`"${options.groupPath}" contains no requests`);
   }
 
   const store = newStore({ ...options, data: {} });
@@ -793,7 +793,7 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
         items.push({ entry, iteration, status: statusOf(outcome), outcome, error: undefined });
       } catch (cause) {
         items.push({ entry, iteration, status: "error", outcome: undefined, error: toErrorInfo(cause) });
-        if (cause instanceof CliError && cause.abortsGroup) {
+        if (cause instanceof PremanError && cause.abortsGroup) {
           // Checked before `options.bail` so the reason names the real culprit rather
           // than a flag the user may not even have passed.
           bailReason = "inherited-script";

@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { LiveBody, LiveHttpRequest, Url } from "@preman/core/scripts/live-request.js";
 import { interpolateStrict } from "@preman/core/vars/interpolate.js";
 import type { VariableStore } from "@preman/core/vars/store.js";
@@ -60,10 +60,10 @@ const KNOWN_BODY_MODES = new Set([RAW_MODE, ...Object.keys(BODY_CONTENT_TYPES), 
 const MULTIPART_CONTENT_TYPE = "multipart/form-data; boundary=";
 const NO_FILES: FileReader = {
   resolve() {
-    throw new CliError("file-backed request bodies require a configured working directory");
+    throw new PremanError("file-backed request bodies require a configured working directory");
   },
   read() {
-    throw new CliError("file-backed request bodies require a configured working directory");
+    throw new PremanError("file-backed request bodies require a configured working directory");
   },
 };
 
@@ -83,7 +83,7 @@ interface PreparedWireBody {
 function validateMethod(value: string): string {
   const method = value.trim().toUpperCase();
   if (!HTTP_METHODS.has(method)) {
-    throw new CliError(`unsupported HTTP method "${value}"`, {
+    throw new PremanError(`unsupported HTTP method "${value}"`, {
       details: [`supported methods: ${[...HTTP_METHODS].join(", ")}`],
     });
   }
@@ -202,10 +202,10 @@ export function finaliseHttpRequest(
   try {
     url = new URL(request.url.toString());
   } catch {
-    throw new CliError(`request url "${request.url.toString()}" is not a valid url`);
+    throw new PremanError(`request url "${request.url.toString()}" is not a valid url`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new CliError(`request url "${request.url.toString()}" uses an unsupported scheme ${url.protocol}`, {
+    throw new PremanError(`request url "${request.url.toString()}" uses an unsupported scheme ${url.protocol}`, {
       details: ["only http and https are supported"],
     });
   }

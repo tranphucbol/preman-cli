@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 
 export interface Workspace {
   /** Directory containing `postman/`, and usually `.postman/`. */
@@ -51,7 +51,7 @@ export function findWorkspace(startDir: string): Workspace | null {
 export function requireWorkspace(startDir: string): Workspace {
   const ws = findWorkspace(startDir);
   if (ws) return ws;
-  throw new CliError(`no Postman workspace found in ${resolve(startDir)} or any parent directory`, {
+  throw new PremanError(`no Postman workspace found in ${resolve(startDir)} or any parent directory`, {
     details: [`looked for ${RESOURCES_REL} or ${COLLECTIONS_REL}`, "pass --dir <path> to point at the repo explicitly"],
   });
 }

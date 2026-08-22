@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { resourcesFileSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
 
@@ -26,12 +26,12 @@ export function loadResources(ws: Workspace): Resources {
   try {
     raw = parseYaml(readFileSync(resourcesPath, "utf8"));
   } catch (cause) {
-    throw new CliError(`failed to parse ${resourcesPath}: ${(cause as Error).message}`);
+    throw new PremanError(`failed to parse ${resourcesPath}: ${(cause as Error).message}`);
   }
 
   const parsed = resourcesFileSchema.safeParse(raw ?? {});
   if (!parsed.success) {
-    throw new CliError(`unexpected shape in ${resourcesPath}`, {
+    throw new PremanError(`unexpected shape in ${resourcesPath}`, {
       details: parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
     });
   }

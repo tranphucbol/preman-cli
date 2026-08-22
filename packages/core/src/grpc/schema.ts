@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import * as protoLoader from "@grpc/proto-loader";
 import type { MethodDefinition, PackageDefinition, ServiceDefinition } from "@grpc/proto-loader";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 
 /**
  * Load options are load-bearing for this repo's payloads:
@@ -54,14 +54,14 @@ export function splitMethodPath(methodPath: string): { serviceName: string; meth
   if (trimmed.includes("/")) {
     const [serviceName, methodName] = trimmed.split("/");
     if (!serviceName || !methodName) {
-      throw new CliError(`cannot parse methodPath "${methodPath}"`);
+      throw new PremanError(`cannot parse methodPath "${methodPath}"`);
     }
     return { serviceName, methodName };
   }
 
   const lastDot = trimmed.lastIndexOf(".");
   if (lastDot <= 0 || lastDot === trimmed.length - 1) {
-    throw new CliError(`cannot parse methodPath "${methodPath}"`, {
+    throw new PremanError(`cannot parse methodPath "${methodPath}"`, {
       details: ["expected <package>.<Service>.<Method>"],
     });
   }
@@ -72,7 +72,7 @@ function loadFromProtoFile(protoPath: string, includeDirs: string[]): PackageDef
   try {
     return protoLoader.loadSync(protoPath, { ...LOAD_OPTIONS, includeDirs });
   } catch (cause) {
-    throw new CliError(`failed to load ${protoPath}: ${(cause as Error).message}`, {
+    throw new PremanError(`failed to load ${protoPath}: ${(cause as Error).message}`, {
       details: ["include dirs tried:", ...includeDirs.map((d) => `  ${d}`)],
     });
   }
@@ -83,14 +83,14 @@ function loadFromDescriptor(base64: string): PackageDefinition {
   try {
     buffer = Buffer.from(base64, "base64");
   } catch (cause) {
-    throw new CliError(`methodDescriptor is not valid base64: ${(cause as Error).message}`);
+    throw new PremanError(`methodDescriptor is not valid base64: ${(cause as Error).message}`);
   }
-  if (buffer.length === 0) throw new CliError("methodDescriptor decoded to zero bytes");
+  if (buffer.length === 0) throw new PremanError("methodDescriptor decoded to zero bytes");
 
   try {
     return protoLoader.loadFileDescriptorSetFromBuffer(buffer, LOAD_OPTIONS);
   } catch (cause) {
-    throw new CliError(`failed to load embedded methodDescriptor: ${(cause as Error).message}`);
+    throw new PremanError(`failed to load embedded methodDescriptor: ${(cause as Error).message}`);
   }
 }
 
@@ -149,7 +149,7 @@ export function resolveMethod(options: ResolveMethodOptions): ResolvedMethod {
 
   if (!pkg) {
     if (!options.methodDescriptor) {
-      throw new CliError(`no usable schema for ${options.methodPath}`, {
+      throw new PremanError(`no usable schema for ${options.methodPath}`, {
         details: [
           protoPath ? `schema.location resolved to ${protoPath}` : "request has no schema.location",
           "and the request has no methodDescriptor to fall back to",
@@ -163,20 +163,20 @@ export function resolveMethod(options: ResolveMethodOptions): ResolvedMethod {
 
   const service = pkg[serviceName];
   if (!isServiceDefinition(service)) {
-    throw new CliError(`service "${serviceName}" not found in the loaded schema`, {
+    throw new PremanError(`service "${serviceName}" not found in the loaded schema`, {
       details: ["available methods:", ...listMethods(pkg).map((m) => `  ${m}`)],
     });
   }
 
   const definition = service[methodName] as MethodDefinition<unknown, unknown> | undefined;
   if (!definition) {
-    throw new CliError(`method "${methodName}" not found on ${serviceName}`, {
+    throw new PremanError(`method "${methodName}" not found on ${serviceName}`, {
       details: ["available methods:", ...Object.keys(service).map((m) => `  ${serviceName}.${m}`)],
     });
   }
 
   if (definition.requestStream || definition.responseStream) {
-    throw new CliError(`${options.methodPath} is a streaming method, which preman does not support yet`, {
+    throw new PremanError(`${options.methodPath} is a streaming method, which preman does not support yet`, {
       details: [`requestStream=${definition.requestStream} responseStream=${definition.responseStream}`],
     });
   }

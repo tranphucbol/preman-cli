@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import type { Property } from "@preman/core/scripts/property-list.js";
 import type { KeyValueSource } from "@preman/core/workspace/schemas.js";
 
@@ -8,7 +8,7 @@ function scalarToString(value: unknown): string {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  throw new CliError(`unsupported value type ${typeof value}`);
+  throw new PremanError(`unsupported value type ${typeof value}`);
 }
 
 /**
@@ -24,7 +24,7 @@ export function normalizeProperties(source: KeyValueSource | undefined, label: s
     // A scalar here means the YAML said `headers: something`, which cannot be read
     // as either shape. Guessing would silently drop the author's intent.
     if (typeof source !== "object" || source === null)
-      throw new CliError(`expected a map or a list, got ${typeof source}`);
+      throw new PremanError(`expected a map or a list, got ${typeof source}`);
     if (Array.isArray(source)) {
       return source
         .map((entry) => ({
@@ -38,7 +38,7 @@ export function normalizeProperties(source: KeyValueSource | undefined, label: s
       .map(([key, value]) => ({ key: key.trim(), value: scalarToString(value) }))
       .filter((entry) => entry.key.length > 0);
   } catch (cause) {
-    throw new CliError(`could not read ${label}: ${cause instanceof Error ? cause.message : String(cause)}`, {
+    throw new PremanError(`could not read ${label}: ${cause instanceof Error ? cause.message : String(cause)}`, {
       details: ["expected a map of key: value, or a list of {key, value} entries"],
     });
   }

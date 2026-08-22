@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { applyAuth } from "@preman/core/http/auth.js";
 import { readRequestBody, renderBody } from "@preman/core/http/body.js";
 import { CookieJar } from "@preman/core/http/cookies.js";
@@ -48,12 +48,12 @@ describe("normalizeKeyValues", () => {
     expect(normalizeKeyValues({ authorization: null }, "headers")).toEqual([{ key: "authorization", value: "" }]);
   });
 
-  it("givenAnUnreadableSource_whenNormalized_thenCliErrorExplainsBothShapes", () => {
-    expect(() => normalizeKeyValues("nope" as never, "headers")).toThrow(CliError);
+  it("givenAnUnreadableSource_whenNormalized_thenPremanErrorExplainsBothShapes", () => {
+    expect(() => normalizeKeyValues("nope" as never, "headers")).toThrow(PremanError);
     try {
       normalizeKeyValues(7 as never, "headers");
     } catch (cause) {
-      const error = cause as CliError;
+      const error = cause as PremanError;
       expect(error.message).toContain("could not read headers");
       expect(error.details.join(" ")).toContain("list of {key, value}");
     }
@@ -129,9 +129,9 @@ describe("resolveHttpUrl", () => {
   it("givenAnUnresolvedBaseVariable_whenResolved_thenTheErrorNamesTheWayOut", () => {
     try {
       resolveHttpUrl({ rawUrl: "/api/v1/login" });
-      throw new Error("expected a CliError");
+      throw new Error("expected a PremanError");
     } catch (cause) {
-      const error = cause as CliError;
+      const error = cause as PremanError;
       expect(error.message).toContain("could not determine an HTTP origin");
       expect(error.details.join(" ")).toContain("--url <origin>");
     }
@@ -155,7 +155,7 @@ describe("resolveHttpUrl", () => {
   });
 
   it("givenANonHttpScheme_whenResolved_thenItIsRejected", () => {
-    expect(() => resolveHttpUrl({ rawUrl: "ws://host/socket" })).toThrow(CliError);
+    expect(() => resolveHttpUrl({ rawUrl: "ws://host/socket" })).toThrow(PremanError);
   });
 
   it("givenAnyUrl_whenOnlyThePathIsWanted_thenTheOriginIsStripped", () => {
@@ -236,9 +236,9 @@ describe("applyAuth", () => {
   it("givenAnUnknownAuthType_whenApplied_thenTheErrorListsTheSupportedOnes", () => {
     try {
       applyAuth({ auth: { type: "oauth2" }, headers: [], url: new URL("http://host/x"), store: store() });
-      throw new Error("expected a CliError");
+      throw new Error("expected a PremanError");
     } catch (cause) {
-      const error = cause as CliError;
+      const error = cause as PremanError;
       expect(error.message).toContain('auth type "oauth2" is not supported');
       expect(error.details.join(" ")).toContain("noauth, bearer, basic, apikey");
     }
@@ -359,8 +359,8 @@ describe("request bodies", () => {
     expect(renderBody(parsed, store())).toBeUndefined();
   });
 
-  it("givenAStructuredBodyThatIsNotUrlencoded_whenRead_thenCliError", () => {
-    expect(() => readRequestBody(httpRequest({ type: "json", content: { a: "1" } }))).toThrow(CliError);
+  it("givenAStructuredBodyThatIsNotUrlencoded_whenRead_thenPremanError", () => {
+    expect(() => readRequestBody(httpRequest({ type: "json", content: { a: "1" } }))).toThrow(PremanError);
     expect(() => readRequestBody(httpRequest({ type: "json", content: { a: "1" } }))).toThrow(/urlencoded/);
   });
 

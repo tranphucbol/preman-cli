@@ -4,7 +4,7 @@ import { createSecureContext, rootCertificates } from "node:tls";
 import type { SecureContextOptions } from "node:tls";
 import { credentials } from "@grpc/grpc-js";
 import type { ChannelCredentials } from "@grpc/grpc-js";
-import { CliError, EXIT } from "@preman/core/errors.js";
+import { PremanError, EXIT } from "@preman/core/errors.js";
 
 /** Certificate material as the user spelled it: paths, a passphrase, a switch. */
 export interface TlsCertInput {
@@ -121,7 +121,7 @@ export function resolveTlsCerts(layers: readonly TlsCertLayer[]): TlsCertOptions
   if (insecure) sources.insecure = insecure[0].label;
 
   if (clientKey && !clientCert) {
-    throw new CliError(`${FLAG_NAMES.clientKey} needs ${FLAG_NAMES.clientCert}`, {
+    throw new PremanError(`${FLAG_NAMES.clientKey} needs ${FLAG_NAMES.clientCert}`, {
       exitCode: EXIT.CLI,
       details: [
         `a private key on its own cannot identify the client`,
@@ -160,7 +160,7 @@ function assertUsable(certs: TlsCertOptions): void {
   try {
     createSecureContext(secureContextOptions(certs));
   } catch (cause) {
-    throw new CliError("cannot use the supplied certificate material", {
+    throw new PremanError("cannot use the supplied certificate material", {
       exitCode: EXIT.CLI,
       details: [
         `reason: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -180,7 +180,7 @@ function readCertFile(field: keyof TlsCertInput, layer: TlsCertLayer, path: stri
     return readFileSync(path);
   } catch (cause) {
     const code = (cause as NodeJS.ErrnoException).code;
-    throw new CliError(`cannot read ${FLAG_NAMES[field]} file`, {
+    throw new PremanError(`cannot read ${FLAG_NAMES[field]} file`, {
       exitCode: EXIT.CLI,
       details: [
         `set by ${layer.label}`,

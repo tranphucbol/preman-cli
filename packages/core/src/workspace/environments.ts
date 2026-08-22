@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isMap, isSeq, parseDocument } from "yaml";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { environmentSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
 
@@ -39,12 +39,12 @@ export function loadEnvironment(filePath: string): EnvironmentEntry {
   try {
     raw = parseDocument(readFileSync(filePath, "utf8")).toJS() ?? {};
   } catch (cause) {
-    throw new CliError(`failed to parse ${filePath}: ${(cause as Error).message}`);
+    throw new PremanError(`failed to parse ${filePath}: ${(cause as Error).message}`);
   }
 
   const parsed = environmentSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new CliError(`unexpected shape in ${filePath}`, {
+    throw new PremanError(`unexpected shape in ${filePath}`, {
       details: parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
     });
   }
@@ -84,7 +84,7 @@ export function saveEnvironmentValues(filePath: string, updates: Record<string, 
   let seq = doc.get("values");
   if (!isSeq(seq)) {
     doc.set("values", (seq = doc.createNode([])));
-    if (!isSeq(seq)) throw new CliError(`cannot write values into ${filePath}`);
+    if (!isSeq(seq)) throw new PremanError(`cannot write values into ${filePath}`);
   }
 
   for (const key of keys) {

@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { CliError, EXIT } from "@preman/core/errors.js";
+import { PremanError, EXIT } from "@preman/core/errors.js";
 import { chai } from "./expect.js";
 import { SANDBOX_ALIASES, SANDBOX_PACKAGES } from "./module-names.js";
 
@@ -24,11 +24,11 @@ function loadModule(name: string): unknown {
   return requireFromPreman(SANDBOX_ALIASES[name] ?? name);
 }
 
-/** Lazily loads and memoises a sandbox library. Throws CliError for unknown names. */
+/** Lazily loads and memoises a sandbox library. Throws PremanError for unknown names. */
 export function requireSandboxModule(name: string): unknown {
   if (typeof name !== "string" || !allowedModules.has(name)) {
     const requested = typeof name === "string" ? `"${name}"` : "without a module name";
-    throw new CliError(`sandbox require() cannot load ${requested}`, {
+    throw new PremanError(`sandbox require() cannot load ${requested}`, {
       exitCode: UNKNOWN_MODULE_EXIT,
       details: [AVAILABLE_MODULES_DETAIL],
     });
@@ -42,7 +42,7 @@ export function requireSandboxModule(name: string): unknown {
     return loaded;
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    throw new CliError(`sandbox module "${name}" could not be loaded`, {
+    throw new PremanError(`sandbox module "${name}" could not be loaded`, {
       exitCode: UNKNOWN_MODULE_EXIT,
       details: [message],
     });

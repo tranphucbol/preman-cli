@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import type { GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
 import { cliReporter } from "./cli.js";
 import { jsonReporter } from "./json.js";
@@ -46,7 +46,7 @@ export function resolveReporters(names: string[]): Reporter[] {
   return unique.map((name) => {
     const reporter = REPORTERS[name];
     if (reporter === undefined) {
-      throw new CliError(`unknown reporter "${name}"`, {
+      throw new PremanError(`unknown reporter "${name}"`, {
         details: [`available reporters: ${reporterNames().join(", ")}`],
       });
     }
@@ -63,20 +63,20 @@ export function resolveReporterTargets(
 
   for (const [name, exportPath] of Object.entries(exportPaths)) {
     if (exportPath !== undefined && !enabled.has(name)) {
-      throw new CliError(`--reporter-${name}-export requires reporter "${name}" to be enabled`);
+      throw new PremanError(`--reporter-${name}-export requires reporter "${name}" to be enabled`);
     }
   }
 
   const resolved = reporters.map((reporter) => {
     const exportPath = exportPaths[reporter.name];
     if (exportPath !== undefined && !reporter.exportable) {
-      throw new CliError(`reporter "${reporter.name}" cannot be exported to a file`);
+      throw new PremanError(`reporter "${reporter.name}" cannot be exported to a file`);
     }
     return { reporter, exportPath };
   });
   const stdout = resolved.filter((item) => item.exportPath === undefined);
   if (stdout.length > 1) {
-    throw new CliError(
+    throw new PremanError(
       `reporters ${stdout.map((item) => `"${item.reporter.name}"`).join(", ")} all target ${STDOUT_TARGET}`,
       {
         details: ["give each additional reporter an export path"],

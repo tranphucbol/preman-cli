@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 
 export interface HttpTarget {
   /** `scheme://host[:port]` actually used. */
@@ -45,8 +45,8 @@ export function pathPortion(rawUrl: string): string {
   return withoutScheme.slice(slash);
 }
 
-function missingOrigin(rawUrl: string): CliError {
-  return new CliError(`could not determine an HTTP origin from "${rawUrl}"`, {
+function missingOrigin(rawUrl: string): PremanError {
+  return new PremanError(`could not determine an HTTP origin from "${rawUrl}"`, {
     details: [
       "the url has no scheme or host after interpolation",
       "set the base url variable in the environment (e.g. admin_http_url), or pass --url <origin>",
@@ -61,10 +61,10 @@ function parseAbsolute(raw: string, label: string): URL {
   try {
     url = new URL(text);
   } catch {
-    throw new CliError(`${label} "${raw}" is not a valid url`);
+    throw new PremanError(`${label} "${raw}" is not a valid url`);
   }
   if (!HTTP_SCHEMES.has(url.protocol)) {
-    throw new CliError(`${label} "${raw}" uses an unsupported scheme ${url.protocol}`, {
+    throw new PremanError(`${label} "${raw}" uses an unsupported scheme ${url.protocol}`, {
       details: ["only http and https are supported"],
     });
   }

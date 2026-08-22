@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { requireWorkspace } from "@preman/core/workspace/discover.js";
 import { findEnvironment, listEnvironments, saveEnvironmentValues } from "@preman/core/workspace/environments.js";
 import type { EnvironmentEntry } from "@preman/core/workspace/environments.js";
@@ -18,18 +18,18 @@ export interface EnvArgs {
  */
 export function selectEnvironment(ws: Workspace, name: string | undefined): EnvironmentEntry {
   const all = listEnvironments(ws);
-  if (all.length === 0) throw new CliError("no environments found under postman/environments");
+  if (all.length === 0) throw new PremanError("no environments found under postman/environments");
 
   if (name !== undefined) {
     const found = findEnvironment(ws, name);
     if (found) return found;
-    throw new CliError(`environment "${name}" not found`, {
+    throw new PremanError(`environment "${name}" not found`, {
       details: ["available:", ...all.map((e) => `  ${e.name}`)],
     });
   }
 
   if (all.length === 1) return all[0]!;
-  throw new CliError("multiple environments exist; pass -e <NAME>", {
+  throw new PremanError("multiple environments exist; pass -e <NAME>", {
     details: ["available:", ...all.map((e) => `  ${e.name}`)],
   });
 }

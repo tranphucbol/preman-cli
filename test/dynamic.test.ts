@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import {
   assembleGeneratorTables,
   generateDynamicValue,
@@ -38,23 +38,23 @@ describe("dynamic variables", () => {
     expect(second).toBe(first);
   });
 
-  it("givenUnsupportedName_whenGenerating_thenCliErrorSuggestsNearest", () => {
+  it("givenUnsupportedName_whenGenerating_thenPremanErrorSuggestsNearest", () => {
     try {
       generateDynamicValue("$randomEmial");
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      expect((error as CliError).details.join("\n")).toContain("{{$randomEmail}}");
+      expect(error).toBeInstanceOf(PremanError);
+      expect((error as PremanError).details.join("\n")).toContain("{{$randomEmail}}");
     }
   });
 
-  it("givenUnsupportedNameWithNoNearMatch_whenGenerating_thenCliErrorNamesCount", () => {
+  it("givenUnsupportedNameWithNoNearMatch_whenGenerating_thenPremanErrorNamesCount", () => {
     try {
       generateDynamicValue("$zzzzzzzzzzzzzzzz");
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      expect((error as CliError).details.join("\n")).toContain(
+      expect(error).toBeInstanceOf(PremanError);
+      expect((error as PremanError).details.join("\n")).toContain(
         `${supportedDynamicVariables().length} dynamic variables`,
       );
     }

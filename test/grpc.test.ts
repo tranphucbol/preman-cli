@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { listMethods, resolveMethod, splitMethodPath } from "@preman/core/grpc/schema.js";
 import { parseAuthority, readLocalGrpcPort, resolveTarget, shouldUseTls } from "@preman/core/grpc/target.js";
 import { FIXTURE_INCLUDE_DIR, FIXTURE_WS, FIXTURES_DIR, requestPath } from "./helpers.js";
@@ -27,7 +27,7 @@ describe("splitMethodPath", () => {
   it.each(["", "Exchange", "pe.aev2.ExchangeService.", ".Exchange", "/Exchange", "svc/"])(
     "givenUnparseablePath_whenSplit_thenThrows: %j",
     (path) => {
-      expect(() => splitMethodPath(path)).toThrow(CliError);
+      expect(() => splitMethodPath(path)).toThrow(PremanError);
     },
   );
 });
@@ -103,9 +103,9 @@ describe("resolveMethod", () => {
       });
       expect.unreachable("Query should be absent from the captured descriptor");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      expect((error as CliError).message).toContain('method "Query" not found on pe.aev2.ExchangeService');
-      expect((error as CliError).details.join("\n")).toContain("pe.aev2.ExchangeService.Exchange");
+      expect(error).toBeInstanceOf(PremanError);
+      expect((error as PremanError).message).toContain('method "Query" not found on pe.aev2.ExchangeService');
+      expect((error as PremanError).details.join("\n")).toContain("pe.aev2.ExchangeService.Exchange");
     }
   });
 
@@ -114,7 +114,7 @@ describe("resolveMethod", () => {
       resolveMethod({ ...base, schemaLocation: undefined, methodPath: "test.echo.EchoService.Echo" });
       expect.unreachable("should have thrown");
     } catch (error) {
-      const cliError = error as CliError;
+      const cliError = error as PremanError;
       expect(cliError.message).toContain("no usable schema");
       expect(cliError.details.join("\n")).toContain("no schema.location");
       expect(cliError.details.join("\n")).toContain("no methodDescriptor");
@@ -130,7 +130,7 @@ describe("resolveMethod", () => {
       });
       expect.unreachable("should have thrown");
     } catch (error) {
-      const cliError = error as CliError;
+      const cliError = error as PremanError;
       expect(cliError.message).toContain('service "test.echo.NopeService" not found');
       expect(cliError.details.join("\n")).toContain("test.echo.EchoService.Echo");
       expect(cliError.details.join("\n")).toContain("test.echo.EchoService.Ping");
@@ -151,7 +151,7 @@ describe("resolveMethod", () => {
   it("givenGarbageDescriptor_whenResolved_thenThrows", () => {
     expect(() =>
       resolveMethod({ ...base, schemaLocation: undefined, methodDescriptor: "", methodPath: "a.B.C" }),
-    ).toThrow(CliError);
+    ).toThrow(PremanError);
     expect(() =>
       resolveMethod({
         ...base,
@@ -159,7 +159,7 @@ describe("resolveMethod", () => {
         methodDescriptor: "bm90LWEtZGVzY3JpcHRvcg==",
         methodPath: "a.B.C",
       }),
-    ).toThrow(CliError);
+    ).toThrow(PremanError);
   });
 });
 
@@ -259,7 +259,7 @@ describe("resolveTarget", () => {
       resolveTarget({ url: "localhost", workspaceRoot: FIXTURE_WS });
       expect.unreachable("should have thrown");
     } catch (error) {
-      const cliError = error as CliError;
+      const cliError = error as PremanError;
       expect(cliError.message).toContain("has no port");
       expect(cliError.details.join("\n")).toContain("--url");
     }

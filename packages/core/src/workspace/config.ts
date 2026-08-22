@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import type { TlsCertInput } from "@preman/core/tls/certs.js";
 import { premanConfigSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
@@ -36,12 +36,12 @@ export function loadPremanConfig(ws: Workspace): PremanConfig | undefined {
   try {
     raw = parseYaml(readFileSync(path, "utf8"));
   } catch (cause) {
-    throw new CliError(`failed to parse ${path}: ${(cause as Error).message}`);
+    throw new PremanError(`failed to parse ${path}: ${(cause as Error).message}`);
   }
 
   const parsed = premanConfigSchema.safeParse(raw ?? {});
   if (!parsed.success) {
-    throw new CliError(`unexpected shape in ${path}`, {
+    throw new PremanError(`unexpected shape in ${path}`, {
       details: parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
     });
   }

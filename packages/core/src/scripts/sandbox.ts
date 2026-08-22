@@ -1,5 +1,5 @@
 import { createContext, runInContext } from "node:vm";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { interpolate } from "@preman/core/vars/interpolate.js";
 import type { Scope, VariableStore } from "@preman/core/vars/store.js";
 import { CookieJar } from "@preman/core/http/cookies.js";
@@ -296,7 +296,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
 
   const sideRequests: SideRequestRecord[] = [];
 
-  /** The logs and tests gathered so far, as `CliError` details. */
+  /** The logs and tests gathered so far, as `PremanError` details. */
   const gathered = (): string[] => [
     ...logs.map((l) => `${l.level}: ${l.text}`),
     ...tests.map((t) => `test ${t.status}: ${t.name}${t.error === undefined ? "" : ` — ${t.error}`}`),
@@ -308,12 +308,13 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
    * existing wording and its per-request `status: "error"`.
    */
   const inherited = origin.level !== "request";
-  const scriptError = (message: string, details: string[] = gathered()): CliError =>
-    new CliError(inherited ? `${origin.label} ${message}` : message, {
+  const scriptError = (message: string, details: string[] = gathered()): PremanError =>
+    new PremanError(inherited ? `${origin.label} ${message}` : message, {
       details,
       abortsGroup: inherited,
     });
-  const failure = (cause: unknown): CliError => scriptError(`script "${info.eventName}" failed: ${messageOf(cause)}`);
+  const failure = (cause: unknown): PremanError =>
+    scriptError(`script "${info.eventName}" failed: ${messageOf(cause)}`);
 
   /**
    * Postman's `pm.sendRequest`, in both the callback and the awaited form. It
@@ -605,7 +606,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
     // not be. Still raced against the deadline so a hung call cannot hang the run.
     await Promise.race([drainSideRequests(), deadline]);
   } catch (cause) {
-    throw cause instanceof CliError ? cause : failure(cause);
+    throw cause instanceof PremanError ? cause : failure(cause);
   } finally {
     if (deadlineHandle !== undefined) clearTimeout(deadlineHandle);
     cancelPending();

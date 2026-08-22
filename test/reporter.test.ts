@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { reporterNames, resolveReporters, resolveReporterTargets } from "@preman/cli/reporters/index.js";
 
 describe("reporter resolution", () => {
@@ -19,25 +19,25 @@ describe("reporter resolution", () => {
     expect(resolveReporters(["json", "json"]).map((reporter) => reporter.name)).toEqual(["json"]);
   });
 
-  it("givenUnknownName_whenResolve_thenThrowsCliErrorListingNames", () => {
+  it("givenUnknownName_whenResolve_thenThrowsPremanErrorListingNames", () => {
     try {
       resolveReporters(["nope"]);
       throw new Error("expected reporter resolution to fail");
     } catch (cause) {
-      expect(cause).toBeInstanceOf(CliError);
-      expect((cause as CliError).details.join(" ")).toContain(reporterNames().join(", "));
+      expect(cause).toBeInstanceOf(PremanError);
+      expect((cause as PremanError).details.join(" ")).toContain(reporterNames().join(", "));
     }
   });
 
-  it("givenTwoStdoutReporters_whenResolve_thenThrowsCliErrorNamingBoth", () => {
+  it("givenTwoStdoutReporters_whenResolve_thenThrowsPremanErrorNamingBoth", () => {
     expect(() => resolveReporterTargets(["cli", "json"], {})).toThrow(/"cli", "json".*stdout/);
   });
 
-  it("givenExportPathForDisabledReporter_whenResolve_thenThrowsCliError", () => {
+  it("givenExportPathForDisabledReporter_whenResolve_thenThrowsPremanError", () => {
     expect(() => resolveReporterTargets(["cli"], { junit: "junit.xml" })).toThrow(/requires reporter "junit"/);
   });
 
-  it("givenExportPathForCliReporter_whenResolve_thenThrowsCliError", () => {
+  it("givenExportPathForCliReporter_whenResolve_thenThrowsPremanError", () => {
     expect(() => resolveReporterTargets(["cli"], { cli: "output.txt" })).toThrow(/cannot be exported/);
   });
 

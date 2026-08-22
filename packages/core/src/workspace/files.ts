@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 
 export interface FileReaderOptions {
   /** Root that relative paths resolve against and, by default, may not escape. */
@@ -26,7 +26,7 @@ export function fileReader(options: FileReaderOptions): FileReader {
   try {
     workingDir = realpathSync(resolve(options.workingDir));
   } catch (cause) {
-    throw new CliError(`working directory "${options.workingDir}" could not be resolved`, {
+    throw new PremanError(`working directory "${options.workingDir}" could not be resolved`, {
       details: [errorMessage(cause)],
     });
   }
@@ -37,7 +37,7 @@ export function fileReader(options: FileReaderOptions): FileReader {
     try {
       real = realpathSync(candidate);
     } catch (cause) {
-      throw new CliError(`${label} file "${src}" could not be resolved`, {
+      throw new PremanError(`${label} file "${src}" could not be resolved`, {
         details: [errorMessage(cause)],
       });
     }
@@ -45,7 +45,7 @@ export function fileReader(options: FileReaderOptions): FileReader {
     const fromRoot = relative(workingDir, real);
     const outside = fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot);
     if (outside && !options.allowOutside) {
-      throw new CliError(`${label} file "${src}" is outside the working directory`, {
+      throw new PremanError(`${label} file "${src}" is outside the working directory`, {
         details: [`working directory: ${workingDir}`, ESCAPE_HINT],
       });
     }
@@ -60,17 +60,17 @@ export function fileReader(options: FileReaderOptions): FileReader {
       try {
         stats = statSync(path);
       } catch (cause) {
-        throw new CliError(`${label} file "${src}" could not be inspected`, {
+        throw new PremanError(`${label} file "${src}" could not be inspected`, {
           details: [errorMessage(cause)],
         });
       }
       if (!stats.isFile()) {
-        throw new CliError(`${label} file "${src}" is not a regular file`);
+        throw new PremanError(`${label} file "${src}" is not a regular file`);
       }
       try {
         return readFileSync(path);
       } catch (cause) {
-        throw new CliError(`${label} file "${src}" could not be read`, {
+        throw new PremanError(`${label} file "${src}" could not be read`, {
           details: [errorMessage(cause)],
         });
       }

@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { applyAuth } from "@preman/core/http/auth.js";
 import type { CookieJar } from "@preman/core/http/cookies.js";
 import { normalizeKeyValues, setHeaderIfAbsent, type KeyValue } from "@preman/core/http/headers.js";
@@ -42,8 +42,8 @@ interface RequestShape {
   auth?: unknown;
 }
 
-function badInput(detail: string): CliError {
-  return new CliError("pm.sendRequest could not read the request", {
+function badInput(detail: string): PremanError {
+  return new PremanError("pm.sendRequest could not read the request", {
     details: [detail, "pass a url string, or { url, method, header, body: { mode, raw } }"],
   });
 }

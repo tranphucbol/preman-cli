@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { REQUEST_ORIGIN } from "@preman/core/scripts/chain.js";
 import {
   freezeRequest,
@@ -189,13 +189,13 @@ describe("runScript", () => {
     expect(JSON.parse(logs[0]!.text)).toEqual({ shared: "e", g: "1" });
   });
 
-  it("givenThrowingScript_whenRun_thenThrowsCliErrorCarryingLogs", async () => {
+  it("givenThrowingScript_whenRun_thenThrowsPremanErrorCarryingLogs", async () => {
     try {
       await run(`console.log("before the boom"); throw new Error("nope");`);
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      const cliError = error as CliError;
+      expect(error).toBeInstanceOf(PremanError);
+      const cliError = error as PremanError;
       expect(cliError.message).toContain('script "beforeInvoke" failed');
       expect(cliError.message).toContain("nope");
       expect(cliError.details).toEqual(["log: before the boom"]);
@@ -212,7 +212,7 @@ describe("runScript", () => {
         request: liveRequest({ url: "localhost:9090", methodPath: "", body: "" }),
         timeoutMs: 50,
       }),
-    ).rejects.toThrow(CliError);
+    ).rejects.toThrow(PremanError);
   });
 
   it("givenScriptAwaitingForever_whenRun_thenHitsTheOuterDeadline", async () => {
@@ -314,9 +314,9 @@ describe("runScript", () => {
       await run(`require("fs");`);
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      expect((error as CliError).message).toContain("fs");
-      expect((error as CliError).details.join("\n")).toContain("crypto-js");
+      expect(error).toBeInstanceOf(PremanError);
+      expect((error as PremanError).message).toContain("fs");
+      expect((error as PremanError).details.join("\n")).toContain("crypto-js");
     }
   });
 
@@ -596,8 +596,8 @@ describe("runScript (post-response scripts)", () => {
       );
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      const cliError = error as CliError;
+      expect(error).toBeInstanceOf(PremanError);
+      const cliError = error as PremanError;
       expect(cliError.message).toContain('script "afterResponse" failed');
       expect(cliError.details.join("\n")).toContain("test passed: ran first");
     }

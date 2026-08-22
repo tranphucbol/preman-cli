@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { interpolate, interpolateStrict } from "@preman/core/vars/interpolate.js";
 import { VariableStore } from "@preman/core/vars/store.js";
 
@@ -119,8 +119,8 @@ describe("interpolate", () => {
       interpolateStrict("{{nope}} {{$randomEmial}}", store(), "message body");
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      const cliError = error as CliError;
+      expect(error).toBeInstanceOf(PremanError);
+      const cliError = error as PremanError;
       expect(cliError.message).toContain("message body");
       expect(cliError.details.join("\n")).toContain("{{nope}}");
       expect(cliError.details.join("\n")).toContain("$randomEmail");

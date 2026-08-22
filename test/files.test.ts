@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { fileReader } from "@preman/core/workspace/files.js";
 
 const roots: string[] = [];
@@ -34,18 +34,18 @@ describe("fileReader", () => {
     expect(fileReader({ workingDir: root, allowOutside: false }).resolve(path, "upload")).toBe(realpathSync(path));
   });
 
-  it("givenPathEscapingWorkingDir_whenResolve_thenThrowsCliErrorNamingFlag", () => {
+  it("givenPathEscapingWorkingDir_whenResolve_thenThrowsPremanErrorNamingFlag", () => {
     const parent = tempRoot();
     const root = join(parent, "workspace");
     mkdirSync(root);
     writeFileSync(join(parent, "outside.txt"), "outside");
     try {
       fileReader({ workingDir: root, allowOutside: false }).resolve("../outside.txt", "formdata field receipt");
-      throw new Error("expected a CliError");
+      throw new Error("expected a PremanError");
     } catch (cause) {
-      expect(cause).toBeInstanceOf(CliError);
-      expect((cause as CliError).message).toContain("outside the working directory");
-      expect((cause as CliError).details.join(" ")).toContain("--insecure-file-read");
+      expect(cause).toBeInstanceOf(PremanError);
+      expect((cause as PremanError).message).toContain("outside the working directory");
+      expect((cause as PremanError).details.join(" ")).toContain("--insecure-file-read");
     }
   });
 
@@ -72,14 +72,14 @@ describe("fileReader", () => {
     );
   });
 
-  it("givenMissingFile_whenRead_thenThrowsCliErrorNamingField", () => {
+  it("givenMissingFile_whenRead_thenThrowsPremanErrorNamingField", () => {
     const root = tempRoot();
     expect(() =>
       fileReader({ workingDir: root, allowOutside: false }).read("missing.txt", 'formdata field "receipt"'),
     ).toThrow(/formdata field "receipt"/);
   });
 
-  it("givenDirectory_whenRead_thenThrowsCliError", () => {
+  it("givenDirectory_whenRead_thenThrowsPremanError", () => {
     const root = tempRoot();
     mkdirSync(join(root, "directory"));
     expect(() => fileReader({ workingDir: root, allowOutside: false }).read("directory", "file body")).toThrow(

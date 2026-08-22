@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { readGroupDefinition } from "./definitions.js";
 import type { GroupDefinition } from "./definitions.js";
 import type { Workspace } from "./discover.js";
@@ -35,7 +35,7 @@ function readRequestHeader(filePath: string): { name: string; kind: string; orde
   try {
     raw = (parseYaml(readFileSync(filePath, "utf8")) ?? {}) as Record<string, unknown>;
   } catch (cause) {
-    throw new CliError(`failed to parse ${filePath}: ${(cause as Error).message}`);
+    throw new PremanError(`failed to parse ${filePath}: ${(cause as Error).message}`);
   }
   return {
     name: typeof raw.name === "string" && raw.name.length > 0 ? raw.name : fallbackName,

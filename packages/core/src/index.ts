@@ -2,7 +2,7 @@
  * The declared public surface of the engine. Anything not re-exported here is an
  * implementation detail, even though deep subpath imports resolve.
  */
-export { CliError, EXIT, type ExitCode } from "@preman/core/errors.js";
+export { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 export { findWorkspace, requireWorkspace, type Workspace } from "@preman/core/workspace/discover.js";
 export {
   listGroups,

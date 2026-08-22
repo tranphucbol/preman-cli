@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import {
   generateDynamicValue,
   isDynamicVariable,
@@ -34,7 +34,7 @@ export function interpolate(text: string, store: VariableStore): InterpolateResu
 
   const expand = (input: string, depth: number, chain: readonly string[]): string => {
     if (depth > MAX_DEPTH) {
-      throw new CliError(`variable expansion exceeded ${MAX_DEPTH} levels`, {
+      throw new PremanError(`variable expansion exceeded ${MAX_DEPTH} levels`, {
         details: chain.length > 0 ? [`chain: ${chain.join(" -> ")}`] : [],
       });
     }
@@ -52,7 +52,7 @@ export function interpolate(text: string, store: VariableStore): InterpolateResu
       }
 
       if (chain.includes(name)) {
-        throw new CliError(`variable cycle detected: ${[...chain, name].join(" -> ")}`);
+        throw new PremanError(`variable cycle detected: ${[...chain, name].join(" -> ")}`);
       }
 
       const value = store.get(name);
@@ -81,5 +81,5 @@ export function interpolateStrict(text: string, store: VariableStore, label: str
     details.push(`unsupported dynamic variables: ${result.unsupported.map((n) => `{{${n}}}`).join(", ")}`);
     for (const name of result.unsupported) details.push(...unsupportedDynamicVariableDetails(name));
   }
-  throw new CliError(`could not resolve all variables in ${label}`, { details });
+  throw new PremanError(`could not resolve all variables in ${label}`, { details });
 }

@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import viteConfig from "../packages/cli/vite.config.js";
-import { CliError, EXIT } from "@preman/core/errors.js";
+import { PremanError, EXIT } from "@preman/core/errors.js";
 import { chai } from "@preman/core/scripts/expect.js";
 import { requireSandboxModule, SANDBOX_ALIASES, SANDBOX_PACKAGES } from "@preman/core/scripts/modules.js";
 
@@ -28,23 +28,23 @@ describe("sandbox module registry", () => {
     expect(requireSandboxModule("csv-parse/lib/sync")).toBe(requireFromCore("csv-parse/sync"));
   });
 
-  it.each(["fs", "node:fs"])("givenNodeBuiltin_whenRequire_thenThrowsCliErrorListingAllowList: %s", (name) => {
+  it.each(["fs", "node:fs"])("givenNodeBuiltin_whenRequire_thenThrowsPremanErrorListingAllowList: %s", (name) => {
     try {
       requireSandboxModule(name);
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
+      expect(error).toBeInstanceOf(PremanError);
       expect(error).toMatchObject({ exitCode: EXIT.CLI });
-      expect((error as CliError).message).toContain(name);
-      expect((error as CliError).details.join("\n")).toContain("lodash");
+      expect((error as PremanError).message).toContain(name);
+      expect((error as PremanError).details.join("\n")).toContain("lodash");
     }
   });
 
-  it("givenRelativeSpecifier_whenRequire_thenThrowsCliError", () => {
+  it("givenRelativeSpecifier_whenRequire_thenThrowsPremanError", () => {
     expect(() => requireSandboxModule("./helper.js")).toThrow("./helper.js");
   });
 
-  it("givenNoArgument_whenRequire_thenThrowsCliError", () => {
+  it("givenNoArgument_whenRequire_thenThrowsPremanError", () => {
     expect(() => requireSandboxModule(undefined as unknown as string)).toThrow("without a module name");
   });
 

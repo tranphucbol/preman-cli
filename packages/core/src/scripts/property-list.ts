@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 
 export const FROZEN_REQUEST_MESSAGE = "pm.request is read-only after the request has been sent";
 const MISSING_KEY_MESSAGE = "add() needs a key";
@@ -115,13 +115,13 @@ export class PropertyList {
   }
 
   #assertMutable(): void {
-    if (this.#frozen) throw new CliError(FROZEN_REQUEST_MESSAGE);
+    if (this.#frozen) throw new PremanError(FROZEN_REQUEST_MESSAGE);
   }
 
   #normalizeEntry(entry: Property | string, value?: string): Property {
     const normalized = typeof entry === "string" ? { key: entry, value: value ?? "" } : { ...entry };
     if (typeof normalized.key !== "string" || normalized.key.length === 0) {
-      throw new CliError(MISSING_KEY_MESSAGE, { details: [`Could not add to ${this.#options.label}.`] });
+      throw new PremanError(MISSING_KEY_MESSAGE, { details: [`Could not add to ${this.#options.label}.`] });
     }
     normalized.value ??= "";
     return normalized;

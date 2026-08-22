@@ -4,7 +4,7 @@ import pc from "picocolors";
 import { commandEnvSet, commandEnvShow } from "@preman/cli/commands/env.js";
 import { commandList } from "@preman/cli/commands/list.js";
 import { commandRun } from "@preman/cli/commands/run.js";
-import { CliError, EXIT, type ExitCode } from "@preman/core/errors.js";
+import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 import { reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
 
 declare const __PREMAN_VERSION__: string;
@@ -99,7 +99,7 @@ function parseVars(entries: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const entry of entries) {
     const eq = entry.indexOf("=");
-    if (eq <= 0) throw new CliError(`invalid --var "${entry}"; expected key=value`);
+    if (eq <= 0) throw new PremanError(`invalid --var "${entry}"; expected key=value`);
     out[entry.slice(0, eq)] = entry.slice(eq + 1);
   }
   return out;
@@ -108,7 +108,7 @@ function parseVars(entries: string[]): Record<string, string> {
 function parsePositiveInteger(raw: string, flag: string): number {
   const ms = Number.parseInt(raw, 10);
   if (!Number.isInteger(ms) || String(ms) !== raw.trim() || ms <= 0) {
-    throw new CliError(`invalid ${flag} "${raw}"; expected a positive integer`);
+    throw new PremanError(`invalid ${flag} "${raw}"; expected a positive integer`);
   }
   return ms;
 }
@@ -121,7 +121,7 @@ function parseBudget(raw: string | undefined, flag: string, fallback = DEFAULT_R
   if (raw === undefined) return fallback;
   const ms = Number.parseInt(raw, 10);
   if (!Number.isInteger(ms) || String(ms) !== raw.trim() || ms < 0) {
-    throw new CliError(`invalid ${flag} "${raw}"; expected a non-negative integer`);
+    throw new PremanError(`invalid ${flag} "${raw}"; expected a non-negative integer`);
   }
   return ms;
 }
@@ -198,7 +198,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
   try {
     ({ values, positionals } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true }));
   } catch (cause) {
-    throw new CliError((cause as Error).message, { details: ["run `preman --help` for usage"] });
+    throw new PremanError((cause as Error).message, { details: ["run `preman --help` for usage"] });
   }
 
   if (values.version) {
@@ -210,7 +210,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
     return positionals.length === 0 && !values.help ? EXIT.CLI : EXIT.OK;
   }
 
-  if (values.tls && values.plaintext) throw new CliError("--tls and --plaintext are mutually exclusive");
+  if (values.tls && values.plaintext) throw new PremanError("--tls and --plaintext are mutually exclusive");
 
   const dir = values.dir ?? process.cwd();
   const json = values.json === true;
@@ -232,12 +232,12 @@ export async function main(argv: string[]): Promise<ExitCode> {
       if (sub === "set") {
         const [key, ...valueParts] = rest.slice(1);
         if (key === undefined || valueParts.length === 0) {
-          throw new CliError("usage: preman env set <key> <value>");
+          throw new PremanError("usage: preman env set <key> <value>");
         }
         process.stdout.write(`${commandEnvSet({ dir, env: values.env, json, key, value: valueParts.join(" ") })}\n`);
         return EXIT.OK;
       }
-      throw new CliError(`unknown env subcommand "${sub}"`, { details: ["expected `show` or `set`"] });
+      throw new PremanError(`unknown env subcommand "${sub}"`, { details: ["expected `show` or `set`"] });
     }
 
     case "run": {
@@ -284,7 +284,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
         try {
           writeFileSync(file.path, file.content);
         } catch (cause) {
-          throw new CliError(`could not write reporter output to "${file.path}"`, {
+          throw new PremanError(`could not write reporter output to "${file.path}"`, {
             details: [(cause as Error).message],
           });
         }
@@ -293,6 +293,6 @@ export async function main(argv: string[]): Promise<ExitCode> {
     }
 
     default:
-      throw new CliError(`unknown command "${command}"`, { details: ["run `preman --help` for usage"] });
+      throw new PremanError(`unknown command "${command}"`, { details: ["run `preman --help` for usage"] });
   }
 }

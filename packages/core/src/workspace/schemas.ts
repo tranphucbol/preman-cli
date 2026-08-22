@@ -110,7 +110,7 @@ const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 /**
  * Headers and query params appear in two shapes in real exports: a plain YAML map
  * (`{X-CSRF-Token: abc}`) and a Postman-style array of entries. Both are accepted
- * here; `src/http/headers.ts` normalises them so a bad shape reads as a `CliError`
+ * here; `src/http/headers.ts` normalises them so a bad shape reads as a `PremanError`
  * with details rather than a zod dump.
  */
 const keyValueSourceSchema = z.union([

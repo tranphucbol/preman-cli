@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { addressGenerators } from "./addresses.js";
 import { assembleGeneratorTables } from "./assemble.js";
 import { colorGenerators } from "./colors.js";
@@ -52,7 +52,7 @@ export function unsupportedDynamicVariableDetails(name: string): string[] {
 export function generateDynamicValue(name: string): string {
   const generator = generators[name];
   if (!generator) {
-    throw new CliError(`unsupported dynamic variable {{${name}}}`, {
+    throw new PremanError(`unsupported dynamic variable {{${name}}}`, {
       details: unsupportedDynamicVariableDetails(name),
     });
   }

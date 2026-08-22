@@ -1,4 +1,4 @@
-import { CliError } from "@preman/core/errors.js";
+import { PremanError } from "@preman/core/errors.js";
 import { BODY_CONTENT_TYPES } from "@preman/core/http/body.js";
 import { FROZEN_REQUEST_MESSAGE, PropertyList, type Property } from "./property-list.js";
 
@@ -83,7 +83,7 @@ export class Url {
     const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `${DEFAULT_PROTOCOL}://${text}`;
     const match = URL_PATTERN.exec(absolute);
     if (match === null || match[1] === undefined || match[2] === undefined) {
-      throw new CliError(`request url "${raw}" is not a valid url`);
+      throw new PremanError(`request url "${raw}" is not a valid url`);
     }
 
     const authority = match[2];
@@ -91,7 +91,7 @@ export class Url {
     let port: string | undefined;
     if (authority.startsWith("[")) {
       const close = authority.indexOf("]");
-      if (close === -1) throw new CliError(`request url "${raw}" is not a valid url`);
+      if (close === -1) throw new PremanError(`request url "${raw}" is not a valid url`);
       hostname = authority.slice(1, close);
       const tail = authority.slice(close + 1);
       if (tail.startsWith(":")) port = tail.slice(1) || undefined;
@@ -103,7 +103,7 @@ export class Url {
       }
     }
 
-    if (hostname.length === 0) throw new CliError(`request url "${raw}" has no host`);
+    if (hostname.length === 0) throw new PremanError(`request url "${raw}" has no host`);
     const rawPath = match[3] ?? "";
     return new Url({
       protocol: match[1].toLowerCase(),
@@ -168,7 +168,7 @@ export class Url {
 
   set query(_value: PropertyList) {
     this.#assertMutable();
-    throw new CliError("pm.request.url.query must be edited through its PropertyList methods");
+    throw new PremanError("pm.request.url.query must be edited through its PropertyList methods");
   }
 
   toString(): string {
@@ -230,7 +230,7 @@ export class Url {
   }
 
   #assertMutable(): void {
-    if (this.#frozen) throw new CliError(FROZEN_REQUEST_MESSAGE);
+    if (this.#frozen) throw new PremanError(FROZEN_REQUEST_MESSAGE);
   }
 }
 
@@ -278,7 +278,7 @@ export class LiveBody {
 
   set urlencoded(_value: PropertyList) {
     this.#assertMutable();
-    throw new CliError("pm.request.body.urlencoded must be edited through its PropertyList methods");
+    throw new PremanError("pm.request.body.urlencoded must be edited through its PropertyList methods");
   }
 
   /** Whether a pre-request script changed this body after construction. */
@@ -310,7 +310,7 @@ export class LiveBody {
   }
 
   #assertMutable(): void {
-    if (this.#frozen) throw new CliError(FROZEN_REQUEST_MESSAGE);
+    if (this.#frozen) throw new PremanError(FROZEN_REQUEST_MESSAGE);
   }
 }
 
@@ -340,7 +340,7 @@ abstract class MutableRequest {
 
   set body(value: LiveBody) {
     this.assertMutable();
-    if (!(value instanceof LiveBody)) throw new CliError("pm.request.body must be a LiveBody");
+    if (!(value instanceof LiveBody)) throw new PremanError("pm.request.body must be a LiveBody");
     this.#body = value;
   }
 
@@ -351,7 +351,7 @@ abstract class MutableRequest {
   }
 
   protected assertMutable(): void {
-    if (this.#frozen) throw new CliError(FROZEN_REQUEST_MESSAGE);
+    if (this.#frozen) throw new PremanError(FROZEN_REQUEST_MESSAGE);
   }
 }
 
@@ -371,7 +371,7 @@ export class LiveHttpRequest extends MutableRequest {
 
   set protocol(_value: "http") {
     this.assertMutable();
-    throw new CliError("pm.request.protocol is read-only");
+    throw new PremanError("pm.request.protocol is read-only");
   }
 
   get headers(): PropertyList {
@@ -380,7 +380,7 @@ export class LiveHttpRequest extends MutableRequest {
 
   set headers(_value: PropertyList) {
     this.assertMutable();
-    throw new CliError("pm.request.headers must be edited through its PropertyList methods");
+    throw new PremanError("pm.request.headers must be edited through its PropertyList methods");
   }
 
   get method(): string {
@@ -415,7 +415,7 @@ export class LiveGrpcRequest extends MutableRequest {
 
   set protocol(_value: "grpc") {
     this.assertMutable();
-    throw new CliError("pm.request.protocol is read-only");
+    throw new PremanError("pm.request.protocol is read-only");
   }
 
   get metadata(): PropertyList {
@@ -424,7 +424,7 @@ export class LiveGrpcRequest extends MutableRequest {
 
   set metadata(_value: PropertyList) {
     this.assertMutable();
-    throw new CliError("pm.request.metadata must be edited through its PropertyList methods");
+    throw new PremanError("pm.request.metadata must be edited through its PropertyList methods");
   }
 
   get methodPath(): string {

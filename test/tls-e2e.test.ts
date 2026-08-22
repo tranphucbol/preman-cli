@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { rootCertificates, type TLSSocket } from "node:tls";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "@preman/cli/main.js";
-import { CliError, EXIT } from "@preman/core/errors.js";
+import { PremanError, EXIT } from "@preman/core/errors.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
 import { httpsRequestOptions, resolveTlsCerts } from "@preman/core/tls/certs.js";
 import {
@@ -281,7 +281,7 @@ describe("mutual TLS", () => {
     expect(rpc.code).toBe(EXIT.OK);
   });
 
-  it("givenEncryptedClientKey_whenRunWithoutPassphrase_thenCliError", async () => {
+  it("givenEncryptedClientKey_whenRunWithoutPassphrase_thenPremanError", async () => {
     try {
       await runCli(
         httpArgs(
@@ -296,8 +296,8 @@ describe("mutual TLS", () => {
       );
       expect.unreachable("expected encrypted key without passphrase to fail");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      const cliError = error as CliError;
+      expect(error).toBeInstanceOf(PremanError);
+      const cliError = error as PremanError;
       expect(cliError.exitCode).toBe(EXIT.CLI);
       expect(cliError.details.some((detail) => detail.includes("--ssl-client-passphrase"))).toBe(true);
     }

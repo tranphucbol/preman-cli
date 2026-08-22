@@ -3,7 +3,7 @@ import * as protoLoader from "@grpc/proto-loader";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "@preman/cli/main.js";
-import { CliError, EXIT } from "@preman/core/errors.js";
+import { PremanError, EXIT } from "@preman/core/errors.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
 import { extractReturnCode, isBusinessSuccess } from "@preman/core/runner.js";
 import { loadEnvironment } from "@preman/core/workspace/environments.js";
@@ -629,8 +629,8 @@ describe("preman run (error paths)", () => {
       await runCli(["run", "does-not-exist", "-d", FIXTURE_WS, "-e", "LOCAL"]);
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      expect((error as CliError).details.join("\n")).toContain("payment/Echo");
+      expect(error).toBeInstanceOf(PremanError);
+      expect((error as PremanError).details.join("\n")).toContain("payment/Echo");
     }
   });
 
@@ -646,8 +646,8 @@ describe("preman run (error paths)", () => {
       await runCli(["run", "Ech", "-d", FIXTURE_WS, "-e", "LOCAL", "--url", target()]);
       expect.unreachable("should have thrown instead of picking one");
     } catch (error) {
-      expect(error).toBeInstanceOf(CliError);
-      const details = (error as CliError).details.join("\n");
+      expect(error).toBeInstanceOf(PremanError);
+      const details = (error as PremanError).details.join("\n");
       expect(details).toContain("payment/Echo");
       expect(details).toContain("payment/nested/Deep Echo");
     }
@@ -775,7 +775,7 @@ describe("preman list / env", () => {
   });
 
   it("givenUnknownFlag_whenRun_thenRejectedWithUsageHint", async () => {
-    await expect(runCli(["list", "--bogus"])).rejects.toThrow(CliError);
+    await expect(runCli(["list", "--bogus"])).rejects.toThrow(PremanError);
   });
 });
 
@@ -986,7 +986,7 @@ describe("preman run <collection> (whole-collection runs)", () => {
     expect(received).toHaveLength(1);
   });
 
-  it("givenIterationCount_whenSingleRequestSelected_thenCliError", async () => {
+  it("givenIterationCount_whenSingleRequestSelected_thenPremanError", async () => {
     await expect(runCli(["run", "Echo", "-d", FIXTURE_WS, "-n", "2"])).rejects.toThrow(
       /iterations require a collection or folder/,
     );
@@ -1880,7 +1880,7 @@ describe("group-level auth (gRPC)", () => {
     }
   });
 
-  it("givenUnsupportedAuthType_whenInherited_thenCliErrorListsTheSupportedSet", async () => {
+  it("givenUnsupportedAuthType_whenInherited_thenPremanErrorListsTheSupportedSet", async () => {
     const clone = cloneFixtureWorkspace();
     try {
       writeDefinition(clone.root, "payment/nested", definitionWithAuth("nested", "  type: oauth2\n"));
