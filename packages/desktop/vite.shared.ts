@@ -11,6 +11,8 @@ export const BUILD_TARGET = "node20";
 export const PACKAGE_ROOT = import.meta.dirname;
 export const SOURCE_ROOT = resolve(PACKAGE_ROOT, "src");
 export const CORE_SOURCE_ROOT = resolve(PACKAGE_ROOT, "../core/src");
+/** Static files the shell needs at runtime; copied verbatim next to the built main process. */
+export const RESOURCE_ROOT = resolve(PACKAGE_ROOT, "resources");
 export const DIST_ROOT = resolve(PACKAGE_ROOT, "dist");
 export const NODE_MAIN_FIELDS = ["module", "jsnext:main", "jsnext", "main"];
 export const NODE_CONDITIONS = ["node"];

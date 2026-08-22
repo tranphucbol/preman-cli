@@ -9,9 +9,11 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import {
   CHANNELS,
   ENGINE_PORT_WINDOW_MESSAGE,
+  TITLE_BAR_GUTTER_PX,
   type EnginePortDelivery,
   type HostFailure,
   type PremanBridge,
+  type SessionSnapshot,
   type WindowControl,
   type WorkspaceHandle,
 } from "@preman/desktop/preload/bridge.js";
@@ -19,6 +21,8 @@ import {
 const BRIDGE_KEY = "preman";
 const ANY_ORIGIN = "*";
 const FIRST_PORT = 0;
+const FRAMELESS_PLATFORM = "darwin";
+const NO_GUTTER = 0;
 
 /**
  * The one DOM capability a preload needs. Declared rather than pulling `lib.dom` into
@@ -37,6 +41,9 @@ interface PortCarryingEvent {
 }
 
 const bridge: PremanBridge = {
+  // Read here rather than over a channel: it cannot change while the window is open, and a
+  // title bar that lays itself out one paint late would shift under the pointer.
+  titleBarGutter: process.platform === FRAMELESS_PLATFORM ? TITLE_BAR_GUTTER_PX : NO_GUTTER,
   onHostFailure(listener) {
     const handler = (_event: IpcRendererEvent, failure: HostFailure): void => {
       listener(failure);
@@ -51,9 +58,15 @@ const bridge: PremanBridge = {
   openWorkspace: (root: string) => ipcRenderer.invoke(CHANNELS.openWorkspace, root) as Promise<void>,
   forgetWorkspace: (root: string) => ipcRenderer.invoke(CHANNELS.forgetWorkspace, root) as Promise<void>,
   revealInFileManager: (target: string) => ipcRenderer.invoke(CHANNELS.revealInFileManager, target) as Promise<void>,
+  pickDataFile: () => ipcRenderer.invoke(CHANNELS.pickDataFile) as Promise<string | null>,
+  saveReport: (suggestedName: string, text: string) =>
+    ipcRenderer.invoke(CHANNELS.saveReport, suggestedName, text) as Promise<string | null>,
   controlWindow: (action: WindowControl) => {
     ipcRenderer.send(CHANNELS.windowControl, action);
   },
+  readSession: (root: string) => ipcRenderer.invoke(CHANNELS.readSession, root) as Promise<SessionSnapshot>,
+  saveSession: (root: string, snapshot: SessionSnapshot) =>
+    ipcRenderer.invoke(CHANNELS.saveSession, root, snapshot) as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

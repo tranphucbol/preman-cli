@@ -10,9 +10,9 @@
  * editable, and the engine validates it against the same schemas before it lands.
  */
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import type { FieldEdit } from "@preman/desktop/engine/protocol.js";
+import type { FieldEdit, MethodChoice } from "@preman/desktop/engine/protocol.js";
 import {
   BODY_TYPES,
   type BodyType,
@@ -41,12 +41,23 @@ import {
   readSettings,
   readText,
 } from "@preman/desktop/renderer/model/request.js";
+import { listMethods, messageSkeleton, type Failure } from "@preman/desktop/renderer/actions.js";
+import type { PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import { type SubTab, type Tab, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
+import type { Ask } from "@preman/desktop/renderer/ui/Dialog.js";
 import { CodeEditor, type CodeLanguage } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import { Button, CellField, Field, IconButton, Labelled, Select } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
-import { CancelIcon, SaveIcon, SendIcon, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
+import {
+  CancelIcon,
+  GenerateIcon,
+  PickerIcon,
+  SaveIcon,
+  SendIcon,
+  WarningIcon,
+} from "@preman/desktop/renderer/ui/icons.js";
+import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { KeyValueGrid } from "@preman/desktop/renderer/panes/KeyValueGrid.js";
 
 const HEADERS_FIELD = "headers";
@@ -74,18 +85,40 @@ export interface RequestEditorProps {
   readonly onSend: () => void;
   readonly onCancel: () => void;
   readonly onSave: () => void;
+  /** For the one destructive thing this pane does: replacing a hand-written message. */
+  readonly onAsk: (ask: Ask) => void;
+  readonly onFail: (failure: Failure | null) => void;
 }
 
-export function RequestEditor({ tab, running, onSend, onCancel, onSave }: RequestEditorProps) {
+export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, onFail }: RequestEditorProps) {
   const saved = tab.saved;
   const data = useMemo(() => project(saved?.data, tab.edits), [saved, tab.edits]);
   const grpc = isGrpc(data);
   const dirty = isDirty(tab);
 
-  const apply = (edits: readonly FieldEdit[]) => {
-    const store = useTabsStore.getState();
-    for (const change of edits) store.setField(tab.nodeId, change.path, change.value);
-  };
+  const apply = useCallback(
+    (edits: readonly FieldEdit[]) => {
+      const store = useTabsStore.getState();
+      for (const change of edits) store.setField(tab.nodeId, change.path, change.value);
+    },
+    [tab.nodeId],
+  );
+
+  /**
+   * Commit a blur-edited field, but only if it actually changed.
+   *
+   * These fields commit on blur, and focus leaves them for reasons that are not edits - clicking
+   * the method picker beside one, or the Send button. An unconditional apply would mark the tab
+   * dirty for having been looked at, which then makes the dirty dot mean nothing.
+   */
+  const commit = useCallback(
+    (path: readonly (string | number)[], current: string, next: string) => {
+      if (next !== current) apply([edit(path, next)]);
+    },
+    [apply],
+  );
+
+  const picker = useMethodPicker(tab.nodeId, apply, onFail);
 
   if (tab.loading) return <Notice message="Loading." />;
   if (tab.error !== null) return <Failure title={tab.error.message} details={tab.error.details} />;
@@ -100,17 +133,24 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave }: Reques
 
       <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-gutter py-2">
         {grpc ? (
-          <div className="min-w-0 flex-1">
-            <Field
-              key={readText(data, FIELD.methodPath)}
-              mono
-              defaultValue={readText(data, FIELD.methodPath)}
-              placeholder="package.Service/Method"
-              aria-label="Method path"
-              onBlur={(event) => {
-                apply([edit(FIELD.methodPath, event.currentTarget.value)]);
-              }}
-            />
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <div className="min-w-0 flex-1">
+              <Field
+                key={readText(data, FIELD.methodPath)}
+                mono
+                defaultValue={readText(data, FIELD.methodPath)}
+                placeholder="package.Service/Method"
+                aria-label="Method path"
+                onBlur={(event) => {
+                  commit(FIELD.methodPath, readText(data, FIELD.methodPath), event.currentTarget.value);
+                }}
+              />
+            </div>
+            {/* Beside the field, not instead of it: the field is still the escape hatch for a
+                method whose proto this workspace does not declare. */}
+            <IconButton label="Pick a method" onClick={picker.show}>
+              <PickerIcon />
+            </IconButton>
           </div>
         ) : (
           <Select
@@ -138,7 +178,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave }: Reques
             placeholder={grpc ? "{{grpc_host}}" : "{{base_url}}/path"}
             aria-label="URL"
             onBlur={(event) => {
-              apply([edit(FIELD.url, event.currentTarget.value)]);
+              commit(FIELD.url, readText(data, FIELD.url), event.currentTarget.value);
             }}
           />
         </div>
@@ -194,7 +234,11 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave }: Reques
         </Pane>
 
         <Pane value="body">
-          {grpc ? <MessagePane data={data} apply={apply} /> : <BodyPane data={data} apply={apply} />}
+          {grpc ? (
+            <MessagePane data={data} apply={apply} onAsk={onAsk} onFail={onFail} />
+          ) : (
+            <BodyPane data={data} apply={apply} />
+          )}
         </Pane>
 
         <Pane value="scripts">
@@ -215,11 +259,87 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave }: Reques
           />
         </Pane>
       </Tabs.Root>
+
+      <CommandPalette
+        open={picker.open}
+        items={picker.items}
+        label="Pick a gRPC method"
+        placeholder="Filter methods"
+        onDismiss={picker.dismiss}
+        onChoose={picker.choose}
+      />
     </div>
   );
 }
 
 type Apply = (edits: readonly FieldEdit[]) => void;
+
+/**
+ * The gRPC method picker.
+ *
+ * It reuses the command palette's dialog rather than a dropdown, for the same reason the palette
+ * itself is virtualized: a workspace can declare twenty-six protos, and a menu that mounts every
+ * method of every service is a menu that stalls on open. Type-to-narrow is also simply the right
+ * interaction for a list of fully-qualified method paths.
+ *
+ * Choosing writes two fields, `methodPath` and `schema.location`, because that is what changing
+ * method actually is in the file format. The engine computed the location relative to this request
+ * (see `MethodChoice`), so nothing here does path arithmetic.
+ */
+function useMethodPicker(nodeId: string, apply: Apply, onFail: (failure: Failure | null) => void) {
+  const [open, setOpen] = useState(false);
+  const [choices, setChoices] = useState<readonly MethodChoice[]>([]);
+
+  const show = useCallback(() => {
+    setOpen(true);
+    // Asked for on every open. The engine caches the parse by mtime, so this is a map over a list
+    // it already has - and a list held in this component would go stale the moment a proto changed.
+    void listMethods(nodeId).then((result) => {
+      if (!result.ok) {
+        setOpen(false);
+        onFail(result.failure);
+        return;
+      }
+      setChoices(result.value.methods);
+      // A warning here means a spec would not load, which is why a method someone expected is
+      // missing. Silence would look like the method never existed.
+      if (result.value.warnings.length > 0) {
+        onFail({ message: "Some protos could not be loaded.", details: [...result.value.warnings] });
+      }
+    });
+  }, [nodeId, onFail]);
+
+  const dismiss = useCallback(() => {
+    setOpen(false);
+  }, []);
+
+  const items = useMemo<readonly PaletteItem[]>(
+    () =>
+      choices.map((choice) => ({
+        kind: "method",
+        id: choice.methodPath,
+        label: choice.methodPath,
+        // Streaming is offered and refused on send: a method missing from the picker reads as a
+        // broken index, and "unary only" is a sentence the app can say when it matters.
+        detail: choice.streaming ? `${choice.specLabel} · streaming` : choice.specLabel,
+      })),
+    [choices],
+  );
+
+  const choose = useCallback(
+    (item: PaletteItem) => {
+      const choice = choices.find((candidate) => candidate.methodPath === item.id);
+      if (choice === undefined) return;
+      apply([
+        edit(FIELD.methodPath, choice.methodPath),
+        ...(choice.schemaLocation === undefined ? [] : [edit(FIELD.schemaLocation, choice.schemaLocation)]),
+      ]);
+    },
+    [apply, choices],
+  );
+
+  return { open, items, show, dismiss, choose };
+}
 
 function Pane({ value, children }: { readonly value: SubTab; readonly children: React.ReactNode }) {
   return (
@@ -288,7 +408,7 @@ function AuthPane({ data, apply }: { readonly data: unknown; readonly apply: App
             defaultValue={type}
             placeholder="bearer"
             onBlur={(event) => {
-              apply([edit(FIELD.authType, event.currentTarget.value)]);
+              if (event.currentTarget.value !== type) apply([edit(FIELD.authType, event.currentTarget.value)]);
             }}
           />
         </div>
@@ -353,7 +473,7 @@ function FieldRows({
               defaultValue={pair.value}
               aria-label={pair.key}
               onBlur={(event) => {
-                onCommit(pair.key, event.currentTarget.value);
+                if (event.currentTarget.value !== pair.value) onCommit(pair.key, event.currentTarget.value);
               }}
             />
           </div>
@@ -364,16 +484,73 @@ function FieldRows({
 }
 
 const MESSAGE_HINT = "The request message, as JSON. {{tokens}} interpolate before the call.";
+const REPLACE_MESSAGE_WARNING =
+  "The example is generated from the proto, so whatever is in the message now is replaced. Nothing is written to disk until you save.";
 
-function MessagePane({ data, apply }: { readonly data: unknown; readonly apply: Apply }) {
+/**
+ * The gRPC request message, and the button that writes one for you.
+ *
+ * Generating is the highest-value thing in this pane: the engine walks the descriptor and emits
+ * every field with a zero value, and puts `{{token}}` wherever a string field is named after a
+ * variable that exists. That last part is what makes it a starting point rather than a form to
+ * fill in twice.
+ *
+ * Replacing a non-empty message asks first. It is the one destructive edit this pane makes, and
+ * the message is often the only hand-written part of a request.
+ */
+function MessagePane({
+  data,
+  apply,
+  onAsk,
+  onFail,
+}: {
+  readonly data: unknown;
+  readonly apply: Apply;
+  readonly onAsk: (ask: Ask) => void;
+  readonly onFail: (failure: Failure | null) => void;
+}) {
+  const methodPath = readText(data, FIELD.methodPath);
+  const message = readText(data, FIELD.message);
+
+  function generate(): void {
+    void messageSkeleton(methodPath).then((result) => {
+      if (result.ok) apply([edit(FIELD.message, result.value)]);
+      else onFail(result.failure);
+    });
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
+        <Button
+          disabled={methodPath.length === 0}
+          onClick={() => {
+            if (message.trim().length === 0) {
+              generate();
+              return;
+            }
+            onAsk({
+              kind: "confirm",
+              title: "Replace the message with an example?",
+              body: REPLACE_MESSAGE_WARNING,
+              submit: "Replace",
+              onConfirm: generate,
+            });
+          }}
+        >
+          <GenerateIcon />
+          Generate example
+        </Button>
+        {methodPath.length === 0 && (
+          <span className="text-2xs text-ink-faint">Set a method path first: the example comes from its proto.</span>
+        )}
+      </div>
       <CodeEditor
-        value={readText(data, FIELD.message)}
+        value={message}
         language="json"
         placeholder={MESSAGE_HINT}
         onCommit={(next) => {
-          if (next !== readText(data, FIELD.message)) apply([edit(FIELD.message, next)]);
+          if (next !== message) apply([edit(FIELD.message, next)]);
         }}
       />
     </div>
@@ -435,7 +612,8 @@ function BodyContent({
             defaultValue={readText(data, FIELD.fileSrc)}
             placeholder="upload/receipt.txt"
             onBlur={(event) => {
-              apply([edit(FIELD.fileSrc, event.currentTarget.value)]);
+              const next = event.currentTarget.value;
+              if (next !== readText(data, FIELD.fileSrc)) apply([edit(FIELD.fileSrc, next)]);
             }}
           />
         </Labelled>
@@ -582,7 +760,8 @@ function SettingsPane({
             key={readText(data, FIELD.name)}
             defaultValue={readText(data, FIELD.name)}
             onBlur={(event) => {
-              apply([edit(FIELD.name, event.currentTarget.value)]);
+              const next = event.currentTarget.value;
+              if (next !== readText(data, FIELD.name)) apply([edit(FIELD.name, next)]);
             }}
           />
         </div>
@@ -597,7 +776,8 @@ function SettingsPane({
           spellCheck={false}
           className="w-full resize-y rounded-sm border border-line-strong bg-control px-2 py-1.5 text-xs text-ink focus:outline-none"
           onBlur={(event) => {
-            apply([edit(FIELD.description, event.currentTarget.value)]);
+            const next = event.currentTarget.value;
+            if (next !== readText(data, FIELD.description)) apply([edit(FIELD.description, next)]);
           }}
         />
       </Labelled>
@@ -634,7 +814,8 @@ function SchemaFields({ data, apply }: { readonly data: unknown; readonly apply:
           defaultValue={readText(data, FIELD.schemaLocation)}
           placeholder="../../proto/service.proto"
           onBlur={(event) => {
-            apply([edit(FIELD.schemaLocation, event.currentTarget.value)]);
+            const next = event.currentTarget.value;
+            if (next !== readText(data, FIELD.schemaLocation)) apply([edit(FIELD.schemaLocation, next)]);
           }}
         />
       </Labelled>

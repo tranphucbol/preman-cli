@@ -26,6 +26,7 @@ const DECLARED_SURFACE = [
   "listRequests",
   "moveNode",
   "readEnvironment",
+  "readVariables",
   "refreshCatalog",
   "renameNode",
   "reorderSiblings",
@@ -38,6 +39,7 @@ const DECLARED_SURFACE = [
   "targetLabel",
   "toGroupJsonReport",
   "toJsonReport",
+  "toJunitReport",
   "watchWorkspace",
   "writeEnvironmentValue",
 ];

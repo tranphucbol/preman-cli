@@ -24,6 +24,7 @@
     "verbatimModuleSyntax": true
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/vite.*.ts", "test/**/*.ts", "vitest.config.ts"],
-  // The renderer targets a browser, not Node: it has its own project, with DOM and without node types.
-  "exclude": ["packages/desktop/src/renderer/**"]
+  // The renderer targets a browser, not Node: it has its own project, with DOM. Tests that exercise
+  // it have to compile the same way, so they live in their own program too.
+  "exclude": ["packages/desktop/src/renderer/**", "test/renderer/**"]
 }

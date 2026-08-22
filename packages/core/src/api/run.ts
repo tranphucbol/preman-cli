@@ -27,7 +27,12 @@ const SINGLE_REQUEST_TOTAL = 1;
 export interface RunSelectionArgs {
   dir: string;
   selector: string | undefined;
-  env: string | undefined;
+  /**
+   * A name picks that environment. `null` says "none" out loud, so no environment is
+   * resolved and no ambiguity is raised. `undefined` says nobody has chosen yet, which
+   * is what lets a sole environment be adopted or a `SelectionPort` ask.
+   */
+  env: string | null | undefined;
   url: string | undefined;
   tls: boolean | undefined;
   /** Raw `--ssl-*` and `-k` values; resolved here, where the workspace is known. */
@@ -105,9 +110,12 @@ async function selectTarget(
 
 async function selectRunEnvironment(
   ws: Workspace,
-  name: string | undefined,
+  name: string | null | undefined,
   port: SelectionPort,
 ): Promise<EnvironmentEntry | undefined> {
+  // "None" is an answer, not a missing one: never adopt a sole environment, never ask.
+  if (name === null) return undefined;
+
   const all = listEnvironments(ws);
 
   if (name !== undefined) {

@@ -12,6 +12,7 @@
 export {
   ArrowClockwise as RefreshIcon,
   ArrowSquareOut as RevealIcon,
+  BracketsCurly as FormatIcon,
   Broom as ClearIcon,
   CaretDown as CaretDownIcon,
   CaretRight as CaretRightIcon,
@@ -21,6 +22,7 @@ export {
   Code as ScriptIcon,
   Copy as CopyIcon,
   DotsThree as MoreIcon,
+  Export as ExportIcon,
   FileCode as RequestIcon,
   FilePlus as NewRequestIcon,
   FloppyDisk as SaveIcon,
@@ -28,10 +30,15 @@ export {
   FolderOpen as FolderOpenIcon,
   FolderPlus as NewFolderIcon,
   Funnel as FilterIcon,
+  GitBranch as BranchIcon,
+  Globe as EnvironmentIcon,
   Key as AuthIcon,
+  Lightning as GenerateIcon,
+  ListMagnifyingGlass as PaletteIcon,
   MagnifyingGlass as SearchIcon,
   PencilSimple as RenameIcon,
   Play as SendIcon,
+  PlayCircle as RunnerIcon,
   Plus as AddIcon,
   Prohibit as UnsupportedIcon,
   Sliders as SettingsIcon,
@@ -45,6 +52,9 @@ export {
 } from "@phosphor-icons/react";
 
 export { IconContext } from "@phosphor-icons/react";
+
+/** The component type every export above shares, for a lookup table keyed by something else. */
+export type { Icon } from "@phosphor-icons/react";
 
 /**
  * One size and one weight for the whole app, applied through `IconContext` at the root.

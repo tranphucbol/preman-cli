@@ -11,17 +11,21 @@
 import { create } from "zustand";
 
 import type { EngineError, ExitCode, RunEvent } from "@preman/desktop/engine/protocol.js";
+import { addTest, NO_TESTS } from "@preman/desktop/renderer/model/response.js";
+import type {
+  ConsoleLine,
+  ResponseBody,
+  ResponseHead,
+  SideRequestSummary,
+  TestResult,
+  TestTotals,
+} from "@preman/desktop/renderer/model/response.js";
 
-const CONSOLE_MAX_LINES = 5000;
+/** A script in a loop must not be able to exhaust the heap. */
+export const CONSOLE_MAX_LINES = 5000;
 const NO_ACTIVE_RUN = null;
-
-/* The sandbox's own shapes. Pulled off `RunEvent` rather than re-exported from core so the
- * protocol stays the only thing the renderer imports, and so these cannot drift from the wire. */
-type ConsoleLine = Extract<RunEvent, { type: "console" }>["line"];
-type TestResult = Extract<RunEvent, { type: "test" }>["result"];
-type SideRequestSummary = Extract<RunEvent, { type: "side-request" }>["summary"];
-type ResponseHead = Omit<Extract<RunEvent, { type: "response-head" }>, "type" | "runId" | "nodeId">;
-type ResponseBody = Omit<Extract<RunEvent, { type: "response-body" }>, "type" | "runId" | "nodeId">;
+/** Iterations are zero-based on the wire; a run has entered one iteration the moment it starts. */
+const SINGLE_ITERATION = 1;
 
 export type RequestStatus = "running" | "done";
 
@@ -50,6 +54,22 @@ export interface Run {
   readonly exitCode: ExitCode | null;
   readonly warnings: readonly string[];
   readonly error: EngineError | null;
+  /**
+   * How many iterations have actually been entered. One until an event proves otherwise, which is
+   * what lets the runner label rows `#2` only when there is a `#1` to distinguish them from.
+   * Derived rather than taken from the options: with a data file and no explicit count, core
+   * decides the number from the rows, so what was asked for is not what happened.
+   */
+  readonly iterations: number;
+  /**
+   * Every assertion in the run, counted as its event arrives.
+   *
+   * Accumulated rather than folded over `items` on read. A summary that re-scanned every item on
+   * every `test` event would be quadratic in the length of the run, and — because a store selector
+   * that builds an object returns a new reference every time it is called — it would also spin
+   * React until it gave up.
+   */
+  readonly tests: TestTotals;
   /** Keys into `requests`, in arrival order, so the runner's live list needs no sorting. */
   readonly items: readonly string[];
 }
@@ -129,6 +149,8 @@ export const useRunsStore = create<RunsState>((set) => ({
             exitCode: null,
             warnings: [],
             error: null,
+            iterations: SINGLE_ITERATION,
+            tests: NO_TESTS,
             items: [],
           });
           return { runs, activeRunId: event.runId, activeItemKey: null };
@@ -153,7 +175,13 @@ export const useRunsStore = create<RunsState>((set) => ({
           });
           const runs = new Map(state.runs);
           const run = runs.get(event.runId);
-          if (run !== undefined) runs.set(event.runId, { ...run, items: [...run.items, key] });
+          if (run !== undefined) {
+            runs.set(event.runId, {
+              ...run,
+              iterations: Math.max(run.iterations, event.iteration + SINGLE_ITERATION),
+              items: [...run.items, key],
+            });
+          }
           const openItems = new Map(state.openItems);
           openItems.set(openKey(event.runId, event.nodeId), key);
           // A single-request run focuses itself, so sending shows the response without a click.
@@ -164,13 +192,15 @@ export const useRunsStore = create<RunsState>((set) => ({
         case "console": {
           const entry = { runId: event.runId, nodeId: event.nodeId, seq: state.nextSeq, line: event.line };
           const next = [...state.console, entry];
-          // Capped rather than unbounded: a script in a loop must not be able to exhaust the heap.
           return { console: next.slice(-CONSOLE_MAX_LINES), nextSeq: state.nextSeq + 1 };
         }
 
         case "side-request": {
           const entry = { runId: event.runId, nodeId: event.nodeId, seq: state.nextSeq, summary: event.summary };
-          return { sideRequests: [...state.sideRequests, entry], nextSeq: state.nextSeq + 1 };
+          const next = [...state.sideRequests, entry];
+          // Capped for the same reason as `console`, and separately: a script that only ever
+          // calls `pm.sendRequest` logs nothing, so the console's cap would never save it.
+          return { sideRequests: next.slice(-CONSOLE_MAX_LINES), nextSeq: state.nextSeq + 1 };
         }
 
         case "run-end": {
@@ -266,9 +296,16 @@ function applyToItem(state: RunsState, event: ItemEvent): Partial<RunsState> {
         },
       });
       break;
-    case "test":
+    case "test": {
       requests.set(key, { ...item, tests: [...item.tests, event.result] });
-      break;
+      // The run's own totals ride along, so the summary reads two numbers instead of folding over
+      // every item each time an assertion lands.
+      const runs = new Map(state.runs);
+      const run = runs.get(event.runId);
+      if (run === undefined) return { requests };
+      runs.set(event.runId, { ...run, tests: addTest(run.tests, event.result) });
+      return { requests, runs };
+    }
     case "request-end": {
       requests.set(key, {
         ...item,
@@ -293,6 +330,26 @@ export function useFocusedRequest(): RequestRun | undefined {
 
 export function useActiveRun(): Run | undefined {
   return useRunsStore((state) => (state.activeRunId === null ? undefined : state.runs.get(state.activeRunId)));
+}
+
+/** One named run, for a pane that started it and is watching that one rather than the latest. */
+export function useRun(runId: string | null): Run | undefined {
+  return useRunsStore((state) => (runId === null ? undefined : state.runs.get(runId)));
+}
+
+/**
+ * One item of a run, by the key `Run.items` holds.
+ *
+ * The subscription a runner row is allowed to make, for the same reason the sidebar has `useNode`:
+ * a five-thousand-item run must repaint the row that changed, not the list.
+ */
+export function useRequestItem(key: string): RequestRun | undefined {
+  return useRunsStore((state) => state.requests.get(key));
+}
+
+/** Whether a run's focused item is this one, so a row can highlight without reading the map. */
+export function useIsFocusedItem(key: string): boolean {
+  return useRunsStore((state) => state.activeItemKey === key);
 }
 
 /** The most recent run for a node, which is what a request tab's own response pane shows. */

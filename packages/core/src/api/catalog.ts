@@ -25,8 +25,12 @@ const FIRST_REVISION = 1;
 /**
  * Stands in for a missing `order`. `Infinity` would sort the same but does not
  * survive JSON, and this shape crosses a process boundary.
+ *
+ * Exported because anything planning a reorder has to recognise it: a sibling that
+ * declares no order sorts after every sibling that does, so no number can be placed
+ * after it and the only honest answer is to renumber.
  */
-const ORDER_ABSENT = Number.MAX_SAFE_INTEGER;
+export const ORDER_ABSENT = Number.MAX_SAFE_INTEGER;
 
 export type CatalogNodeKind = "collection" | "folder" | "request";
 export type CatalogProtocol = "http" | "grpc" | "unsupported";

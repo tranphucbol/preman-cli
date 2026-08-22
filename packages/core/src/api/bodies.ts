@@ -2,8 +2,13 @@ import { EXIT, PremanError } from "@preman/core/errors.js";
 
 /** How much of a body travels with the `response-body` event, unasked. */
 const PREVIEW_BYTES = 256 * 1024;
-/** Above this, pretty-printing costs more than it is worth and is refused. */
-const FORMAT_LIMIT_BYTES = 2 * 1024 * 1024;
+/**
+ * Above this, pretty-printing costs more than it is worth and is refused.
+ *
+ * Exported because a front end has to know the limit before it offers the toggle: asking
+ * and being refused is a worse experience than a disabled control that says why.
+ */
+export const FORMAT_LIMIT_BYTES = 2 * 1024 * 1024;
 /** How many bodies one store keeps. LRU, so the oldest handle goes first. */
 const BODY_RETENTION = 20;
 const SEARCH_MATCH_LIMIT = 500;

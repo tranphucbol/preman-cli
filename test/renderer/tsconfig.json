@@ -1,0 +1,20 @@
+{
+  // Renderer tests are their own program for the same reason the renderer is: the code under test
+  // is a browser target, so it has to be compiled against `lib.dom`. The root program deliberately
+  // has no DOM, and a test that imported `stores/session.ts` into it would fail on `window` rather
+  // than on anything real. The root tsconfig excludes this directory; `bun run typecheck` runs all
+  // three programs.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@preman/core": ["packages/core/src/index.ts"],
+      "@preman/core/*": ["packages/core/src/*"],
+      "@preman/desktop/*": ["packages/desktop/src/*"]
+    },
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  "include": ["**/*.ts", "../helpers.ts"],
+  "exclude": []
+}

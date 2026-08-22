@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { writeFileAtomic } from "@preman/core/workspace/atomic.js";
-import type { WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
+import type { SessionSnapshot, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
 
 const STATE_FILE = "state.json";
 const STATE_VERSION = 1;
@@ -17,34 +17,14 @@ const JSON_INDENT = 2;
 const NEWEST_FIRST = -1;
 const OLDEST_FIRST = 1;
 
-/** A tab the user had open, plus enough to put the caret back where they left it. */
-export interface TabState {
-  nodeId: string;
-  subTab: string | null;
-  scrollTop: number;
-  selectionStart: number | null;
-}
-
 /**
- * An unsaved edit. Persisted so a crash costs nothing, and persisted *here* so an
- * unsaved edit is recoverable without being committable — decision 12's trade.
+ * A registered workspace: the session the renderer restores, plus the two fields only this
+ * process has an opinion about. `SessionSnapshot` is shared with the bridge so the shape that
+ * crosses IPC and the shape on disk cannot drift.
  */
-export interface DraftState {
-  nodeId: string;
-  /** Serialised `FieldEdit[]`; the renderer owns the shape, the store only carries it. */
-  edits: unknown;
-  text: string | null;
-  updatedAt: number;
-}
-
-export interface WorkspaceState {
+export interface WorkspaceState extends SessionSnapshot {
   root: string;
   lastOpenedAt: number;
-  activeEnvironment: string | null;
-  activeNodeId: string | null;
-  collapsedIds: string[];
-  tabs: TabState[];
-  drafts: DraftState[];
 }
 
 export interface WindowBounds {
@@ -66,8 +46,20 @@ export interface AppStore {
   /** Mutate in place; the result is written atomically before this returns. */
   update(mutate: (state: AppState) => void): AppState;
   workspaceFor(root: string): WorkspaceState;
+  /** What the renderer should restore for `root`. Registers the workspace if it is new. */
+  sessionFor(root: string): SessionSnapshot;
+  saveSession(root: string, snapshot: SessionSnapshot): void;
   handles(): WorkspaceHandle[];
 }
+
+// `activeEnvironment` is absent rather than null: a workspace nobody has opened has not chosen
+// "no environment", it has not chosen at all, and null would stop the sole one being adopted.
+const EMPTY_SESSION = {
+  activeNodeId: null,
+  collapsedIds: [],
+  tabs: [],
+  drafts: [],
+} satisfies SessionSnapshot;
 
 function emptyState(): AppState {
   return {
@@ -113,6 +105,15 @@ export function createAppStore(userDataDir: string): AppStore {
     writeFileAtomic(file, JSON.stringify(state, null, JSON_INDENT));
   }
 
+  function findOrCreate(root: string): WorkspaceState {
+    const found = state.workspaces.find((workspace) => workspace.root === root);
+    if (found !== undefined) return found;
+    const created: WorkspaceState = { root, lastOpenedAt: Date.now(), ...EMPTY_SESSION };
+    state.workspaces.push(created);
+    persist();
+    return created;
+  }
+
   return {
     read: () => state,
     update(mutate) {
@@ -120,21 +121,31 @@ export function createAppStore(userDataDir: string): AppStore {
       persist();
       return state;
     },
-    workspaceFor(root) {
-      const found = state.workspaces.find((workspace) => workspace.root === root);
-      if (found !== undefined) return found;
-      const created: WorkspaceState = {
-        root,
-        lastOpenedAt: Date.now(),
-        activeEnvironment: null,
-        activeNodeId: null,
-        collapsedIds: [],
-        tabs: [],
-        drafts: [],
+    workspaceFor: findOrCreate,
+    sessionFor(root) {
+      const workspace = findOrCreate(root);
+      return {
+        activeEnvironment: workspace.activeEnvironment,
+        activeNodeId: workspace.activeNodeId,
+        collapsedIds: workspace.collapsedIds,
+        tabs: workspace.tabs,
+        drafts: workspace.drafts,
       };
-      state.workspaces.push(created);
+    },
+    // Field by field rather than a spread: this is the far side of an IPC boundary, and a
+    // snapshot is the one thing here the renderer names the shape of.
+    saveSession(root, snapshot) {
+      const workspace = findOrCreate(root);
+      workspace.activeEnvironment = snapshot.activeEnvironment;
+      workspace.activeNodeId = snapshot.activeNodeId;
+      workspace.collapsedIds = [...snapshot.collapsedIds];
+      workspace.tabs = snapshot.tabs.map((tab) => ({ nodeId: tab.nodeId, subTab: tab.subTab }));
+      workspace.drafts = snapshot.drafts.map((draft) => ({
+        nodeId: draft.nodeId,
+        edits: draft.edits,
+        text: draft.text,
+      }));
       persist();
-      return created;
     },
     handles() {
       return [...state.workspaces]

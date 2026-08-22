@@ -1,7 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
 
+import { FORMAT_LIMIT_BYTES as CORE_FORMAT_LIMIT_BYTES } from "@preman/core/api/bodies.js";
+import { ORDER_ABSENT as CORE_ORDER_ABSENT } from "@preman/core/api/catalog.js";
 import { EXIT } from "@preman/core/errors.js";
+import { DEFINITION_FILE, ORDER_STEP as CORE_ORDER_STEP, RESOURCES_DIR } from "@preman/core/workspace/paths.js";
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
 import type {
   EngineMessage,
@@ -10,14 +15,23 @@ import type {
   EngineRequestKind,
   EngineResults,
   EnginePush,
+  GitStatus,
   NodeDocument,
   RunEvent,
 } from "@preman/desktop/engine/protocol.js";
-import { EXIT_CODES, isEnginePush } from "@preman/desktop/engine/protocol.js";
+import {
+  BODY_FORMAT_LIMIT_BYTES,
+  EXIT_CODES,
+  GROUP_DEFINITION_SUFFIX,
+  ORDER_ABSENT,
+  ORDER_STEP,
+  isEnginePush,
+} from "@preman/desktop/engine/protocol.js";
 
 import {
   cloneFixtureHttpWorkspace,
   cloneFixtureWorkspace,
+  dataPath,
   HTTP_TOKEN,
   startHttpServer,
   type ClonedWorkspace,
@@ -34,7 +48,77 @@ const PROFILE_ID = "postman/collections/admin/Profile.request.yaml";
 const ADMIN_ID = "postman/collections/admin";
 const LOCAL_ENV_ID = "postman/environments/LOCAL.environment.yaml";
 const ESCAPE_ID = "../../../etc/passwd";
+const ECHO_NODE_ID = "postman/collections/payment/Echo.request.yaml";
 const FIRST_REQUEST_ID = 1;
+
+const ECHO_METHOD = "test.echo.EchoService.Echo";
+const PING_METHOD = "test.echo.EchoService.Ping";
+const ECHO_SPEC_LABEL = "src/main/proto/echo/echo.proto";
+/** Exactly what `Ping.request.yaml` already carries, which is the point of the assertion. */
+const PING_LOCATION = "../../../src/main/proto/echo/echo.proto";
+const GIT_SETTLE_MS = 10_000;
+
+const SUITE_ID = "postman/collections/admin/suite";
+const QC_ENV_PATH = "postman/environments/QC.environment.yaml";
+const REQUEST_SUFFIX = ".request.yaml";
+const SEPARATOR_LENGTH = 1;
+/** `test/fixtures/data/users.csv` has two rows, and one request runs once per row. */
+const CSV_ROWS = 2;
+const MARKER_KEY = "run_marker";
+const MARKER = "written-by-a-script";
+
+/** Succeeds outright: the collection's own auth is not needed and `/echo` answers 200. */
+const ECHOED_YAML = `$kind: http-request
+name: Echoed
+url: "{{http_url}}/echo"
+method: POST
+auth:
+  type: noauth
+body:
+  type: text
+  content: '{"from":"the runner"}'
+`;
+
+/** A call that works and an assertion that does not, which is exactly `EXIT.TEST`. */
+const FAILING_YAML = `$kind: http-request
+name: Failing
+url: "{{http_url}}/echo"
+method: GET
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("deliberately fails", function () {
+        pm.expect(1).to.equal(2);
+      });
+`;
+
+/**
+ * Port 1 is reserved and nothing listens there, so the connection is refused immediately: a
+ * transport failure with no timeout to wait out.
+ */
+const UNREACHABLE_YAML = `$kind: http-request
+name: Unreachable
+url: "http://127.0.0.1:1/nope"
+method: GET
+auth:
+  type: noauth
+`;
+
+const MARKER_YAML = `$kind: http-request
+name: Marker
+url: "{{http_url}}/echo"
+method: GET
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.environment.set("${MARKER_KEY}", "${MARKER}");
+`;
 
 /**
  * A host plus the messages it pushed, which is the whole of what a renderer sees. Requests carry
@@ -108,6 +192,30 @@ async function waitForRunDone(harness: Harness, runId: string): Promise<Extract<
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
   throw new Error(`run ${runId} never finished`);
+}
+
+/**
+ * A committed repository around a cloned workspace, so a later edit is a real `modified` row
+ * rather than the whole tree being untracked. The identity is set locally because a CI runner
+ * has no global one and `git commit` refuses without it.
+ */
+function initRepository(root: string): void {
+  const run = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  run("init", "--quiet");
+  run("config", "user.email", "test@preman.local");
+  run("config", "user.name", "preman test");
+  run("add", "--all");
+  run("commit", "--quiet", "--message", "fixture");
+}
+
+async function waitForGitStatus(harness: Harness): Promise<GitStatus> {
+  const deadline = Date.now() + GIT_SETTLE_MS;
+  while (Date.now() < deadline) {
+    const pushed = harness.pushesOf("git-status").at(-1);
+    if (pushed !== undefined) return pushed.status;
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+  throw new Error("the git status was never pushed");
 }
 
 describe("the engine host protocol", () => {
@@ -333,6 +441,94 @@ describe("the engine host protocol", () => {
     });
   });
 
+  describe("the proto index", () => {
+    it("givenDeclaredProtos_whenMethodsListed_thenEachCarriesTheSpecThatDeclaredIt", async () => {
+      const choices = await open().send("list-methods", {});
+
+      expect(choices.warnings).toEqual([]);
+      expect(choices.methods.map((method) => method.methodPath)).toEqual([ECHO_METHOD, PING_METHOD]);
+      expect(choices.methods[0]?.specLabel).toBe(ECHO_SPEC_LABEL);
+      // Without a node id there is nothing to be relative to, so no location is invented.
+      expect(choices.methods[0]?.schemaLocation).toBeUndefined();
+    });
+
+    it("givenRequestNode_whenMethodsListed_thenEachChoiceCarriesTheLocationThatRequestWouldNeed", async () => {
+      const choices = await open().send("list-methods", { nodeId: PING_ID });
+
+      // Byte for byte what the fixture already has: picking a method is two field edits,
+      // and the app must arrive at the path a human would have typed.
+      expect(choices.methods[0]?.schemaLocation).toBe(PING_LOCATION);
+    });
+
+    it("givenMethodAndEnvironment_whenSkeletonRequested_thenStringFieldsNamedAfterVariablesUseTokens", async () => {
+      const text = await open().send("message-skeleton", { methodPath: ECHO_METHOD, environment: "LOCAL" });
+      const skeleton = JSON.parse(text) as Record<string, unknown>;
+
+      expect(Object.keys(skeleton)).toEqual(["text", "amount", "trans_id", "mode"]);
+      // `trans_id` is a key in LOCAL, `text` is not, and `mode` is an enum rather than a string.
+      expect(skeleton.trans_id).toBe("{{trans_id}}");
+      expect(skeleton.text).toBe("");
+      expect(skeleton.mode).toBe("MODE_UNSPECIFIED");
+    });
+
+    it("givenNoEnvironment_whenSkeletonRequested_thenOnlyGlobalsCanBecomeTokens", async () => {
+      const text = await open().send("message-skeleton", { methodPath: ECHO_METHOD, environment: null });
+
+      expect((JSON.parse(text) as { trans_id: string }).trans_id).toBe("");
+    });
+  });
+
+  describe("grep", () => {
+    it("givenQuery_whenGrepped_thenMatchesCarryNodeIdsTheAppCanOpen", async () => {
+      const result = await open().send("grep", { query: "test.echo.EchoService.Ping" });
+
+      expect(result.truncated).toBe(false);
+      const match = result.matches.find((each) => each.nodeId === PING_ID);
+      expect(match?.fieldPath).toEqual(["methodPath"]);
+      expect(match?.where).toBe("value");
+    });
+
+    it("givenLimit_whenMoreMatchesExist_thenTheResultAdmitsItWasCut", async () => {
+      const result = await open().send("grep", { query: "e", limit: 1 });
+
+      expect(result.matches.length).toBe(1);
+      expect(result.truncated).toBe(true);
+    });
+  });
+
+  describe("git decorations", () => {
+    it("givenWorkspaceOutsideAnyRepository_whenGitStatusRequested_thenItSaysSoRatherThanFailing", async () => {
+      const status = await open().send("git-status", {});
+
+      expect(status.repository).toBe(false);
+      expect(status.files).toEqual({});
+      expect(status.warning).toBeDefined();
+    });
+
+    it(
+      "givenExternalEdit_whenTheWatcherFires_thenTheStatusIsPushedWithoutBeingAsked",
+      async () => {
+        const repo = cloneFixtureWorkspace();
+        initRepository(repo.root);
+        const app = harnessFor(repo.root);
+        try {
+          // The watcher only starts once the catalog has been built.
+          await app.send("catalog", {});
+          const file = join(repo.root, ECHO_NODE_ID);
+          writeFileSync(file, `${readFileSync(file, "utf8")}\ndescription: touched outside the app\n`);
+
+          const status = await waitForGitStatus(app);
+          expect(status.repository).toBe(true);
+          expect(status.files[ECHO_NODE_ID]).toBe("modified");
+        } finally {
+          app.host.dispose();
+          repo.cleanup();
+        }
+      },
+      TIMEOUT_MS,
+    );
+  });
+
   describe("errors crossing the port", () => {
     it("givenPremanErrorInHost_whenCrossingPort_thenDetailsSurvive", async () => {
       const error = await open().fail("read-node", { nodeId: "postman/collections/payment/Nope.request.yaml" });
@@ -418,6 +614,12 @@ describe("the engine host running requests", () => {
     clone ??= cloneFixtureHttpWorkspace();
     harness ??= harnessFor(clone.root);
     return harness;
+  }
+
+  function httpRoot(): string {
+    open();
+    if (clone === undefined) throw new Error("unreachable");
+    return clone.root;
   }
 
   /**
@@ -550,15 +752,208 @@ describe("the engine host running requests", () => {
     },
     TIMEOUT_MS,
   );
+
+  /**
+   * The collection runner's four options and its summary, exercised through the wire the pane
+   * actually uses. The folder is built with the engine's own mutations rather than added to the
+   * fixture, because several suites assert these workspaces' exact request lists.
+   */
+  describe("running a folder", () => {
+    async function buildSuite(app: Harness): Promise<void> {
+      await app.send("mutate", { op: { op: "create-folder", parentId: ADMIN_ID, name: "suite" } });
+      await app.send("mutate", { op: { op: "move", targetId: PROFILE_ID, parentId: SUITE_ID } });
+    }
+
+    /** A request written into the suite byte for byte, so a test can say what it wants exactly. */
+    async function addRequest(app: Harness, name: string, yaml: string): Promise<string> {
+      const created = await app.send("mutate", {
+        op: { op: "create-request", parentId: SUITE_ID, name, kind: "http-request" },
+      });
+      const nodeId = created.nodeId ?? "";
+      await app.send("write-text", { nodeId, text: yaml });
+      return nodeId;
+    }
+
+    function nameOf(nodeId: string): string {
+      return nodeId.slice(SUITE_ID.length + SEPARATOR_LENGTH, -REQUEST_SUFFIX.length);
+    }
+
+    it(
+      "givenFolderRun_whenRunning_thenPerRequestStatusStreams",
+      async () => {
+        const app = open();
+        await primeEnvironment(app);
+        await buildSuite(app);
+        await addRequest(app, "Echoed", ECHOED_YAML);
+
+        const { runId } = await app.send("run", { args: { nodeId: SUITE_ID, environment: "QC", timeoutMs: 5_000 } });
+        const done = await waitForRunDone(app, runId);
+        expect(done.error).toBeUndefined();
+
+        const events = app.events();
+        const start = events.find((event) => event.type === "run-start");
+        if (start?.type !== "run-start") throw new Error("no run-start");
+        expect(start.total).toBe(2);
+
+        // One request at a time, each announced before it is answered and closed before the next
+        // one opens: that is the invariant the runner's live list is drawn from.
+        const lifecycle = events
+          .filter((event) => event.type === "request-start" || event.type === "request-end")
+          .map((event) => `${event.type} ${nameOf(event.nodeId)}`);
+        expect(lifecycle).toEqual([
+          "request-start Profile",
+          "request-end Profile",
+          "request-start Echoed",
+          "request-end Echoed",
+        ]);
+
+        // Every item reports its own outcome, which is what colours a row rather than the run.
+        const ends = events.filter((event) => event.type === "request-end");
+        expect(ends.every((event) => event.type === "request-end" && event.exitCode === EXIT.OK)).toBe(true);
+      },
+      TIMEOUT_MS,
+    );
+
+    it(
+      "givenCsvIterationData_whenRunning_thenIterationCountMatchesRows",
+      async () => {
+        const app = open();
+        await primeEnvironment(app);
+        await buildSuite(app);
+
+        // No `iterationCount`: the rows decide, which is why the runner's iterations box is
+        // empty by default rather than showing 1. An explicit count would override the file.
+        const { runId } = await app.send("run", {
+          args: { nodeId: SUITE_ID, environment: "QC", iterationData: dataPath("users.csv"), timeoutMs: 5_000 },
+        });
+        await waitForRunDone(app, runId);
+
+        const events = app.events();
+        const start = events.find((event) => event.type === "run-start");
+        if (start?.type !== "run-start") throw new Error("no run-start");
+        expect(start.total).toBe(CSV_ROWS);
+
+        const iterations = events
+          .filter((event) => event.type === "request-start")
+          .map((event) => (event.type === "request-start" ? event.iteration : NaN));
+        expect(iterations).toEqual([0, 1]);
+      },
+      TIMEOUT_MS,
+    );
+
+    it(
+      "givenMixedOutcomes_whenRunEnds_thenWorstOutcomeIsReported",
+      async () => {
+        const app = open();
+        await primeEnvironment(app);
+        await buildSuite(app);
+        const failing = await addRequest(app, "Failing", FAILING_YAML);
+        const unreachable = await addRequest(app, "Unreachable", UNREACHABLE_YAML);
+
+        const { runId } = await app.send("run", { args: { nodeId: SUITE_ID, environment: "QC", timeoutMs: 5_000 } });
+        await waitForRunDone(app, runId);
+
+        const ends = app.events().filter((event) => event.type === "request-end");
+        const byNode = new Map(
+          ends.map((event) => [event.nodeId, event.type === "request-end" ? event.exitCode : null]),
+        );
+        expect(byNode.get(failing)).toBe(EXIT.TEST);
+        expect(byNode.get(unreachable)).toBe(EXIT.TRANSPORT);
+
+        const end = app.events().find((event) => event.type === "run-end");
+        if (end?.type !== "run-end") throw new Error("no run-end");
+        // Transport, not the numerically largest code: core ranks a call that never happened
+        // above an assertion that failed on a call that did, and the runner reports core's answer.
+        expect(end.exitCode).toBe(EXIT.TRANSPORT);
+      },
+      TIMEOUT_MS,
+    );
+
+    it(
+      "givenScriptWroteEnvValue_whenRunEnds_thenEnvironmentFileIsUpdated",
+      async () => {
+        const app = open();
+        await primeEnvironment(app);
+        await buildSuite(app);
+        await addRequest(app, "Marker", MARKER_YAML);
+
+        const { runId } = await app.send("run", { args: { nodeId: SUITE_ID, environment: "QC", timeoutMs: 5_000 } });
+        await waitForRunDone(app, runId);
+
+        // On disk, because that is the promise `pm.environment.set` makes in this app: the CLI
+        // saves, so the desktop app saves, and the next run of either sees the same value.
+        expect(readFileSync(join(httpRoot(), QC_ENV_PATH), "utf8")).toContain(MARKER);
+
+        // And the variable manager reads it back without being told where it came from.
+        const view = await app.send("variables", { environment: "QC" });
+        const binding = view.bindings.find((each) => each.key === MARKER_KEY);
+        expect(binding?.value).toBe(MARKER);
+        expect(binding?.scope).toBe("environment");
+      },
+      TIMEOUT_MS,
+    );
+
+    it(
+      "givenFinishedRun_whenReportRequested_thenBothFormatsRenderFromTheSameOutcome",
+      async () => {
+        const app = open();
+        await primeEnvironment(app);
+        await buildSuite(app);
+
+        const { runId } = await app.send("run", { args: { nodeId: SUITE_ID, environment: "QC", timeoutMs: 5_000 } });
+        await waitForRunDone(app, runId);
+
+        const json = await app.send("run-report", { runId, format: "json" });
+        expect(json.suggestedName.endsWith(`-${runId}.json`)).toBe(true);
+        const report = JSON.parse(json.text) as { group?: string; items?: unknown[]; exitCode?: number };
+        expect(report.group).toBe("admin/suite");
+        expect(report.items?.length).toBe(1);
+        expect(report.exitCode).toBe(EXIT.OK);
+
+        const junit = await app.send("run-report", { runId, format: "junit" });
+        expect(junit.suggestedName.endsWith(`-${runId}.xml`)).toBe(true);
+        expect(junit.text.startsWith("<testsuites")).toBe(true);
+        expect(junit.text).toContain('<testsuite name="admin/suite/Profile"');
+        expect(junit.text).toContain('name="bearer auth reached the server"');
+      },
+      TIMEOUT_MS,
+    );
+
+    it("givenRunNobodyHasHeardOf_whenReportRequested_thenRefusedWithAReason", async () => {
+      const error = await open().fail("run-report", { runId: "run-999", format: "json" });
+
+      expect(error.message).toContain("run-999");
+      expect(error.exitCode).toBe(EXIT.CLI);
+    });
+  });
 });
 
 /**
- * `EXIT_CODES` is declared in the protocol rather than re-exported from core, so that importing
- * the protocol never pulls a line of the engine into the renderer bundle. That duplication is only
- * safe while something checks it, which is this.
+ * The protocol declares a handful of constants rather than re-exporting them from core, so that
+ * importing the protocol never pulls a line of the engine into the renderer bundle. That
+ * duplication is only safe while something checks it, which is this.
  */
-describe("the wire's copy of the exit codes", () => {
+describe("the wire's copies of core's constants", () => {
   it("givenProtocolExitCodes_whenComparedToCore_thenEveryValueMatches", () => {
     expect(EXIT_CODES).toStrictEqual(EXIT);
+  });
+
+  it("givenProtocolOrderConstants_whenComparedToCore_thenBothMatch", () => {
+    // The renderer plans reorders and moves against these two numbers. A protocol copy that
+    // drifted from core would make it compute orders the files cannot actually hold.
+    expect(ORDER_STEP).toBe(CORE_ORDER_STEP);
+    expect(ORDER_ABSENT).toBe(CORE_ORDER_ABSENT);
+  });
+
+  it("givenProtocolFormatLimit_whenComparedToCore_thenTheRendererRefusesExactlyWhatTheEngineWould", () => {
+    // The pretty-print toggle is disabled off the protocol's copy. If it drifted above core's,
+    // the toggle would offer a format the engine then refuses.
+    expect(BODY_FORMAT_LIMIT_BYTES).toBe(CORE_FORMAT_LIMIT_BYTES);
+  });
+
+  it("givenProtocolDefinitionSuffix_whenComparedToCore_thenGroupRowsStripTheRightTail", () => {
+    // The git overlay turns a changed definition file into a decoration on its folder row by
+    // stripping this tail. A drifted copy would leave every folder undecorated and silent.
+    expect(GROUP_DEFINITION_SUFFIX).toBe(`/${RESOURCES_DIR}/${DEFINITION_FILE}`);
   });
 });

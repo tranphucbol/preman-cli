@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { PremanError } from "@preman/core/errors.js";
 import { interpolate, interpolateStrict } from "@preman/core/vars/interpolate.js";
+import { readVariables, type VariableBinding, type VariableView } from "@preman/core/api/variables.js";
 import { VariableStore } from "@preman/core/vars/store.js";
+
+import { fixtureWorkspace } from "./helpers.js";
 
 describe("VariableStore", () => {
   it("givenSameKeyInEveryScope_whenGet_thenLocalWinsThenEnvironmentThenCollectionThenGlobals", () => {
@@ -129,5 +132,81 @@ describe("interpolate", () => {
 
   it("givenTextWithoutTokens_whenInterpolateStrict_thenReturnedVerbatim", () => {
     expect(interpolateStrict("plain text", store(), "url")).toBe("plain text");
+  });
+});
+
+/**
+ * The scope chain as a reader sees it. `readVariables` never re-implements precedence - it asks
+ * `VariableStore` - so what is pinned here is the reporting: which layers exist, which one wins
+ * each key, and which ones lost.
+ */
+describe("readVariables", () => {
+  const FIXTURE = fixtureWorkspace().root;
+
+  function bindingOf(view: VariableView, key: string): VariableBinding {
+    const found = view.bindings.find((binding) => binding.key === key);
+    if (found === undefined) throw new Error(`no binding for ${key}`);
+    return found;
+  }
+
+  it("givenEnvironmentAndGlobals_whenRead_thenLayersAreLowestPrecedenceFirst", () => {
+    const view = readVariables(FIXTURE, "LOCAL");
+
+    expect(view.environment).toBe("LOCAL");
+    expect(view.layers.map((layer) => layer.scope)).toEqual(["globals", "environment"]);
+    expect(view.layers.map((layer) => layer.writable)).toEqual([false, true]);
+    expect(view.layers[1]?.label).toBe("LOCAL");
+  });
+
+  it("givenKeyInBothLayers_whenRead_thenEnvironmentWinsAndGlobalsIsRecordedAsShadowed", () => {
+    const greeting = bindingOf(readVariables(FIXTURE, "LOCAL"), "greeting");
+
+    expect(greeting.value).toBe("hello");
+    expect(greeting.scope).toBe("environment");
+    expect(greeting.shadowed).toEqual(["globals"]);
+  });
+
+  it("givenKeyOnlyInGlobals_whenRead_thenGlobalsWinsAndNothingIsShadowed", () => {
+    const only = bindingOf(readVariables(FIXTURE, "LOCAL"), "global_only");
+
+    expect(only.value).toBe("from-globals");
+    expect(only.scope).toBe("globals");
+    expect(only.shadowed).toEqual([]);
+  });
+
+  it("givenDisabledEnvironmentRow_whenRead_thenItIsAbsentJustAsItIsForARun", () => {
+    const view = readVariables(FIXTURE, "LOCAL");
+
+    expect(view.bindings.some((binding) => binding.key === "disabled_var")).toBe(false);
+  });
+
+  it("givenNoEnvironment_whenRead_thenOnlyGlobalsRemainAndTheEnvironmentValueIsGone", () => {
+    const view = readVariables(FIXTURE, null);
+
+    expect(view.environment).toBeUndefined();
+    expect(view.layers.map((layer) => layer.scope)).toEqual(["globals"]);
+    expect(bindingOf(view, "greeting").value).toBe("overridden-by-environment");
+  });
+
+  it("givenUndefinedEnvironment_whenRead_thenItAnswersTheSameAsNull", () => {
+    // An inspection has no ambiguity to resolve, so unlike a run it neither adopts the sole
+    // environment nor asks which one was meant.
+    expect(readVariables(FIXTURE, undefined)).toStrictEqual(readVariables(FIXTURE, null));
+  });
+
+  it("givenUnknownEnvironment_whenRead_thenTheCandidatesAreListed", () => {
+    try {
+      readVariables(FIXTURE, "NOPE");
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PremanError);
+      expect((error as PremanError).details.join("\n")).toContain("LOCAL");
+    }
+  });
+
+  it("givenBindings_whenRead_thenKeysAreSortedSoTheTableNeedsNoSecondPass", () => {
+    const keys = readVariables(FIXTURE, "LOCAL").bindings.map((binding) => binding.key);
+
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
   });
 });

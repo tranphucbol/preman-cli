@@ -47,6 +47,34 @@ const RENDERER_FENCE_IMPORTS = ["@preman/core", "@preman/core/**", "node:*", "el
 const RENDERER_FENCE_GLOBALS = ["process", "Buffer", "require", "__dirname", "__filename", "global"];
 const RENDERER_FENCE_RULE =
   "The renderer is a pure view. Reach the engine over the port; import types from @preman/desktop/engine/protocol.js.";
+/**
+ * DOM globals that read like props. `onClose={close}` type-checks, because `close` is
+ * `window.close`, and then the button silently does nothing: this shipped once already. A local
+ * binding of the same name shadows the global and is not reported, so callbacks and destructured
+ * props are unaffected. Say `window.open(...)` when the window is genuinely what you meant.
+ */
+const RENDERER_SHADOWED_GLOBALS = [
+  "close",
+  "open",
+  "name",
+  "status",
+  "length",
+  "top",
+  "parent",
+  "self",
+  "focus",
+  "blur",
+  "print",
+  "stop",
+  "origin",
+  "event",
+  "find",
+  "scroll",
+  "history",
+  "location",
+];
+const RENDERER_SHADOW_RULE =
+  "This is a DOM global, not a prop. Pass the value you meant, or reach through `window.` to be explicit.";
 
 export default tseslint.config(
   {
@@ -179,6 +207,7 @@ export default tseslint.config(
       "no-restricted-globals": [
         "error",
         ...RENDERER_FENCE_GLOBALS.map((name) => ({ name, message: RENDERER_FENCE_RULE })),
+        ...RENDERER_SHADOWED_GLOBALS.map((name) => ({ name, message: RENDERER_SHADOW_RULE })),
       ],
     },
   },

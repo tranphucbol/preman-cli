@@ -128,8 +128,24 @@ const THEME = EditorView.theme(
   { dark: true },
 );
 
+/**
+ * How close to an end of the scroller counts as having reached it. Roughly a screen of a
+ * small font: enough warning that the next window is on its way before the reader arrives.
+ */
+const EDGE_THRESHOLD_PX = 200;
+const SCROLL_TOP = 0;
+
+/** Which end of the document the reader has reached. */
+export type ScrollEdge = "top" | "bottom";
+
 /** Recreated per mount rather than shared, so two open editors cannot fight over one compartment. */
-function baseExtensions(language: CodeLanguage, readOnly: boolean, gutter: boolean, hint: string): Extension[] {
+function baseExtensions(
+  language: CodeLanguage,
+  readOnly: boolean,
+  gutter: boolean,
+  hint: string,
+  engineFind: boolean,
+): Extension[] {
   return [
     history(),
     drawSelection(),
@@ -139,11 +155,14 @@ function baseExtensions(language: CodeLanguage, readOnly: boolean, gutter: boole
     highlightActiveLine(),
     highlightSelectionMatches(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-    search({ top: false }),
+    // An editor showing one window of a much larger document must not offer to search it:
+    // the panel would report "no matches" for text that is certainly there. Dropping the
+    // extension and the keymap together is what makes that impossible rather than unlikely.
+    ...(engineFind ? [] : [search({ top: false })]),
     keymap.of([
       ...closeBracketsKeymap,
       ...defaultKeymap,
-      ...searchKeymap,
+      ...(engineFind ? [] : searchKeymap),
       ...historyKeymap,
       ...foldKeymap,
       indentWithTab,
@@ -166,6 +185,16 @@ export interface CodeEditorProps {
   readonly placeholder?: string;
   readonly className?: string;
   readonly onCommit?: (value: string) => void;
+  /**
+   * Take over `Cmd+F`. Supplying this also removes CodeMirror's own search, so the editor
+   * cannot answer a search question about a document it only partly holds.
+   */
+  readonly onFind?: () => void;
+  /**
+   * Called while the reader is within `EDGE_THRESHOLD_PX` of either end. Fires on every
+   * scroll event, so a caller that loads on it must guard against re-entry itself.
+   */
+  readonly onEdge?: (edge: ScrollEdge) => void;
 }
 
 export function CodeEditor({
@@ -176,18 +205,28 @@ export function CodeEditor({
   placeholder = "",
   className,
   onCommit,
+  onFind,
+  onEdge,
 }: CodeEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
-  // The commit callback is read through a ref so a new closure on every render does not
-  // tear down and rebuild the editor, which would drop the undo history mid-edit.
+  // The callbacks are read through refs so a new closure on every render does not tear down
+  // and rebuild the editor, which would drop the undo history mid-edit.
   const commit = useRef(onCommit);
+  const find = useRef(onFind);
+  const edge = useRef(onEdge);
   // Synced in an effect rather than assigned during render. Writing a ref during render is a
   // real hazard in concurrent React: a render that gets thrown away still leaves its write
   // behind. An effect runs only for the render that committed.
   useEffect(() => {
     commit.current = onCommit;
-  }, [onCommit]);
+    find.current = onFind;
+    edge.current = onEdge;
+  }, [onCommit, onFind, onEdge]);
+
+  // Whether the editor was built without its own search. A boolean rather than the callback
+  // itself, so passing a fresh arrow every render does not rebuild the editor.
+  const engineFind = onFind !== undefined;
 
   useEffect(() => {
     const parent = host.current;
@@ -199,10 +238,31 @@ export function CodeEditor({
         doc: value,
         extensions: [
           language$.of([]),
-          ...baseExtensions(language, readOnly, gutter, placeholder),
+          ...baseExtensions(language, readOnly, gutter, placeholder, engineFind),
+          ...(engineFind
+            ? [
+                keymap.of([
+                  {
+                    key: "Mod-f",
+                    run: () => {
+                      find.current?.();
+                      return true;
+                    },
+                  },
+                ]),
+              ]
+            : []),
           EditorView.domEventHandlers({
             blur: (_event, instance) => {
               commit.current?.(instance.state.doc.toString());
+              return false;
+            },
+            scroll: (_event, instance) => {
+              const reached = edge.current;
+              if (reached === undefined) return false;
+              const { scrollTop, scrollHeight, clientHeight } = instance.scrollDOM;
+              if (scrollTop <= EDGE_THRESHOLD_PX) reached("top");
+              else if (scrollHeight - (scrollTop + clientHeight) <= EDGE_THRESHOLD_PX) reached("bottom");
               return false;
             },
           }),
@@ -220,14 +280,25 @@ export function CodeEditor({
     // `value` is the initial document only. Later changes are handled by the effect below,
     // which is why it is deliberately absent from these dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, readOnly, gutter, placeholder]);
+  }, [language, readOnly, gutter, placeholder, engineFind]);
 
   useEffect(() => {
     const instance = view.current;
     if (instance === null) return;
     const current = instance.state.doc.toString();
     if (current === value) return;
+    // Growth at the end is dispatched as an append rather than a whole-document replacement.
+    // The windowed body viewer grows its document every time the reader nears the bottom, and
+    // replacing the document there would drop their scroll position on every window.
+    if (value.startsWith(current)) {
+      instance.dispatch({ changes: { from: current.length, insert: value.slice(current.length) } });
+      return;
+    }
     instance.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+    // A document that is not a continuation of the last one is a different piece of text, so
+    // the reader's old offset into it means nothing. Keeping the scroll would leave them
+    // somewhere arbitrary in the new content.
+    instance.scrollDOM.scrollTop = SCROLL_TOP;
   }, [value]);
 
   return <div ref={host} className={cn("min-h-0 flex-1 overflow-hidden", className)} />;

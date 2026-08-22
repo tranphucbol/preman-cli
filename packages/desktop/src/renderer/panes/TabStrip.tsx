@@ -85,9 +85,9 @@ function TabButton({
       }}
       className={cn(TAB_CLASS, active ? "bg-panel text-ink" : "bg-canvas text-ink-dim hover:bg-hover hover:text-ink")}
     >
-      <TabLabel nodeId={nodeId} />
+      <TabLabel nodeId={nodeId} title={tab.title} />
       <span className="truncate">{tab.title}</span>
-      <CloseButton tab={tab} onClose={close} />
+      <CloseButton tab={tab} onClose={onClose} />
     </div>
   );
 }
@@ -95,10 +95,16 @@ function TabButton({
 /**
  * The label comes from the catalog rather than the tab, so renaming a method in the editor
  * relabels its tab as soon as the file is saved and the catalog comes back.
+ *
+ * A label that only repeats the title is dropped. For gRPC the label is the last segment of the
+ * method path, and naming a request after the RPC it calls is the obvious thing to do, so the
+ * common case would otherwise read "Echo Echo" in a strip whose whole job is telling tabs apart.
+ * When the two differ the label is real information and stays.
  */
-function TabLabel({ nodeId }: { readonly nodeId: string }): React.JSX.Element | null {
+function TabLabel({ nodeId, title }: { readonly nodeId: string; readonly title: string }): React.JSX.Element | null {
   const node = useNode(nodeId);
   if (node?.label === undefined) return null;
+  if (node.label.toLowerCase() === title.toLowerCase()) return null;
   if (node.protocol === "unsupported") {
     return <span className="shrink-0 font-mono text-2xs text-ink-faint">{UNSUPPORTED_LABEL}</span>;
   }

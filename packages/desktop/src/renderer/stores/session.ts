@@ -11,8 +11,11 @@ import { EXIT_CODES, type Catalog, type EngineError, type EngineMessage } from "
 import type { HostFailure, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
 
 import { EngineRequestError, onEngineClient, type EngineClient } from "@preman/desktop/renderer/client.js";
+import { readSession, restoreCollapse, restoreOpenState, startPersistence } from "@preman/desktop/renderer/persist.js";
 import { useCatalogStore } from "./catalog.js";
+import { useOverlayStore } from "./overlay.js";
 import { useRunsStore } from "./runs.js";
+import { useSearchStore } from "./search.js";
 import { isDirty, useTabsStore } from "./tabs.js";
 
 const NO_CLIENT = null;
@@ -26,8 +29,13 @@ export interface SessionState {
   /** Set when the fs watcher could not start. External edits will be missed until restart. */
   degraded: string | null;
   hostFailure: HostFailure | null;
-  /** The environment name the next run should use, or null for the workspace default. */
-  environment: string | null;
+  /**
+   * Which environment the next run uses, in the three states core distinguishes: a name picks it,
+   * `null` says "none" out loud, and `undefined` means nobody has chosen yet, which is what lets
+   * the sole environment be adopted. Collapsing the last two would make "No environment" either a
+   * lie or unreachable, so the picker needs all three.
+   */
+  environment: string | null | undefined;
 
   // Function properties rather than method signatures: these are read off the state object and
   // handed to event handlers, and none of them uses `this`.
@@ -35,7 +43,7 @@ export interface SessionState {
   setWorkspaces: (workspaces: WorkspaceHandle[]) => void;
   setDegraded: (message: string | null) => void;
   setHostFailure: (failure: HostFailure | null) => void;
-  setEnvironment: (name: string | null) => void;
+  setEnvironment: (name: string | null | undefined) => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -44,7 +52,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   workspaces: [],
   degraded: null,
   hostFailure: null,
-  environment: null,
+  environment: undefined,
 
   setClient(client, root) {
     set({ client, root });
@@ -91,7 +99,7 @@ export async function loadTab(nodeId: string): Promise<void> {
  * moved. A dirty tab is flagged rather than reloaded: overwriting unsaved work to stay in sync is
  * the one behaviour a tool must never have.
  */
-function reconcile(nodeIds: readonly string[]): void {
+export function applyExternalChange(nodeIds: readonly string[]): void {
   const tabs = useTabsStore.getState();
   for (const nodeId of nodeIds) {
     const tab = tabs.tabs.get(nodeId);
@@ -112,15 +120,6 @@ function orphanMissingTabs(): void {
 }
 
 /**
- * Adopt the only environment a workspace has.
- *
- * Not a convenience. `runSelection` with no `env` silently uses the sole environment when there is
- * exactly one (`api/run.ts:123`), so a picker reading "No environment" beside a run that used
- * `QC` would be the app telling the user something untrue about what it just sent. With several
- * environments core refuses to guess and reports the ambiguity, which is why nothing is adopted
- * here in that case.
- */
-/**
  * The one place a catalog becomes state, whether it was asked for or pushed. Two call sites doing
  * this by hand is how the asked-for path silently stopped adopting the sole environment.
  */
@@ -130,9 +129,21 @@ function applyCatalog(catalog: Catalog): void {
   orphanMissingTabs();
 }
 
+/**
+ * Adopt the only environment a workspace has.
+ *
+ * Not a convenience. `runSelection` with no `env` silently uses the sole environment when there is
+ * exactly one (`api/run.ts:123`), so a picker reading "No environment" beside a run that used
+ * `QC` would be the app telling the user something untrue about what it just sent. With several
+ * environments core refuses to guess and reports the ambiguity, which is why nothing is adopted
+ * here in that case.
+ *
+ * Only when nobody has chosen. An explicit `null` is an answer, and adopting over it would take
+ * the user's "none" away every time a catalog arrived.
+ */
 function adoptSoleEnvironment(environments: readonly { readonly name: string }[]): void {
   const session = useSessionStore.getState();
-  if (session.environment !== null) return;
+  if (session.environment !== undefined) return;
   const [sole] = environments;
   if (sole === undefined || environments.length > SOLE_ENVIRONMENT) return;
   session.setEnvironment(sole.name);
@@ -155,13 +166,47 @@ function route(message: EngineMessage): void {
       });
       return;
     case "external-change":
-      reconcile(message.nodeIds);
+      applyExternalChange(message.nodeIds);
+      return;
+    case "git-status":
+      useCatalogStore.getState().applyGit(message.status);
       return;
     case "degraded":
       useSessionStore.getState().setDegraded(message.message);
       return;
   }
 }
+
+/**
+ * Bring a workspace back up: its remembered session, then its catalog, then its tabs.
+ *
+ * The session is read before the catalog is even asked for, because collapse state has to be in
+ * place when the tree arrives. Everything else waits for the catalog, because a tab needs a name
+ * and a kind. Persistence starts last, once there is nothing left to restore over.
+ */
+async function resume(client: EngineClient): Promise<void> {
+  const snapshot = await readSession(client.root);
+  restoreCollapse(snapshot);
+
+  // The first catalog is asked for rather than pushed: the host builds it lazily, so nothing
+  // exists to push until somebody wants it.
+  applyCatalog(await client.send("catalog", {}));
+
+  // Asked for once, then pushed for the rest of the session. Not awaited: a workspace that is not
+  // in a repository, or a `git` that is slow to answer, must not hold up the tabs.
+  void client
+    .send("git-status", {})
+    .then((status) => {
+      useCatalogStore.getState().applyGit(status);
+    })
+    .catch(() => undefined);
+
+  await Promise.all(restoreOpenState(snapshot).map(loadTab));
+  stopPersistence = startPersistence(client.root);
+}
+
+/** Non-null exactly while a workspace is up. Stopped before its stores are cleared, never after. */
+let stopPersistence: (() => void) | null = null;
 
 /**
  * Start listening. Called once, from the mount.
@@ -180,27 +225,31 @@ export function connect(): () => void {
   const stopPorts = onEngineClient((client) => {
     const session = useSessionStore.getState();
     session.client?.close();
+    // Before the clear, not after: the last unsaved keystroke still belongs to the workspace whose
+    // stores are about to be emptied, and a flush after the clear would persist the emptiness.
+    stopPersistence?.();
+    stopPersistence = null;
     useCatalogStore.getState().clear();
     useTabsStore.getState().clear();
     useRunsStore.getState().clear();
+    useSearchStore.getState().clear();
+    // The runner is opened on a node id and the variable manager on an environment; neither means
+    // anything in the workspace that is arriving.
+    useOverlayStore.getState().dismiss();
     session.setDegraded(null);
     session.setHostFailure(null);
-    session.setEnvironment(null);
+    session.setEnvironment(undefined);
     session.setClient(client, client.root);
 
     client.onPush(route);
-    // The first catalog is asked for rather than pushed: the host builds it lazily, so nothing
-    // exists to push until somebody wants it.
-    client
-      .send("catalog", {})
-      .then(applyCatalog)
-      .catch((cause: unknown) => {
-        useSessionStore.getState().setHostFailure({
-          root: client.root,
-          message: toEngineError(cause).message,
-          details: toEngineError(cause).details,
-        });
+    resume(client).catch((cause: unknown) => {
+      const error = toEngineError(cause);
+      useSessionStore.getState().setHostFailure({
+        root: client.root,
+        message: error.message,
+        details: error.details,
       });
+    });
   });
 
   void refreshWorkspaces();
@@ -208,6 +257,8 @@ export function connect(): () => void {
   return () => {
     stopFailures();
     stopPorts();
+    stopPersistence?.();
+    stopPersistence = null;
   };
 }
 

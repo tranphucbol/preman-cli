@@ -10,8 +10,12 @@ import type { BodyHead, BodyMatch, BodyWindow } from "@preman/core/api/bodies.js
 import type { Catalog, CatalogNode, CatalogNodeKind, CatalogProtocol } from "@preman/core/api/catalog.js";
 import type { RunEvent } from "@preman/core/api/events.js";
 import type { SnapshotEnvironment } from "@preman/core/api/inspect.js";
+import type { GitFileStatus, GitStatus } from "@preman/core/api/git.js";
+import type { GrepMatch, GrepResult } from "@preman/core/api/grep.js";
 import type { FieldEdit, RequestKind } from "@preman/core/api/mutate.js";
+import type { VariableBinding, VariableLayer, VariableView } from "@preman/core/api/variables.js";
 import type { ExitCode } from "@preman/core/errors.js";
+import type { Scope } from "@preman/core/vars/store.js";
 
 export type {
   BodyHead,
@@ -23,9 +27,17 @@ export type {
   CatalogProtocol,
   ExitCode,
   FieldEdit,
+  GitFileStatus,
+  GitStatus,
+  GrepMatch,
+  GrepResult,
   RequestKind,
   RunEvent,
+  Scope,
   SnapshotEnvironment,
+  VariableBinding,
+  VariableLayer,
+  VariableView,
 };
 
 /** Environments are files in the workspace but not rows in the tree, so they need their own kind. */
@@ -72,13 +84,41 @@ export interface MutateResult {
 
 export interface RunArgs {
   nodeId: string;
-  environment?: string;
+  /**
+   * A name picks that environment; `null` runs with none. Absent is not the same as
+   * `null`: it leaves the choice to the engine, which adopts a sole environment. Encoded
+   * as `null` rather than a sentinel string so it survives the structured clone intact.
+   */
+  environment?: string | null;
   iterationCount?: number;
   /** A JSON or CSV path, resolved by the engine against the workspace. */
   iterationData?: string;
   bail?: boolean;
   delayRequestMs?: number;
   timeoutMs?: number;
+}
+
+/** A layer the environment manager can write to, and the value to put there. */
+export interface VariableWrite {
+  /** The environment's name. Only environment files are writable; globals are read-only. */
+  environment: string;
+  key: string;
+  value: string;
+}
+
+/**
+ * The formats a finished run can be exported as. Both are core's, because the desktop app
+ * adds no report format of its own: whatever `preman -r` can write, this can write.
+ */
+export const REPORT_FORMATS = ["json", "junit"] as const;
+export type ReportFormat = (typeof REPORT_FORMATS)[number];
+
+export interface RunReportText {
+  format: ReportFormat;
+  /** The bytes a reporter would have written, for the renderer to hand to a save dialog. */
+  text: string;
+  /** A file name to offer, derived from what ran. */
+  suggestedName: string;
 }
 
 /**
@@ -90,6 +130,38 @@ export interface RunAcknowledgement {
   runId: string;
 }
 
+/**
+ * One method a picker can offer, with everything needed to write it into a request.
+ *
+ * `schemaLocation` is the reason this is not simply core's `ProtoMethod`. Choosing a
+ * method means writing `methodPath` *and* `schema.location`, and that location is
+ * relative to the request file that will carry it — arithmetic the renderer cannot do,
+ * because it may not import `node:path` and hand-rolling a `relative()` over a
+ * separator it is not allowed to know is how a picker starts writing broken paths.
+ */
+export interface MethodChoice {
+  /** `pkg.Service.Method`, exactly as `methodPath` is written. */
+  methodPath: string;
+  serviceName: string;
+  methodName: string;
+  /** Absolute path of the declaring spec, for revealing it in a file manager. */
+  spec: string;
+  /** The same spec as a workspace-relative posix path, for showing which proto it was. */
+  specLabel: string;
+  requestType: string;
+  responseType: string;
+  /** Offered, and refused on send. A method missing from a picker reads as a broken index. */
+  streaming: boolean;
+  /** What to write into `schema.location`. Present only when a `nodeId` was supplied. */
+  schemaLocation?: string;
+}
+
+export interface MethodChoices {
+  methods: readonly MethodChoice[];
+  /** A spec that would not load. Carried so a missing method has a stated reason. */
+  warnings: readonly string[];
+}
+
 export type EngineRequest =
   | { id: number; kind: "catalog" }
   | { id: number; kind: "read-node"; nodeId: string }
@@ -98,6 +170,23 @@ export type EngineRequest =
   | { id: number; kind: "mutate"; op: MutateOp }
   | { id: number; kind: "run"; args: RunArgs }
   | { id: number; kind: "cancel"; runId: string }
+  | { id: number; kind: "variables"; environment: string | null }
+  | { id: number; kind: "write-variable"; write: VariableWrite }
+  | { id: number; kind: "run-report"; runId: string; format: ReportFormat }
+  /**
+   * Every method the workspace's declared protos offer. With a `nodeId` each choice also
+   * carries the `schema.location` that request would need, so picking one is two field
+   * edits and no path arithmetic on this side of the port.
+   */
+  | { id: number; kind: "list-methods"; nodeId?: string }
+  /**
+   * A request body for a method, with `{{token}}` where a string field's name is a
+   * variable that exists. The environment is named because the tokens depend on it, and
+   * `null` means "none" exactly as it does on a run.
+   */
+  | { id: number; kind: "message-skeleton"; methodPath: string; environment: string | null }
+  | { id: number; kind: "grep"; query: string; limit?: number }
+  | { id: number; kind: "git-status" }
   | { id: number; kind: "body-head"; handle: string }
   | { id: number; kind: "body-window"; handle: string; offset: number; length?: number }
   | { id: number; kind: "body-search"; handle: string; query: string; limit?: number }
@@ -120,6 +209,15 @@ export interface EngineResults {
   mutate: MutateResult;
   run: RunAcknowledgement;
   cancel: null;
+  variables: VariableView;
+  /** The re-read view, so one edit costs one round trip and cannot show a stale winner. */
+  "write-variable": VariableView;
+  "run-report": RunReportText;
+  "list-methods": MethodChoices;
+  /** The body text itself, ready to drop into `message.content`. */
+  "message-skeleton": string;
+  grep: GrepResult;
+  "git-status": GitStatus;
   "body-head": BodyHead;
   "body-window": BodyWindow;
   "body-search": BodyMatch[];
@@ -142,6 +240,11 @@ export type EnginePush =
   | { push: "run-done"; runId: string; warnings: string[]; cancelled: boolean; error?: EngineError }
   | { push: "catalog"; catalog: Catalog }
   | { push: "external-change"; nodeIds: string[] }
+  /**
+   * The tree's decorations, re-read after the workspace changed. Pushed rather than
+   * polled: a branch switch changes every row at once, and the watcher already knows.
+   */
+  | { push: "git-status"; status: GitStatus }
   /** The watcher could not do its job. Never silent: external edits will be missed. */
   | { push: "degraded"; message: string };
 
@@ -176,3 +279,38 @@ export const EXIT_CODES = {
   BUSINESS: 3,
   TEST: 4,
 } as const satisfies Record<string, ExitCode>;
+
+/**
+ * The gap left between siblings, and the stand-in for a sibling that declares no
+ * `order`. Both are core's (`workspace/paths.ts` and `api/catalog.ts`), duplicated
+ * here for the same reason as `EXIT_CODES`: whoever plans a reorder needs the numbers,
+ * and a renderer that imported them from core would be importing the engine.
+ *
+ * `test/desktop.protocol.test.ts` pins both to core, so the duplication cannot drift.
+ */
+export const ORDER_STEP = 1000;
+export const ORDER_ABSENT = Number.MAX_SAFE_INTEGER;
+
+/**
+ * How large one `body-window` is, and the size above which the engine refuses to
+ * pretty-print. Both are the renderer's arithmetic: one paces the windowed viewer, the
+ * other decides whether the pretty-print toggle is offered at all. Asking and being
+ * refused is a worse experience than a disabled control that says why.
+ *
+ * `BODY_WINDOW_BYTES` lives here rather than in the host because both ends use it - the
+ * host as the default `length`, the renderer as the stride it walks. `test/desktop.protocol.test.ts`
+ * pins `BODY_FORMAT_LIMIT_BYTES` to core's, so that one cannot drift.
+ */
+export const BODY_WINDOW_BYTES = 64 * 1024;
+export const BODY_FORMAT_LIMIT_BYTES = 2 * 1024 * 1024;
+
+/**
+ * What a group's node id has to gain to become the path of the file it edits.
+ *
+ * A node id is a workspace-relative posix path, and `git status` reports the same kind of
+ * path, so matching one to the other is string work rather than a lookup - except for a
+ * group, whose id is its *directory*. This is core's `RESOURCES_DIR` and `DEFINITION_FILE`
+ * joined, duplicated here because the renderer decorates the tree and may not import
+ * `node:path`. `test/desktop.protocol.test.ts` pins it to core.
+ */
+export const GROUP_DEFINITION_SUFFIX = "/.resources/definition.yaml";

@@ -1,0 +1,355 @@
+/**
+ * The variable manager: every layer, side by side, with the winner marked.
+ *
+ * A `{{token}}` that resolves to the wrong thing is the single most common confusion in a request
+ * client, and the reason is always the same - two layers hold the key and you were looking at the
+ * loser. So this pane does not show "the environment". It shows one column per layer, one row per
+ * key, and it strikes through every value that loses. The precedence itself is core's: the engine
+ * answers with the chain `VariableStore` walks, so nothing here can disagree with what a run does.
+ *
+ * Only the layers a workspace can persist appear, which today is globals and the chosen
+ * environment. `data` and `local` exist only while a run is in flight, and the `collection` scope
+ * is declared by core but no workspace file populates it, so a column for it would be a promise
+ * preman does not keep.
+ *
+ * One writable layer, one write path: `write-variable` patches the environment file through the
+ * same comment-preserving writer the CLI's `--save` uses, and answers with the re-read view.
+ */
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import type { Scope, VariableBinding, VariableLayer, VariableView } from "@preman/desktop/engine/protocol.js";
+
+import { readVariables, writeVariable, type Failure } from "@preman/desktop/renderer/actions.js";
+import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
+import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
+import { AddIcon, CloseIcon, RefreshIcon } from "@preman/desktop/renderer/ui/icons.js";
+
+/** Must equal `--spacing-row` in app.css, so the virtualizer needs no measurement pass. */
+const ROW_HEIGHT = 28;
+const OVERSCAN = 12;
+
+const KEY_COLUMN = "minmax(10rem, 1fr)";
+const LAYER_COLUMN = "minmax(12rem, 2fr)";
+
+const CELL_CLASS =
+  "h-row w-full min-w-0 truncate bg-transparent px-2 font-mono text-xs text-ink placeholder:text-ink-faint focus:bg-control focus:outline-none";
+const HEADER_CELL_CLASS = "px-2 text-2xs font-medium tracking-wide text-ink-faint uppercase";
+/** An absent value, rather than an empty one. A blank cell cannot say which of the two it is. */
+const ABSENT = "—";
+const EMPTY = "";
+
+const FIRST_READ = 0;
+const NEXT_READ = 1;
+
+const NO_ENVIRONMENT_LABEL = "No environment";
+const LOADING_HINT = "Reading variables…";
+const NO_VARIABLES_HINT = "This workspace defines no variables yet.";
+const READ_ONLY_HINT = "preman has no writer for globals: edit the file and this pane follows.";
+
+export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void }): React.JSX.Element {
+  const environment = useSessionStore((state) => state.environment);
+  // The catalog's revision changes on every reconcile, including the writeback a script's
+  // `pm.environment.set` produces, so this is how the table follows a run that moved a value.
+  const revision = useCatalogStore((state) => state.revision);
+
+  const [view, setView] = useState<VariableView | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  /** Bumped by Reload. The effect is the only reader, so a manual reload is another run of it. */
+  const [nonce, setNonce] = useState(FIRST_READ);
+
+  useEffect(() => {
+    let live = true;
+    void readVariables(environment).then((result) => {
+      if (!live) return;
+      if (result.ok) {
+        setView(result.value);
+        setFailure(null);
+        return;
+      }
+      setFailure(result.failure);
+    });
+    return () => {
+      // The environment can change while a read is in flight, and the older answer must not be
+      // the one that lands: it would describe a chain that is no longer the one a run would use.
+      live = false;
+    };
+  }, [environment, revision, nonce]);
+
+  const commit = useCallback(async (layer: VariableLayer, key: string, value: string): Promise<void> => {
+    const result = await writeVariable({ environment: layer.label, key, value });
+    if (result.ok) {
+      setView(result.value);
+      setFailure(null);
+      return;
+    }
+    setFailure(result.failure);
+  }, []);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
+        <span className="text-xs font-medium text-ink">Variables</span>
+        <span className="truncate text-2xs text-ink-faint">{view?.environment ?? NO_ENVIRONMENT_LABEL}</span>
+        <div className="flex-1" />
+        <IconButton
+          label="Reload"
+          onClick={() => {
+            setNonce((current) => current + NEXT_READ);
+          }}
+        >
+          <RefreshIcon />
+        </IconButton>
+        <IconButton label="Close variables" onClick={onDismiss}>
+          <CloseIcon />
+        </IconButton>
+      </div>
+
+      {failure !== null && (
+        <div role="alert" className="shrink-0 border-b border-danger/30 bg-danger/10 px-gutter py-1.5">
+          <p className="text-xs text-danger">{failure.message}</p>
+          {failure.details.map((detail) => (
+            <p key={detail} className="text-2xs text-ink-dim">
+              {detail}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {view === null ? <Hint>{LOADING_HINT}</Hint> : <Table view={view} onCommit={commit} />}
+    </div>
+  );
+}
+
+function Hint({ children }: { readonly children: React.ReactNode }) {
+  return <p className="p-gutter text-xs text-ink-faint">{children}</p>;
+}
+
+type Commit = (layer: VariableLayer, key: string, value: string) => Promise<void>;
+
+function Table({ view, onCommit }: { readonly view: VariableView; readonly onCommit: Commit }): React.JSX.Element {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { layers, bindings } = view;
+  const template = `${KEY_COLUMN} ${layers.map(() => LAYER_COLUMN).join(" ")}`;
+
+  const virtualizer = useVirtualizer({
+    count: bindings.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: OVERSCAN,
+    getItemKey: (index) => bindings[index]?.key ?? index,
+  });
+
+  const writable = layers.find((layer) => layer.writable);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="grid h-row shrink-0 items-center border-b border-line" style={{ gridTemplateColumns: template }}>
+        <span className={HEADER_CELL_CLASS}>Key</span>
+        {layers.map((layer) => (
+          <span key={layer.scope} className={HEADER_CELL_CLASS} title={layer.file}>
+            {layer.label}
+            {!layer.writable && <span className="ml-1 text-ink-faint normal-case">read-only</span>}
+          </span>
+        ))}
+      </div>
+
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        {bindings.length === 0 ? (
+          <Hint>{NO_VARIABLES_HINT}</Hint>
+        ) : (
+          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const binding = bindings[item.index];
+              if (binding === undefined) return null;
+              return (
+                <Row
+                  key={item.key}
+                  binding={binding}
+                  layers={layers}
+                  template={template}
+                  top={item.start}
+                  onCommit={onCommit}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {writable === undefined ? (
+        <p className="shrink-0 border-t border-line px-gutter py-1.5 text-2xs text-ink-faint">{READ_ONLY_HINT}</p>
+      ) : (
+        <AddRow layer={writable} template={template} columns={layers.length} onCommit={onCommit} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * One key across every layer.
+ *
+ * The winner is plain ink; a value that is there but loses is struck through, which is the whole
+ * point of the pane. Absent is an em-dash rather than a blank, because "no value here" and "the
+ * empty string here" are different answers and a run treats them differently.
+ */
+function Row({
+  binding,
+  layers,
+  template,
+  top,
+  onCommit,
+}: {
+  readonly binding: VariableBinding;
+  readonly layers: readonly VariableLayer[];
+  readonly template: string;
+  readonly top: number;
+  readonly onCommit: Commit;
+}) {
+  return (
+    <div
+      className="absolute inset-x-0 grid h-row items-center border-b border-line hover:bg-hover"
+      style={{ top, gridTemplateColumns: template }}
+      role="row"
+    >
+      <span className="truncate px-2 font-mono text-xs text-ink" title={binding.key}>
+        {binding.key}
+      </span>
+      {layers.map((layer) => (
+        <Cell key={layer.scope} layer={layer} binding={binding} value={layer.values[binding.key]} onCommit={onCommit} />
+      ))}
+    </div>
+  );
+}
+
+function Cell({
+  layer,
+  binding,
+  value,
+  onCommit,
+}: {
+  readonly layer: VariableLayer;
+  readonly binding: VariableBinding;
+  readonly value: string | undefined;
+  readonly onCommit: Commit;
+}) {
+  const tone = toneFor(layer.scope, binding, value !== undefined);
+
+  if (!layer.writable) {
+    return (
+      <span className={cn("truncate px-2 font-mono text-xs", tone)} title={value ?? EMPTY}>
+        {value ?? ABSENT}
+      </span>
+    );
+  }
+
+  return (
+    <ValueCell
+      value={value}
+      label={`${binding.key} in ${layer.label}`}
+      tone={tone}
+      onCommit={(next) => {
+        void onCommit(layer, binding.key, next);
+      }}
+    />
+  );
+}
+
+/** Winner, loser, or nothing at all. The one place a scope becomes a class. */
+function toneFor(scope: Scope, binding: VariableBinding, present: boolean): string {
+  if (!present) return "text-ink-faint";
+  if (binding.scope === scope) return "text-ink";
+  return "text-ink-faint line-through";
+}
+
+/**
+ * An editable value, committed on blur or Enter and never on a debounce.
+ *
+ * Every commit writes a YAML file on disk. A grid cell can afford to checkpoint mid-word; a file
+ * write cannot, and a `git diff` that shows six intermediate spellings of one value is worse than
+ * one that shows the value.
+ */
+function ValueCell({
+  value,
+  label,
+  tone,
+  onCommit,
+}: {
+  readonly value: string | undefined;
+  readonly label: string;
+  readonly tone: string;
+  readonly onCommit: (value: string) => void;
+}) {
+  return (
+    <input
+      // Remounted when the stored value changes, so a write elsewhere - or a script's writeback
+      // during a run - reaches a cell the user is not currently typing in.
+      key={value}
+      defaultValue={value ?? EMPTY}
+      spellCheck={false}
+      aria-label={label}
+      placeholder={ABSENT}
+      className={cn(CELL_CLASS, tone)}
+      onBlur={(event) => {
+        const next = event.currentTarget.value;
+        if (next !== (value ?? EMPTY)) onCommit(next);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
+/**
+ * A dedicated add row, matching the request grid: a blank last row that is sometimes real is the
+ * thing people accidentally save.
+ */
+function AddRow({
+  layer,
+  template,
+  columns,
+  onCommit,
+}: {
+  readonly layer: VariableLayer;
+  readonly template: string;
+  readonly columns: number;
+  readonly onCommit: Commit;
+}) {
+  const [key, setKey] = useState(EMPTY);
+
+  const submit = () => {
+    const trimmed = key.trim();
+    if (trimmed === EMPTY) return;
+    setKey(EMPTY);
+    void onCommit(layer, trimmed, EMPTY);
+  };
+
+  return (
+    <div className="grid shrink-0 items-center border-t border-line" style={{ gridTemplateColumns: template }}>
+      <div className="flex h-row items-center gap-1 px-2 text-glyph">
+        <AddIcon />
+        <input
+          value={key}
+          spellCheck={false}
+          placeholder={`New key in ${layer.label}`}
+          aria-label={`New key in ${layer.label}`}
+          className={cn(CELL_CLASS, "px-0")}
+          onChange={(event) => {
+            setKey(event.currentTarget.value);
+          }}
+          onBlur={submit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") submit();
+          }}
+        />
+      </div>
+      {/* One spacer per layer column, so the add row lines up with the table above it. */}
+      {Array.from({ length: columns }, (_unused, index) => (
+        <span key={index} />
+      ))}
+    </div>
+  );
+}

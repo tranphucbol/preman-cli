@@ -15,10 +15,22 @@ import type { DocumentKind, EngineError, FieldEdit, NodeDocument } from "@preman
 
 const NO_ACTIVE = null;
 
-/** Every editor sub-tab id in the app. gRPC and HTTP show different subsets of these. */
-export type SubTab = "params" | "auth" | "headers" | "body" | "scripts" | "settings" | "yaml";
+/**
+ * Every editor sub-tab id in the app. gRPC and HTTP show different subsets of these.
+ *
+ * The runtime list is the declaration and the type is derived from it, so `isSubTab` cannot fall
+ * behind the union: a sub-tab that exists as a type but not as a value would not compile.
+ */
+export const SUB_TABS = ["params", "auth", "headers", "body", "scripts", "settings", "yaml"] as const;
+
+export type SubTab = (typeof SUB_TABS)[number];
 
 export const DEFAULT_SUB_TAB: SubTab = "body";
+
+/** For values arriving from app data, which is JSON and therefore only ever `string`. */
+export function isSubTab(value: string): value is SubTab {
+  return (SUB_TABS as readonly string[]).includes(value);
+}
 
 export interface Tab {
   readonly nodeId: string;

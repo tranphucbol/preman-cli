@@ -8,11 +8,14 @@
  * `createEngineHost` is driven directly by the tests.
  */
 import { readFileSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { BodyStore } from "@preman/core/api/bodies.js";
 import { buildCatalog, refreshCatalog, type Catalog, type CatalogNode } from "@preman/core/api/catalog.js";
 import type { RunEvent, RunEventSink } from "@preman/core/api/events.js";
+import { readGitStatus, type GitStatus } from "@preman/core/api/git.js";
+import { grepWorkspace, type GrepResult } from "@preman/core/api/grep.js";
+import { ProtoCache } from "@preman/core/api/protos.js";
 import {
   createCollection,
   createEnvironmentFile,
@@ -26,12 +29,19 @@ import {
   reorderSiblings,
   replaceFileText,
 } from "@preman/core/api/mutate.js";
-import { runSelection, type RunSelectionArgs } from "@preman/core/api/run.js";
+import { writeEnvironmentValue } from "@preman/core/api/environments.js";
+import { runSelection, type RunSelectionArgs, type RunSelectionResult } from "@preman/core/api/run.js";
+import { readVariables, type VariableView } from "@preman/core/api/variables.js";
 import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
 import { EXIT, PremanError } from "@preman/core/errors.js";
+import { toJunitReport, type RunReport } from "@preman/core/report/junit.js";
+import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
 import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
 import { toEngineError } from "@preman/desktop/engine/errors.js";
 import {
+  BODY_WINDOW_BYTES,
+  type MethodChoice,
+  type MethodChoices,
   type DocumentKind,
   type EngineMessage,
   type EngineRequest,
@@ -40,7 +50,10 @@ import {
   type MutateOp,
   type MutateResult,
   type NodeDocument,
+  type ReportFormat,
   type RunArgs,
+  type RunReportText,
+  type VariableWrite,
 } from "@preman/desktop/engine/protocol.js";
 
 /** Matching the CLI's defaults, so the app and `preman run` behave the same by default. */
@@ -53,9 +66,28 @@ const FIRST_RUN = 1;
 const SELECTOR_SEPARATOR = "/";
 const PARENT_SEGMENT = "..";
 const ENCODING = "utf8";
-/** One scroll's worth of a response body. The renderer asks again as the viewport moves. */
-const BODY_WINDOW_BYTES = 64 * 1024;
 const BODY_SEARCH_LIMIT = 500;
+/**
+ * How many finished runs stay exportable. A report is the whole outcome tree, so this is
+ * a memory bound, not a policy: the runner only ever exports the run in front of you.
+ */
+const RETAINED_REPORTS = 20;
+const REPORT_EXTENSION: Record<ReportFormat, string> = { json: "json", junit: "xml" };
+/** Matching the CLI's json reporter, so the two write the same bytes. */
+const JSON_INDENT = 2;
+const NAME_SEPARATOR = "-";
+/** Anything a file name should not carry, collapsed so the save dialog gets one token. */
+const UNSAFE_NAME_CHARACTERS = /[^A-Za-z0-9._-]+/g;
+/**
+ * How long the tree's git decorations wait after a change before being re-read.
+ *
+ * A branch switch or a `git stash` rewrites dozens of files, and the watcher reports them
+ * in bursts. Shelling out once per burst is the point; the delay is long enough to
+ * coalesce one and short enough that a save feels like it decorated the row immediately.
+ */
+const GIT_STATUS_DEBOUNCE_MS = 400;
+/** `schema.location` is posix in every workspace, whatever host wrote it. */
+const LOCATION_SEPARATOR = "/";
 
 export interface EngineHostOptions {
   /** The workspace root. Every node id in the protocol is relative to this. */
@@ -127,15 +159,43 @@ function selectorFor(catalog: Catalog, nodeId: string): string {
   return segments.join(SELECTOR_SEPARATOR);
 }
 
+/** What ran, as one path, so an exported file is named after it rather than after the run id. */
+function reportSubject(report: RunReport): string {
+  return report.kind === "single" ? report.outcome.entry.path : report.outcome.groupPath;
+}
+
+function reportName(report: RunReport, runId: string, format: ReportFormat): string {
+  const subject = reportSubject(report)
+    .split(SELECTOR_SEPARATOR)
+    .join(NAME_SEPARATOR)
+    .replace(UNSAFE_NAME_CHARACTERS, NAME_SEPARATOR);
+  return `${subject}${NAME_SEPARATOR}${runId}.${REPORT_EXTENSION[format]}`;
+}
+
+/**
+ * Render a finished run. Both formats are core's, so the app cannot drift from what
+ * `preman -r json` and `preman -r junit` write for the same run.
+ */
+function renderReport(report: RunReport, format: ReportFormat): string {
+  if (format === "junit") return toJunitReport(report);
+  const json = report.kind === "single" ? toJsonReport(report.outcome) : toGroupJsonReport(report.outcome);
+  return JSON.stringify(json, null, JSON_INDENT);
+}
+
 export function createEngineHost(options: EngineHostOptions): EngineHost {
   const { root, post } = options;
   const bodies = new BodyStore();
+  /** One per host, because the load is the expensive part and it only changes with a `.proto`. */
+  const protos = new ProtoCache(root);
   const runs = new Map<string, RunState>();
+  /** Finished runs, oldest first, so a report can be exported after `run-done`. */
+  const reports = new Map<string, RunReport>();
   let catalog: Catalog | undefined;
   let watcher: WatchHandle | undefined;
   let nextRun = FIRST_RUN;
   /** Refreshes are serialised: two overlapping `refreshCatalog` calls would race on `catalog`. */
   let reconciling: Promise<void> = Promise.resolve();
+  let gitTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
 
   function publish(next: Catalog): Catalog {
@@ -149,6 +209,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     const next = await refreshCatalog(catalog, paths);
     publish(next);
     post({ push: "external-change", nodeIds: paths.map((path) => nodeIdFor(root, path)) });
+    scheduleGitStatus();
   }
 
   function startWatching(): void {
@@ -274,6 +335,45 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     return path;
   }
 
+  /**
+   * Keep a finished run exportable, evicting the oldest once {@link RETAINED_REPORTS} are
+   * held. A cancelled run is remembered too: cancellation stops the reporting, not the
+   * requests that already completed, and the partial report is still worth having.
+   */
+  function remember(runId: string, result: RunSelectionResult): void {
+    const report: RunReport | undefined =
+      result.group !== undefined
+        ? { kind: "group", outcome: result.group }
+        : result.outcome !== undefined
+          ? { kind: "single", outcome: result.outcome }
+          : undefined;
+    if (report === undefined) return;
+
+    reports.set(runId, report);
+    while (reports.size > RETAINED_REPORTS) {
+      const oldest = reports.keys().next();
+      if (oldest.done === true) break;
+      reports.delete(oldest.value);
+    }
+  }
+
+  function runReport(runId: string, format: ReportFormat): RunReportText {
+    const report = reports.get(runId);
+    if (report === undefined) {
+      throw usage(`no report is held for ${runId}`, ["only the most recent runs can be exported"]);
+    }
+    return { format, text: renderReport(report, format), suggestedName: reportName(report, runId, format) };
+  }
+
+  /**
+   * Write one value and hand back the re-read view. `writeEnvironmentValue` rewrites the
+   * YAML in place, so comments and key order survive an edit made in the app.
+   */
+  function writeVariable(write: VariableWrite): VariableView {
+    writeEnvironmentValue(root, write.environment, write.key, write.value);
+    return readVariables(root, write.environment);
+  }
+
   function startRun(args: RunArgs): string {
     const runId = `${RUN_ID_PREFIX}${String(nextRun++)}`;
     const state: RunState = { cancelled: false };
@@ -317,6 +417,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
           bodies,
         };
         const result = await runSelection(selection);
+        remember(runId, result);
         if (!state.cancelled) {
           post({ push: "run-done", runId, warnings: result.warnings, cancelled: false });
         }
@@ -345,6 +446,59 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     return null;
   }
 
+  /**
+   * Every method the declared protos offer, plus the `schema.location` a given request
+   * would need to reach each one. The relative path is computed from the request's own
+   * directory, which is the only place that arithmetic can honestly happen.
+   */
+  function listMethods(nodeId: string | undefined): MethodChoices {
+    const index = protos.index();
+    const from = nodeId === undefined ? undefined : dirname(fileFor(resolveWithinRoot(root, nodeId), "request"));
+    const methods: MethodChoice[] = index.methods.map((method) => ({
+      methodPath: method.methodPath,
+      serviceName: method.serviceName,
+      methodName: method.methodName,
+      spec: method.spec,
+      specLabel: nodeIdFor(root, method.spec),
+      requestType: method.requestType,
+      responseType: method.responseType,
+      streaming: method.streaming,
+      ...(from === undefined
+        ? {}
+        : { schemaLocation: relative(from, method.spec).split(sep).join(LOCATION_SEPARATOR) }),
+    }));
+    return { methods, warnings: index.warnings };
+  }
+
+  /**
+   * The tokens offered to a skeleton are every variable name in scope for that
+   * environment, shadowed ones included: a shadowed key still interpolates, so a field
+   * named after it should still be written as `{{token}}`.
+   */
+  function messageSkeleton(methodPath: string, environment: string | null): string {
+    const tokens = new Set(readVariables(root, environment).bindings.map((binding) => binding.key));
+    return protos.skeleton(methodPath, tokens);
+  }
+
+  async function grep(query: string, limit: number | undefined): Promise<GrepResult> {
+    return grepWorkspace(await ensureCatalog(), query, { limit });
+  }
+
+  /**
+   * Re-read after a burst of changes and pushed, because a rebase moves every row and
+   * nothing in the renderer could know to ask. A failure here is already a `warning`
+   * inside the status, so there is nothing to catch.
+   */
+  function scheduleGitStatus(): void {
+    if (gitTimer !== undefined) clearTimeout(gitTimer);
+    gitTimer = setTimeout(() => {
+      gitTimer = undefined;
+      void readGitStatus(root).then((status: GitStatus) => {
+        if (!disposed) post({ push: "git-status", status });
+      });
+    }, GIT_STATUS_DEBOUNCE_MS);
+  }
+
   async function dispatch(request: EngineRequest): Promise<EngineResult> {
     // A disposed host has closed its watcher, so its catalog can no longer be trusted to match
     // the disk. Refusing is honest; serving the last known state is how a GUI shows a lie.
@@ -364,6 +518,20 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         return { runId: startRun(request.args) };
       case "cancel":
         return cancelRun(request.runId);
+      case "variables":
+        return readVariables(root, request.environment);
+      case "write-variable":
+        return writeVariable(request.write);
+      case "run-report":
+        return runReport(request.runId, request.format);
+      case "list-methods":
+        return listMethods(request.nodeId);
+      case "message-skeleton":
+        return messageSkeleton(request.methodPath, request.environment);
+      case "grep":
+        return grep(request.query, request.limit);
+      case "git-status":
+        return readGitStatus(root);
       case "body-head":
         return bodies.head(request.handle);
       case "body-window":
@@ -390,8 +558,11 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       disposed = true;
       watcher?.close();
       watcher = undefined;
+      if (gitTimer !== undefined) clearTimeout(gitTimer);
+      gitTimer = undefined;
       for (const state of runs.values()) state.cancelled = true;
       runs.clear();
+      reports.clear();
     },
   };
 }

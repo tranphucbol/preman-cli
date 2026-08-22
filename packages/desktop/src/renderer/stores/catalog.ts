@@ -11,7 +11,15 @@
  */
 import { create } from "zustand";
 
-import type { Catalog, CatalogNode, SnapshotEnvironment } from "@preman/desktop/engine/protocol.js";
+import type {
+  Catalog,
+  CatalogNode,
+  GitFileStatus,
+  GitStatus,
+  SnapshotEnvironment,
+} from "@preman/desktop/engine/protocol.js";
+
+import { deriveGitDecorations, type GitDecoration } from "@preman/desktop/renderer/model/git.js";
 
 const NO_ROOT = null;
 const NO_SELECTION = null;
@@ -54,17 +62,30 @@ export interface CatalogState {
   environments: SnapshotEnvironment[];
   specs: string[];
 
+  /**
+   * The git overlay. It lives here rather than in a store of its own because a decoration is a
+   * function of *both* the status and the nodes, and two stores holding half of one derivation is
+   * how a row ends up undecorated until the next unrelated push. `visibleIds` is the same shape of
+   * problem, and it is already here.
+   */
+  branch: string | null;
+  gitFiles: Readonly<Record<string, GitFileStatus>>;
+  gitDecorations: ReadonlyMap<string, GitDecoration>;
+
   /** Replace wholesale. The engine owns the truth; this store never patches a node itself. */
   // Actions are function properties, not method signatures. A method read off the state object
   // and passed to a handler is an unbound method; declaring the shape this way says out loud
   // that these never use `this`.
   replace: (catalog: Catalog) => void;
+  applyGit: (status: GitStatus) => void;
   /** Restore collapse state for a workspace being reopened, before the first catalog arrives. */
   restoreCollapsed: (ids: readonly string[]) => void;
   toggle: (id: string) => void;
   select: (id: string | null) => void;
   clear: () => void;
 }
+
+const NO_FILES: Readonly<Record<string, GitFileStatus>> = {};
 
 const EMPTY = {
   root: NO_ROOT,
@@ -76,7 +97,10 @@ const EMPTY = {
   selectedId: NO_SELECTION,
   environments: [],
   specs: [],
-} satisfies Omit<CatalogState, "replace" | "restoreCollapsed" | "toggle" | "select" | "clear">;
+  branch: null,
+  gitFiles: NO_FILES,
+  gitDecorations: new Map<string, GitDecoration>(),
+} satisfies Omit<CatalogState, "replace" | "applyGit" | "restoreCollapsed" | "toggle" | "select" | "clear">;
 
 export const useCatalogStore = create<CatalogState>((set) => ({
   ...EMPTY,
@@ -90,12 +114,24 @@ export const useCatalogStore = create<CatalogState>((set) => ({
       visibleIds: computeVisible(catalog.nodes, state.collapsed),
       environments: catalog.environments,
       specs: catalog.specs,
+      // Recomputed here as well as in `applyGit`, because a node the status already mentioned may
+      // only now have appeared: git sees a new file the instant it is written, the catalog after
+      // the watcher fires, and the two arrive in whichever order they arrive.
+      gitDecorations: deriveGitDecorations(catalog.nodes, state.gitFiles),
       // A node that was deleted externally must not stay selected: the editor would be pointing
       // at a file that is gone, and "orphaned tab" is a tab concern, not a selection one.
       selectedId:
         state.selectedId !== NO_SELECTION && catalog.nodes.some((node) => node.id === state.selectedId)
           ? state.selectedId
           : NO_SELECTION,
+    }));
+  },
+
+  applyGit(status) {
+    set((state) => ({
+      branch: status.branch,
+      gitFiles: status.files,
+      gitDecorations: deriveGitDecorations(state.nodes, status.files),
     }));
   },
 
@@ -120,8 +156,10 @@ export const useCatalogStore = create<CatalogState>((set) => ({
   },
 
   clear() {
-    // Collapse state survives a workspace switch by id, so it is not reset here.
-    set((state) => ({ ...EMPTY, collapsed: state.collapsed }));
+    // Collapse state goes too. Node ids are workspace-relative paths, so carrying a set of them
+    // into another workspace would fold whichever collections happen to share a name.
+    // `restoreCollapse` puts the incoming workspace's own set back before its catalog arrives.
+    set(EMPTY);
   },
 }));
 
@@ -139,4 +177,9 @@ export function useIsCollapsed(id: string): boolean {
 
 export function useIsSelected(id: string): boolean {
   return useCatalogStore((state) => state.selectedId === id);
+}
+
+/** One more per-row subscription, and the same reason: a rebase must not repaint the tree twice. */
+export function useGitDecoration(id: string): GitDecoration | undefined {
+  return useCatalogStore((state) => state.gitDecorations.get(id));
 }

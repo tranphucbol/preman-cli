@@ -1,7 +1,7 @@
 /**
  * The sidebar tree.
  *
- * Three rules hold this file together, and each one is the reason the pane is fast:
+ * Four rules hold this file together, and each one is the reason the pane is fast:
  *
  * 1. The list is flat. The engine sends `CatalogNode[]` pre-sorted in Postman order, collapse is a
  *    filter, and TanStack Virtual mounts only the viewport. A nested tree cannot be virtualized
@@ -11,14 +11,34 @@
  * 3. Radix is mounted at the root, not per row. One `ContextMenu`, one `Tooltip` provider, and the
  *    row that was right-clicked is read off the event target. Five thousand Radix roots is the
  *    mistake this file exists to avoid.
+ * 4. A drag is not tracked in React state. The pointer moves continuously and `setState` on every
+ *    frame would reconcile the viewport sixty times a second; the plan lives in a ref and state
+ *    changes only when the *discrete* answer changes, which is once per row crossed.
  */
+import {
+  DndContext,
+  DragOverlay,
+  MeasuringStrategy,
+  PointerSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragMoveEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useRef, useState } from "react";
 
-import type { CatalogNode, RequestKind } from "@preman/desktop/engine/protocol.js";
+import type { CatalogNode, MutateOp, RequestKind } from "@preman/desktop/engine/protocol.js";
 
+import type { GitDecoration } from "@preman/desktop/renderer/model/git.js";
+import { resolveDrop, type DropSide } from "@preman/desktop/renderer/model/order.js";
 import {
   useCatalogStore,
+  useGitDecoration,
   useIsCollapsed,
   useIsSelected,
   useNode,
@@ -43,6 +63,7 @@ import {
   NewRequestIcon,
   RenameIcon,
   RevealIcon,
+  RunnerIcon,
   SendIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 
@@ -66,8 +87,52 @@ const LABEL_COLUMN_PX = 42;
 
 const NO_TARGET = null;
 
+/**
+ * How far the pointer travels before a press becomes a drag. Below this a press is still a click,
+ * which is what keeps a tree of 28px rows clickable at all.
+ */
+const DRAG_THRESHOLD_PX = 4;
+
+/**
+ * The share of a group row's height that reads as "beside it" at each end. 28% leaves the middle
+ * 44% for "into it", which is the biggest of the three bands because it is the ambiguous one.
+ */
+const EDGE_RATIO = 0.28;
+const HALF = 2;
+
+/** Must equal `--z-index-drag` in app.css: `DragOverlay` writes its own inline z-index. */
+const DRAG_Z_INDEX = 25;
+
+/**
+ * Replaces dnd-kit's default, which offers the space bar. There is no `KeyboardSensor` here because
+ * the tree has no keyboard navigation to drag from yet, and instructions for a sensor that does not
+ * exist are worse than none.
+ */
+const DRAG_INSTRUCTIONS = "Drag a row with the pointer to move or reorder it.";
+
+const NO_OPS: readonly MutateOp[] = [];
+
 const UNSUPPORTED_LABEL = "n/a";
 const GRPC_LABEL = "gRPC";
+
+/**
+ * The git mark, and the width reserved for it on every row.
+ *
+ * One character at the right edge, VS Code's letters because they are the ones people already
+ * read, and the column is always there so a `git stash` does not reflow every name in the tree.
+ * A descendant gets a dot rather than a letter: something below this row changed, and naming
+ * *which* status would be a lie when several differ.
+ */
+const GIT_COLUMN_PX = 10;
+const GIT_MARK: Record<GitDecoration, { readonly glyph: string; readonly tone: string; readonly title: string }> = {
+  modified: { glyph: "M", tone: "text-warn", title: "Modified" },
+  added: { glyph: "A", tone: "text-ok", title: "Added" },
+  deleted: { glyph: "D", tone: "text-danger", title: "Deleted" },
+  renamed: { glyph: "R", tone: "text-accent", title: "Renamed" },
+  untracked: { glyph: "U", tone: "text-ok", title: "Untracked" },
+  conflicted: { glyph: "!", tone: "text-danger", title: "Conflicted" },
+  descendant: { glyph: "•", tone: "text-ink-faint", title: "Contains changes" },
+};
 
 /** Verb to token. A row cannot invent a colour, and an unknown verb falls through to plain ink. */
 const METHOD_CLASS: Record<string, string> = {
@@ -81,14 +146,32 @@ const METHOD_CLASS: Record<string, string> = {
 const selectVisible = (state: CatalogState) => state.visibleIds;
 const selectRoot = (state: CatalogState) => state.root;
 
+/**
+ * Where the drop line goes, in pixels down the virtual list.
+ *
+ * This is the *resolved* answer, not the pointer's: a plan that cannot be expressed produces no
+ * indicator at all, so the pane never draws a line for a drop it is going to refuse.
+ */
+interface DropIndicator {
+  readonly top: number;
+  /** Left inset of the line, so it starts where the destination's names start. */
+  readonly indent: number;
+  /** A group being dropped into is outlined whole rather than given an edge. */
+  readonly inside: boolean;
+}
+
 export interface SidebarProps {
   readonly onOpen: (node: CatalogNode) => void;
   readonly onSend: (node: CatalogNode) => void;
+  /** Groups only: opens the collection runner on this node. Not a run of its own. */
+  readonly onRun: (node: CatalogNode) => void;
   readonly onCreateRequest: (parentId: string, kind: RequestKind) => void;
   readonly onCreateFolder: (parentId: string) => void;
   readonly onRename: (node: CatalogNode) => void;
   readonly onDelete: (node: CatalogNode) => void;
   readonly onReveal: (node: CatalogNode) => void;
+  /** In order, and possibly more than one: see `resolveDrop`. Never called with an empty list. */
+  readonly onDrop: (ops: readonly MutateOp[]) => void;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -101,6 +184,19 @@ export function Sidebar(props: SidebarProps) {
    * pointerdown handler records which row was under the cursor before the menu opens.
    */
   const [targetId, setTargetId] = useState<string | null>(NO_TARGET);
+
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [indicator, setIndicator] = useState<DropIndicator | null>(null);
+
+  /**
+   * The plan the indicator is showing, and the pointer position that produced it. Both are refs
+   * because `onDragMove` fires per frame: state changes only when `signature` does, which is once
+   * per row edge crossed rather than sixty times a second.
+   */
+  const planRef = useRef<readonly MutateOp[]>(NO_OPS);
+  const signatureRef = useRef<string | null>(null);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: DRAG_THRESHOLD_PX } }));
 
   const virtualizer = useVirtualizer({
     count: visibleIds.length,
@@ -115,6 +211,70 @@ export function Sidebar(props: SidebarProps) {
     setTargetId(row?.dataset["nodeId"] ?? NO_TARGET);
   }, []);
 
+  const clearDrag = useCallback(() => {
+    planRef.current = NO_OPS;
+    signatureRef.current = null;
+    setDragId(null);
+    setIndicator(null);
+  }, []);
+
+  const onDragStart = useCallback((event: DragStartEvent) => {
+    setDragId(String(event.active.id));
+  }, []);
+
+  const onDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      const over = event.over;
+      const draggedId = String(event.active.id);
+      if (over === null) {
+        signatureRef.current = null;
+        planRef.current = NO_OPS;
+        setIndicator(null);
+        return;
+      }
+
+      const overId = String(over.id);
+      const catalog = useCatalogStore.getState();
+      const overNode = catalog.byId.get(overId);
+      if (overNode === undefined) {
+        return;
+      }
+
+      // The activator is where the press landed, so plus the delta is where the pointer is now.
+      const pointerY = (event.activatorEvent as PointerEvent).clientY + event.delta.y;
+      const side = sideFor(over.rect, pointerY, overNode.kind !== "request");
+
+      const signature = `${overId}:${side}`;
+      if (signature === signatureRef.current) {
+        return;
+      }
+      signatureRef.current = signature;
+
+      const plan = resolveDrop(catalog.nodes, draggedId, { overId, side });
+      planRef.current = plan.ops;
+      setIndicator(plan.ops.length === 0 ? null : indicatorFor(plan.side, overNode, visibleIds.indexOf(overId)));
+    },
+    [visibleIds],
+  );
+
+  const onDragEnd = useCallback(
+    (_event: DragEndEvent) => {
+      const ops = planRef.current;
+      clearDrag();
+      if (ops.length === 0) {
+        return;
+      }
+      // Expanded before the mutation lands, so the row does not appear to vanish into a shut folder.
+      const destination = destinationOf(ops);
+      const catalog = useCatalogStore.getState();
+      if (destination !== null && catalog.collapsed.has(destination)) {
+        catalog.toggle(destination);
+      }
+      props.onDrop(ops);
+    },
+    [clearDrag, props],
+  );
+
   if (root === null) {
     return <EmptyPane message="No workspace open." hint="Open one with Cmd+Shift+O." />;
   }
@@ -124,22 +284,119 @@ export function Sidebar(props: SidebarProps) {
   }
 
   return (
-    <ContextMenu>
-      <ContextTrigger className="min-h-0 flex-1">
-        <div
-          ref={scrollRef}
-          onContextMenu={captureTarget}
-          className="h-full overflow-x-hidden overflow-y-auto overscroll-contain"
-        >
-          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-            {virtualizer.getVirtualItems().map((item) => (
-              <Row key={item.key} nodeId={visibleIds[item.index] ?? ""} top={item.start} onOpen={props.onOpen} />
-            ))}
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      accessibility={{ screenReaderInstructions: { draggable: DRAG_INSTRUCTIONS } }}
+      onDragStart={onDragStart}
+      onDragMove={onDragMove}
+      onDragEnd={onDragEnd}
+      onDragCancel={clearDrag}
+    >
+      <ContextMenu>
+        <ContextTrigger className="min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            onContextMenu={captureTarget}
+            className="h-full overflow-x-hidden overflow-y-auto overscroll-contain"
+          >
+            <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+              {virtualizer.getVirtualItems().map((item) => (
+                <Row key={item.key} nodeId={visibleIds[item.index] ?? ""} top={item.start} onOpen={props.onOpen} />
+              ))}
+              {indicator !== null && <DropLine indicator={indicator} />}
+            </div>
           </div>
-        </div>
-      </ContextTrigger>
-      <SidebarContextMenu targetId={targetId} {...props} />
-    </ContextMenu>
+        </ContextTrigger>
+        <SidebarContextMenu targetId={targetId} {...props} />
+      </ContextMenu>
+      <DragOverlay dropAnimation={null} zIndex={DRAG_Z_INDEX}>
+        {dragId !== null && <DragPill nodeId={dragId} refused={indicator === null} />}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+/**
+ * Which edge of the row the pointer is on.
+ *
+ * A group gets three bands, because dropping *into* it is a real answer. A request gets two split
+ * at the midpoint: it holds nothing, so a middle band would be a slower way to say "after" and it
+ * would make the gap above a request hard to hit.
+ */
+function sideFor(rect: { readonly top: number; readonly height: number }, pointerY: number, holds: boolean): DropSide {
+  const offset = pointerY - rect.top;
+  if (!holds) {
+    return offset < rect.height / HALF ? "before" : "after";
+  }
+  const edge = rect.height * EDGE_RATIO;
+  if (offset < edge) return "before";
+  if (offset > rect.height - edge) return "after";
+  return "inside";
+}
+
+function indicatorFor(side: DropSide, over: CatalogNode, visibleIndex: number): DropIndicator {
+  const top = visibleIndex * ROW_HEIGHT;
+  if (side === "inside") {
+    return { top, indent: 0, inside: true };
+  }
+  return {
+    top: side === "before" ? top : top + ROW_HEIGHT,
+    indent: over.depth * INDENT_PX + CHEVRON_PX,
+    inside: false,
+  };
+}
+
+/** The destination parent of a plan, when the plan moves the node out of its current one. */
+function destinationOf(ops: readonly MutateOp[]): string | null {
+  for (const op of ops) {
+    if (op.op === "move") return op.parentId;
+  }
+  return null;
+}
+
+/**
+ * The drop affordance. A line for a gap, an outline for a group, and nothing at all for a refusal:
+ * the absence of this element is how the pane says the drop will not happen.
+ */
+function DropLine({ indicator }: { readonly indicator: DropIndicator }) {
+  if (indicator.inside) {
+    return (
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 z-drag h-row rounded-xs ring-1 ring-accent ring-inset"
+        style={{ top: indicator.top }}
+      />
+    );
+  }
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute right-gutter z-drag h-0.5 -translate-y-px bg-accent"
+      style={{ top: indicator.top, left: indicator.indent }}
+    />
+  );
+}
+
+/**
+ * What follows the cursor. Refusal is carried here as well as by the missing line, because the
+ * pointer is what the user is watching and a dimmed pill is readable without looking away from it.
+ */
+function DragPill({ nodeId, refused }: { readonly nodeId: string; readonly refused: boolean }) {
+  const node = useNode(nodeId);
+  if (node === undefined) {
+    return null;
+  }
+  return (
+    <div
+      className={cn(
+        "flex h-row max-w-64 items-center rounded-sm border bg-control px-2 text-xs shadow-float",
+        refused ? "border-line text-ink-faint" : "border-accent text-ink",
+      )}
+    >
+      <span className="truncate">{node.name}</span>
+    </div>
   );
 }
 
@@ -160,6 +417,19 @@ function Row({
   const node = useNode(nodeId);
   const selected = useIsSelected(nodeId);
   const collapsed = useIsCollapsed(nodeId);
+  const git = useGitDecoration(nodeId);
+
+  // Both, on the same element and the same id: a row is a thing you can pick up and a place you can
+  // put one, and the pair is what lets `pointerWithin` name a row without a separate hit target.
+  const { attributes, listeners, isDragging, setNodeRef: setDragRef } = useDraggable({ id: nodeId });
+  const { setNodeRef: setDropRef } = useDroppable({ id: nodeId });
+  const setRef = useCallback(
+    (element: HTMLElement | null) => {
+      setDragRef(element);
+      setDropRef(element);
+    },
+    [setDragRef, setDropRef],
+  );
 
   if (node === undefined) {
     return null;
@@ -179,16 +449,26 @@ function Row({
 
   return (
     <div
+      ref={setRef}
       data-node-id={nodeId}
       role="treeitem"
       aria-level={node.depth + 1}
       aria-selected={selected}
       aria-expanded={group ? !collapsed : undefined}
+      // Only the two dnd-kit adds. Its `role` and `tabIndex` would overwrite the tree semantics
+      // above with a generic button, which is a worse trade than losing a keyboard affordance the
+      // pane does not offer anyway.
+      aria-roledescription={attributes["aria-roledescription"]}
+      aria-describedby={attributes["aria-describedby"]}
       tabIndex={-1}
       onClick={activate}
+      {...listeners}
       className={cn(
         "absolute inset-x-0 flex h-row items-center gap-1.5 pr-gutter",
         selected ? "bg-selected" : "hover:bg-hover",
+        // The row stays in place and fades: the pill under the cursor is the thing being moved, and
+        // a row that vanished would collapse the list under the pointer mid-drag.
+        isDragging && "opacity-40",
       )}
       style={{ top, paddingLeft: node.depth * INDENT_PX }}
     >
@@ -216,7 +496,26 @@ function Row({
       >
         {node.name}
       </span>
+
+      <GitMark decoration={git} />
     </div>
+  );
+}
+
+/**
+ * The row's git state, or the space it would take. Rendered even when there is nothing to say,
+ * so the names in a decorated tree sit exactly where they sat in a clean one.
+ */
+function GitMark({ decoration }: { readonly decoration: GitDecoration | undefined }) {
+  const mark = decoration === undefined ? undefined : GIT_MARK[decoration];
+  return (
+    <span
+      className="shrink-0 text-center font-mono text-2xs leading-none"
+      style={{ width: GIT_COLUMN_PX }}
+      title={mark?.title}
+    >
+      {mark === undefined ? null : <span className={mark.tone}>{mark.glyph}</span>}
+    </span>
   );
 }
 
@@ -278,6 +577,15 @@ function SidebarContextMenu({ targetId, ...props }: { readonly targetId: string 
       )}
       {group && (
         <>
+          {/*
+            Opens the runner rather than starting a run. A collection run takes an iteration count,
+            a data file and a bail flag, and firing one off from a context menu with all three
+            defaulted is how you find out you needed them afterwards.
+          */}
+          <ContextItem icon={<RunnerIcon />} onSelect={() => props.onRun(node)}>
+            Run…
+          </ContextItem>
+          <ContextSeparator />
           {/*
             Two items rather than one item and a picker. The protocol decides which fields the
             request even has, so it is not a setting you change later, and a dialog that asks

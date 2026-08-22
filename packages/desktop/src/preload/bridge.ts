@@ -15,16 +15,77 @@ export const CHANNELS = {
   openWorkspace: "preman:open-workspace",
   forgetWorkspace: "preman:forget-workspace",
   revealInFileManager: "preman:reveal",
+  pickDataFile: "preman:pick-data-file",
+  saveReport: "preman:save-report",
   windowControl: "preman:window-control",
+  readSession: "preman:read-session",
+  saveSession: "preman:save-session",
 } as const;
 
 export type WindowControl = "minimise" | "maximise" | "close";
+
+/**
+ * The frameless window's geometry, shared because the main process positions the window's own
+ * controls and the renderer has to lay a title bar out around them.
+ *
+ * macOS is the only platform this app goes frameless on. `hiddenInset` drops the native bar and
+ * leaves the traffic lights, which is the whole trade: the app gets the row back and the user
+ * keeps the three buttons every other Mac window has. Elsewhere the window keeps its native
+ * frame, because a hand-drawn close button that cannot be tested is worse than a title bar.
+ */
+export const TITLE_BAR_HEIGHT_PX = 32;
+/** Must equal `--spacing-tab`, the same way `ROW_HEIGHT` must equal `--spacing-row`. */
+export const TRAFFIC_LIGHT_INSET_PX = 12;
+/** Three 12px buttons, two 8px gaps, plus the inset again as breathing room before the first control. */
+export const TITLE_BAR_GUTTER_PX = 76;
+/** The cluster is 12px tall; centring it is arithmetic, not a guess. */
+export const TRAFFIC_LIGHT_HEIGHT_PX = 12;
 
 export interface WorkspaceHandle {
   root: string;
   /** The basename, which is what the workspace switcher shows. */
   name: string;
   lastOpenedAt: number;
+}
+
+/**
+ * A tab the user had open. `subTab` is `string | null` rather than the renderer's `SubTab` union
+ * because this file is also compiled into the main process, which has no business knowing which
+ * sub-tabs an editor has; the renderer validates the value on the way back in.
+ */
+export interface SessionTab {
+  nodeId: string;
+  subTab: string | null;
+}
+
+/**
+ * An unsaved edit. Persisted so a crash costs nothing, and persisted to app data rather than into
+ * the workspace so an unsaved edit is recoverable without being committable.
+ */
+export interface SessionDraft {
+  nodeId: string;
+  /** A serialised `FieldEdit[]`. The renderer owns the shape; nothing outside it looks inside. */
+  edits: unknown;
+  text: string | null;
+}
+
+/**
+ * Everything the app remembers about one workspace between runs.
+ *
+ * This is both the wire shape and the stored shape, on purpose: a mapping layer between the two
+ * would be one more place for the two to drift apart while both compile.
+ */
+export interface SessionSnapshot {
+  /**
+   * Which environment was chosen: a name, `null` for an explicit "none", and absent for a choice
+   * nobody has made yet. Optional rather than a third string value because that is exactly what
+   * JSON does with `undefined` - the key is simply not written - so the file needs no sentinel.
+   */
+  activeEnvironment?: string | null;
+  activeNodeId: string | null;
+  collapsedIds: string[];
+  tabs: SessionTab[];
+  drafts: SessionDraft[];
 }
 
 /**
@@ -61,6 +122,11 @@ export interface HostFailure {
 }
 
 export interface PremanBridge {
+  /**
+   * Pixels the title bar must leave clear at its leading edge for the window's own controls.
+   * Zero when the window has a native frame, so the renderer never asks which platform it is on.
+   */
+  readonly titleBarGutter: number;
   /** Returns an unsubscribe function, so a re-render cannot stack listeners. */
   onHostFailure(listener: (failure: HostFailure) => void): () => void;
   listWorkspaces(): Promise<WorkspaceHandle[]>;
@@ -70,5 +136,20 @@ export interface PremanBridge {
   openWorkspace(root: string): Promise<void>;
   forgetWorkspace(root: string): Promise<void>;
   revealInFileManager(target: string): Promise<void>;
+  /**
+   * A native file dialog for a runner's iteration data. `null` when the user cancelled.
+   * The engine resolves whatever comes back, so the dialog does not have to stay inside
+   * the workspace: iteration data is commonly kept beside a test suite, not inside it.
+   */
+  pickDataFile(): Promise<string | null>;
+  /**
+   * A native save dialog for an already-rendered report. The renderer never names a file
+   * system location, and the main process does the writing. Resolves to the path written,
+   * or `null` when the user cancelled.
+   */
+  saveReport(suggestedName: string, text: string): Promise<string | null>;
   controlWindow(action: WindowControl): void;
+  /** What was open in `root` last time. An unknown root reads as an empty session, not an error. */
+  readSession(root: string): Promise<SessionSnapshot>;
+  saveSession(root: string, snapshot: SessionSnapshot): Promise<void>;
 }

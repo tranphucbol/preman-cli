@@ -58,9 +58,12 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
   src/renderer/                  the pure view: React 19, Zustand, Tailwind v4, CodeMirror 6
     app.css                      the design system; every token is contrast-audited
     stores/                      catalog, tabs, runs, session - one file per subscription surface
-    model/request.ts             reads and writes request fields without importing the engine
+    model/                       pure, no React: request fields, drop plans, body windows, responses
     ui/                          cn, icons, Menu, Controls, Dialog, CodeEditor
-    panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid
+    panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid, ResponsePane,
+                                 BodyViewer, ConsoleDrawer
+  resources/                     the app icon; macOS masks nothing, so the rounding is in the art
+    generate.swift               icon.source.png -> icon.png on Apple's grid; regenerate by hand
 vitest.config.ts                 the one test project, shared by every package
 packages/*/vite.*.config.ts      per-package build; the desktop has one config per process
 eslint.config.js                 lint, import layering, and the two purity fences

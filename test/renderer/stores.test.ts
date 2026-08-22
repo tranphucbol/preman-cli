@@ -1,0 +1,682 @@
+/**
+ * The renderer's state, exercised without a browser.
+ *
+ * These stores carry the four rules the app's responsiveness rests on: a row subscribes to its own
+ * node, a form subscribes to its own tab, an external edit never overwrites unsaved work, and an
+ * unsaved edit survives a crash without ever touching the workspace. All four are properties of
+ * plain functions and plain objects, so all four are testable here.
+ *
+ * Where a document is needed it comes from a real `createEngineHost` over a real cloned fixture,
+ * not a stub. A hand-written `NodeDocument` would let a reload test pass while the reload was
+ * reading a field the engine does not actually send.
+ */
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
+import type {
+  Catalog,
+  CatalogNode,
+  EnginePayload,
+  EngineRequest,
+  EngineRequestKind,
+  EngineResults,
+  RunEvent,
+} from "@preman/desktop/engine/protocol.js";
+import { EXIT_CODES, ORDER_STEP } from "@preman/desktop/engine/protocol.js";
+import { TITLE_BAR_GUTTER_PX } from "@preman/desktop/preload/bridge.js";
+import type { PremanBridge, SessionSnapshot, WindowControl } from "@preman/desktop/preload/bridge.js";
+import { EngineRequestError, type EngineClient } from "@preman/desktop/renderer/client.js";
+import type { TestResult } from "@preman/desktop/renderer/model/response.js";
+import { FIELD, edit, pairsToText, project, readPairs, textToPairs } from "@preman/desktop/renderer/model/request.js";
+import {
+  DRAFT_PERSIST_DEBOUNCE_MS,
+  readSession,
+  restoreCollapse,
+  restoreOpenState,
+  startPersistence,
+} from "@preman/desktop/renderer/persist.js";
+import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
+import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
+import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
+import { applyExternalChange, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import { isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
+
+import { cloneFixtureHttpWorkspace, cloneFixtureWorkspace, type ClonedWorkspace } from "../helpers.js";
+
+const FIRST_REQUEST_ID = 1;
+const PING_ID = "postman/collections/payment/Ping.request.yaml";
+const PAYMENT_ID = "postman/collections/payment";
+const ADMIN_ID = "postman/collections/admin";
+const PROFILE_ID = "postman/collections/admin/Profile.request.yaml";
+const HEADERS_FIELD = "headers";
+const SETTLE_MS = DRAFT_PERSIST_DEBOUNCE_MS * 2;
+
+/** Two requests over two data rows, which is what the runner's `#N` labels exist for. */
+const RUN_ID = "run-1";
+const ITERATION_COUNT = 2;
+const ITERATED_TOTAL = 4;
+const FIRST_ITERATION = 0;
+/** A run has entered one iteration the moment it starts, before any request says which. */
+const FIRST_ITERATION_COUNT = 1;
+const RUN_WARNING = "no environment selected";
+
+/** Big enough that any per-node work in a render path would show up as a hang, not a slowdown. */
+const COLLECTION_COUNT = 50;
+const REQUESTS_PER_COLLECTION = 100;
+const SYNTHETIC_NODE_COUNT = COLLECTION_COUNT * REQUESTS_PER_COLLECTION;
+const ROOT_DEPTH = 0;
+const CHILD_DEPTH = 1;
+const FIRST_REVISION = 1;
+
+// ---------------------------------------------------------------------------------------------
+// Fakes: exactly the two seams the renderer has, and nothing else.
+// ---------------------------------------------------------------------------------------------
+
+interface FakeBridge {
+  readonly bridge: PremanBridge;
+  /** The last snapshot written, or null if nothing has been. */
+  saved(): SessionSnapshot | null;
+  seed(snapshot: SessionSnapshot): void;
+  writes(): number;
+}
+
+/** What main hands back when nothing has been stored: no `activeEnvironment` key at all, because
+ * an absent choice and a chosen "none" are different answers. */
+function emptySnapshot(): SessionSnapshot {
+  return { activeNodeId: null, collapsedIds: [], tabs: [], drafts: [] };
+}
+
+function fakeBridge(): FakeBridge {
+  let stored: SessionSnapshot = emptySnapshot();
+  let written: SessionSnapshot | null = null;
+  let writes = 0;
+
+  const bridge: PremanBridge = {
+    titleBarGutter: TITLE_BAR_GUTTER_PX,
+    onHostFailure: () => () => undefined,
+    listWorkspaces: () => Promise.resolve([]),
+    pickWorkspaceDirectory: () => Promise.resolve(null),
+    openWorkspace: () => Promise.resolve(),
+    forgetWorkspace: () => Promise.resolve(),
+    revealInFileManager: () => Promise.resolve(),
+    pickDataFile: () => Promise.resolve(null),
+    saveReport: () => Promise.resolve(null),
+    controlWindow: (_action: WindowControl) => undefined,
+    readSession: () => Promise.resolve(structuredClone(stored)),
+    saveSession: (_root: string, snapshot: SessionSnapshot) => {
+      written = structuredClone(snapshot);
+      stored = structuredClone(snapshot);
+      writes += 1;
+      return Promise.resolve();
+    },
+  };
+
+  return {
+    bridge,
+    saved: () => written,
+    seed: (snapshot) => {
+      stored = structuredClone(snapshot);
+    },
+    writes: () => writes,
+  };
+}
+
+/**
+ * `window` does not exist under `environment: "node"`, and it should not: the two things the
+ * renderer reaches for on it are the bridge and the port, and both are seams by design.
+ */
+function installBridge(bridge: PremanBridge): void {
+  (globalThis as { window?: unknown }).window = { preman: bridge };
+}
+
+function uninstallBridge(): void {
+  delete (globalThis as { window?: unknown }).window;
+}
+
+/** An `EngineClient` backed by a real host, so every document is one the engine actually sends. */
+function hostClient(host: EngineHost, root: string): EngineClient {
+  let nextId = FIRST_REQUEST_ID;
+  return {
+    root,
+    async send<K extends EngineRequestKind>(kind: K, payload: EnginePayload<K>): Promise<EngineResults[K]> {
+      const request = { id: nextId++, kind, ...payload } as unknown as EngineRequest;
+      const response = await host.handle(request);
+      if (!response.ok) throw new EngineRequestError(response.error);
+      return response.data as EngineResults[K];
+    },
+    onPush: () => () => undefined,
+    close: () => undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------------------------
+
+function resetStores(): void {
+  useCatalogStore.getState().clear();
+  useTabsStore.getState().clear();
+  useRunsStore.getState().clear();
+  useOverlayStore.getState().dismiss();
+  const session = useSessionStore.getState();
+  session.setClient(null, null);
+  // `undefined`, not `null`: a fresh store has nobody's answer, and `null` is somebody's.
+  session.setEnvironment(undefined);
+  session.setDegraded(null);
+  session.setHostFailure(null);
+}
+
+/** Every file in the workspace, keyed by its relative posix path. The bytes, not the mtimes. */
+function bytesOf(root: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const absolute = join(dir, entry);
+      if (statSync(absolute).isDirectory()) walk(absolute);
+      else files[relative(root, absolute).split(sep).join("/")] = readFileSync(absolute, "utf8");
+    }
+  };
+  walk(root);
+  return files;
+}
+
+function syntheticCatalog(): Catalog {
+  const nodes: CatalogNode[] = [];
+  for (let collection = 0; collection < COLLECTION_COUNT; collection += 1) {
+    const id = `postman/collections/c${collection}`;
+    nodes.push({
+      id,
+      kind: "collection",
+      name: `c${collection}`,
+      file: `/ws/${id}`,
+      parentId: null,
+      depth: ROOT_DEPTH,
+      order: (collection + 1) * ORDER_STEP,
+    });
+    for (let request = 0; request < REQUESTS_PER_COLLECTION; request += 1) {
+      nodes.push({
+        id: `${id}/r${request}.request.yaml`,
+        kind: "request",
+        name: `r${request}`,
+        file: `/ws/${id}/r${request}.request.yaml`,
+        parentId: id,
+        depth: CHILD_DEPTH,
+        order: (request + 1) * ORDER_STEP,
+        protocol: "http",
+        label: "GET",
+      });
+    }
+  }
+  return { root: "/ws", workspaceId: null, revision: FIRST_REVISION, nodes, environments: [], specs: [] };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Suites
+// ---------------------------------------------------------------------------------------------
+
+describe("the sidebar's row budget", () => {
+  beforeEach(resetStores);
+  afterEach(resetStores);
+
+  /**
+   * The mounted-row count and the frame rate belong to the Playwright suite, which has layout.
+   * What is testable here is the thing that makes them possible: the sidebar renders `visibleIds`
+   * and resolves each row through `byId`, so neither the row count nor the per-row work grows with
+   * the size of the tree.
+   */
+  it("givenFiveThousandNodes_whenScrolling_thenOnlyViewportRowsMount", () => {
+    const catalog = syntheticCatalog();
+    const store = useCatalogStore.getState();
+    store.replace(catalog);
+
+    expect(catalog.nodes).toHaveLength(SYNTHETIC_NODE_COUNT + COLLECTION_COUNT);
+    expect(useCatalogStore.getState().visibleIds).toHaveLength(SYNTHETIC_NODE_COUNT + COLLECTION_COUNT);
+
+    // Collapsing the roots hides 5,000 rows without the store consulting a single parent: the
+    // engine emits a group immediately before its subtree, so one pass over depths is enough.
+    for (const node of catalog.nodes) {
+      if (node.kind === "collection") useCatalogStore.getState().toggle(node.id);
+    }
+    expect(useCatalogStore.getState().visibleIds).toHaveLength(COLLECTION_COUNT);
+
+    // And a row's own lookup is a map hit that yields the identical object the catalog holds,
+    // which is what lets `useNode` re-render one row instead of five thousand.
+    const { byId, nodes } = useCatalogStore.getState();
+    expect(byId.size).toBe(nodes.length);
+    const middle = nodes[Math.floor(nodes.length / 2)];
+    expect(middle).toBeDefined();
+    expect(byId.get(middle?.id ?? "")).toBe(middle);
+  });
+});
+
+describe("tab isolation", () => {
+  beforeEach(resetStores);
+  afterEach(resetStores);
+
+  it("givenTwoOpenTabs_whenEditingOne_thenOtherDoesNotRerender", () => {
+    const tabs = useTabsStore.getState();
+    tabs.open({ id: PING_ID, name: "Ping", kind: "request" });
+    tabs.open({ id: PROFILE_ID, name: "Profile", kind: "request" });
+
+    const untouchedBefore = useTabsStore.getState().tabs.get(PROFILE_ID);
+    const editedBefore = useTabsStore.getState().tabs.get(PING_ID);
+
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://example.test/ping");
+
+    const untouchedAfter = useTabsStore.getState().tabs.get(PROFILE_ID);
+    const editedAfter = useTabsStore.getState().tabs.get(PING_ID);
+
+    // `useTab` is an identity selector, so a preserved reference *is* a skipped render. The edited
+    // tab must have moved, or the form being typed into would not repaint.
+    expect(untouchedAfter).toBe(untouchedBefore);
+    expect(editedAfter).not.toBe(editedBefore);
+    expect(isDirty(editedAfter!)).toBe(true);
+    expect(isDirty(untouchedAfter!)).toBe(false);
+  });
+
+  it("givenOneCellTypedIntoRepeatedly_whenEdited_thenOneEditIsPending", () => {
+    const tabs = useTabsStore.getState();
+    tabs.open({ id: PING_ID, name: "Ping", kind: "request" });
+
+    for (const value of ["h", "ht", "htt", "http"]) {
+      useTabsStore.getState().setField(PING_ID, FIELD.url, value);
+    }
+
+    const tab = useTabsStore.getState().tabs.get(PING_ID);
+    expect(tab?.edits).toHaveLength(1);
+    expect(tab?.edits[0]?.value).toBe("http");
+  });
+});
+
+describe("external changes under an open tab", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+
+  beforeEach(async () => {
+    resetStores();
+    workspace = cloneFixtureWorkspace();
+    host = createEngineHost({ root: workspace.root, post: () => undefined });
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+  });
+
+  afterEach(() => {
+    host.dispose();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  it("givenDirtyTabAndExternalEdit_whenWatcherFires_thenConflictIsFlagged", async () => {
+    const node = useCatalogStore.getState().byId.get(PING_ID);
+    expect(node).toBeDefined();
+    useTabsStore.getState().open(node!);
+    useTabsStore
+      .getState()
+      .loaded(PING_ID, await useSessionStore.getState().client!.send("read-node", { nodeId: PING_ID }));
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://mine.test/ping");
+
+    const before = useTabsStore.getState().tabs.get(PING_ID);
+    applyExternalChange([PING_ID]);
+    const after = useTabsStore.getState().tabs.get(PING_ID);
+
+    expect(after?.conflicted).toBe(true);
+    // The edits are still pending and the baseline is untouched. Silently reloading over unsaved
+    // work to stay in sync is the one behaviour a tool must never have.
+    expect(after?.edits).toStrictEqual(before?.edits);
+    expect(after?.saved).toBe(before?.saved);
+  });
+
+  it("givenCleanTabAndExternalEdit_whenWatcherFires_thenTabReloadsSilently", async () => {
+    const node = useCatalogStore.getState().byId.get(PING_ID);
+    expect(node).toBeDefined();
+    useTabsStore.getState().open(node!);
+    useTabsStore
+      .getState()
+      .loaded(PING_ID, await useSessionStore.getState().client!.send("read-node", { nodeId: PING_ID }));
+
+    const before = useTabsStore.getState().tabs.get(PING_ID)?.saved;
+    expect(before).toBeDefined();
+
+    applyExternalChange([PING_ID]);
+    // `applyExternalChange` fires the read and does not wait: the watcher is not a request.
+    await expect.poll(() => useTabsStore.getState().tabs.get(PING_ID)?.saved !== before).toBe(true);
+
+    const after = useTabsStore.getState().tabs.get(PING_ID);
+    expect(after?.conflicted).toBe(false);
+    expect(after?.error).toBeNull();
+    expect(after?.saved?.text).toBe(before?.text);
+  });
+
+  it("givenNoTabForAChangedFile_whenWatcherFires_thenNothingHappens", () => {
+    applyExternalChange([PING_ID]);
+
+    expect(useTabsStore.getState().tabs.size).toBe(0);
+  });
+});
+
+describe("the bulk header editor", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+
+  beforeEach(() => {
+    resetStores();
+    // The HTTP fixture, because it is the one with headers to read: `Profile` declares them as a
+    // YAML map, which is also the shape the bulk tab has to survive.
+    workspace = cloneFixtureHttpWorkspace();
+    host = createEngineHost({ root: workspace.root, post: () => undefined });
+  });
+
+  afterEach(() => {
+    host.dispose();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  /**
+   * The bulk tab and the grid are two views of one field, so the round trip has to be lossless in
+   * both directions. A text form that dropped `disabled` would silently re-enable a header the
+   * user turned off.
+   */
+  it("givenBulkEditText_whenBlurred_thenHeadersGridMatches", async () => {
+    const client = hostClient(host, workspace.root);
+    const document = await client.send("read-node", { nodeId: PROFILE_ID });
+
+    const grid = readPairs(document.data, HEADERS_FIELD);
+    const text = pairsToText(grid.pairs);
+    // Exactly what the textarea shows, so a change made there is made against the real thing.
+    expect(text.split("\n")).toHaveLength(grid.pairs.length);
+
+    const typed = `${text}\n//X-Disabled: off\nX-Added: yes`;
+    const applied = project(document.data, [edit([HEADERS_FIELD], textToPairs(typed))]);
+    const reread = readPairs(applied, HEADERS_FIELD);
+
+    expect(reread.pairs.map((pair) => pair.key)).toStrictEqual([
+      ...grid.pairs.map((pair) => pair.key),
+      "X-Disabled",
+      "X-Added",
+    ]);
+    expect(reread.pairs.map((pair) => pair.value)).toStrictEqual([
+      ...grid.pairs.map((pair) => pair.value),
+      "off",
+      "yes",
+    ]);
+    expect(reread.pairs.find((pair) => pair.key === "X-Disabled")?.disabled).toBe(true);
+    expect(reread.pairs.find((pair) => pair.key === "X-Added")?.disabled).toBe(false);
+  });
+
+  it("givenTextWithBlankLinesAndComments_whenParsed_thenTheyAreSkipped", () => {
+    const pairs = textToPairs("# a note\n\nAccept: application/json\n   \n// Off: yes\n: novalue\n");
+
+    expect(pairs).toStrictEqual([
+      { key: "Accept", value: "application/json" },
+      { key: "Off", value: "yes", disabled: true },
+    ]);
+  });
+});
+
+describe("drafts across a crash", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+  let bridge: FakeBridge;
+
+  beforeEach(() => {
+    resetStores();
+    workspace = cloneFixtureWorkspace();
+    host = createEngineHost({ root: workspace.root, post: () => undefined });
+    bridge = fakeBridge();
+    installBridge(bridge.bridge);
+  });
+
+  afterEach(() => {
+    host.dispose();
+    uninstallBridge();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  /**
+   * The whole promise of the draft layer in one test: an unsaved edit and a folded tree come back,
+   * and the workspace on disk is byte-for-byte what it was. An editor that recovered work by
+   * writing it into the repository would be recovering it into somebody's next commit.
+   */
+  it("givenDraftAndCrash_whenReopened_thenDraftIsRestoredAndWorkspaceIsClean", async () => {
+    const client = hostClient(host, workspace.root);
+    const before = bytesOf(workspace.root);
+
+    // ---- the session that crashes -------------------------------------------------------
+    useSessionStore.getState().setClient(client, workspace.root);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    const stop = startPersistence(workspace.root);
+
+    const ping = useCatalogStore.getState().byId.get(PING_ID);
+    expect(ping).toBeDefined();
+    useTabsStore.getState().open(ping!);
+    useTabsStore.getState().loaded(PING_ID, await client.send("read-node", { nodeId: PING_ID }));
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://unsaved.test/ping");
+    useTabsStore.getState().setText(PING_ID, "# a raw yaml draft\n");
+    useCatalogStore.getState().toggle(ADMIN_ID);
+    useSessionStore.getState().setEnvironment("LOCAL");
+
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+    expect(bridge.writes()).toBeGreaterThan(0);
+
+    const snapshot = bridge.saved();
+    expect(snapshot?.drafts).toHaveLength(1);
+    expect(snapshot?.collapsedIds).toStrictEqual([ADMIN_ID]);
+    expect(snapshot?.activeEnvironment).toBe("LOCAL");
+
+    // ---- the crash ----------------------------------------------------------------------
+    stop();
+    resetStores();
+    expect(useTabsStore.getState().tabs.size).toBe(0);
+
+    // ---- the reopen ---------------------------------------------------------------------
+    useSessionStore.getState().setClient(client, workspace.root);
+    const restored = await readSession(workspace.root);
+    restoreCollapse(restored);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    const opened = restoreOpenState(restored);
+
+    expect(opened).toStrictEqual([PING_ID]);
+    const tab = useTabsStore.getState().tabs.get(PING_ID);
+    expect(tab?.edits).toStrictEqual([{ path: FIELD.url, value: "https://unsaved.test/ping" }]);
+    expect(tab?.text).toBe("# a raw yaml draft\n");
+    expect(isDirty(tab!)).toBe(true);
+    expect(useCatalogStore.getState().collapsed.has(ADMIN_ID)).toBe(true);
+    expect(useSessionStore.getState().environment).toBe("LOCAL");
+
+    // ---- and the repository never heard about any of it ---------------------------------
+    expect(bytesOf(workspace.root)).toStrictEqual(before);
+  });
+
+  it("givenASessionNamingFilesThatAreGone_whenRestored_thenOnlySurvivorsOpen", async () => {
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    bridge.seed({
+      activeEnvironment: "NOPE",
+      activeNodeId: "postman/collections/payment/Gone.request.yaml",
+      collapsedIds: [PAYMENT_ID],
+      tabs: [
+        { nodeId: PING_ID, subTab: "headers" },
+        { nodeId: "postman/collections/payment/Gone.request.yaml", subTab: null },
+      ],
+      drafts: [{ nodeId: "postman/collections/payment/Gone.request.yaml", edits: [], text: "orphan" }],
+    });
+
+    const restored = await readSession(workspace.root);
+    restoreCollapse(restored);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    const opened = restoreOpenState(restored);
+
+    expect(opened).toStrictEqual([PING_ID]);
+    expect(useTabsStore.getState().tabs.get(PING_ID)?.subTab).toBe("headers");
+    // An environment the workspace no longer has is not adopted: the picker would be naming
+    // something the next run cannot use.
+    expect(useSessionStore.getState().environment).not.toBe("NOPE");
+  });
+
+  it("givenAMalformedDraft_whenRestored_thenTheBadEditIsDroppedAndTheRestSurvives", async () => {
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    bridge.seed({
+      activeEnvironment: null,
+      activeNodeId: PING_ID,
+      collapsedIds: [],
+      tabs: [{ nodeId: PING_ID, subTab: "nonsense" }],
+      // App data is JSON and hand-editable, so one unusable entry must cost one field, not the
+      // whole draft.
+      drafts: [
+        { nodeId: PING_ID, edits: [{ path: ["url", "raw"], value: "kept" }, { path: "nope" }, 7, null], text: null },
+      ],
+    });
+
+    const restored = await readSession(workspace.root);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    restoreOpenState(restored);
+
+    const tab = useTabsStore.getState().tabs.get(PING_ID);
+    expect(tab?.edits).toStrictEqual([{ path: ["url", "raw"], value: "kept" }]);
+    // An unrecognised sub-tab falls back rather than being written into the tab.
+    expect(tab?.subTab).toBe("body");
+  });
+
+  /**
+   * "None" is an answer, and it has to survive a reopen. If a remembered `null` were treated as a
+   * missing choice, a workspace with one environment would adopt it again on every launch and put
+   * values back into requests that were deliberately being run without them.
+   */
+  it("givenASessionThatChoseNoEnvironment_whenRestored_thenNoneComesBack", async () => {
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    bridge.seed({ ...emptySnapshot(), activeEnvironment: null });
+
+    const restored = await readSession(workspace.root);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    restoreOpenState(restored);
+
+    expect(useSessionStore.getState().environment).toBeNull();
+  });
+
+  it("givenASessionThatNeverChose_whenRestored_thenTheChoiceIsStillOpen", async () => {
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    bridge.seed(emptySnapshot());
+
+    const restored = await readSession(workspace.root);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    restoreOpenState(restored);
+
+    // Still open, so `adoptSoleEnvironment` is allowed to answer it.
+    expect(useSessionStore.getState().environment).toBeUndefined();
+  });
+});
+
+describe("what the collection runner reads off a run", () => {
+  beforeEach(resetStores);
+  afterEach(resetStores);
+
+  function apply(event: RunEvent): void {
+    useRunsStore.getState().apply(event);
+  }
+
+  function testResult(name: string, status: TestResult["status"]): TestResult {
+    return { name, status, error: undefined, origin: { level: "request", label: "request" } };
+  }
+
+  /**
+   * The runner's list, its `#N` labels and its progress count are all this one derivation. The
+   * iteration count is taken from the events rather than from the options, because with a data
+   * file and no explicit count core decides the number and the options never learn it.
+   */
+  it("givenAnIteratedFolderRun_whenEventsArrive_thenItemsAndIterationsFollowTheEvents", () => {
+    apply({ type: "run-start", runId: RUN_ID, total: ITERATED_TOTAL });
+    expect(useRunsStore.getState().runs.get(RUN_ID)?.iterations).toBe(FIRST_ITERATION_COUNT);
+
+    for (const iteration of [0, 1]) {
+      for (const nodeId of [PING_ID, PROFILE_ID]) {
+        apply({ type: "request-start", runId: RUN_ID, nodeId, name: nodeId, iteration });
+        apply({ type: "request-end", runId: RUN_ID, nodeId, exitCode: EXIT_CODES.OK });
+      }
+    }
+
+    const run = useRunsStore.getState().runs.get(RUN_ID);
+    expect(run?.items).toStrictEqual([`${PING_ID}#0`, `${PROFILE_ID}#0`, `${PING_ID}#1`, `${PROFILE_ID}#1`]);
+    expect(run?.iterations).toBe(ITERATION_COUNT);
+    // The first item focuses itself, so a run shows a response without a click.
+    expect(useRunsStore.getState().activeItemKey).toBe(`${PING_ID}#0`);
+  });
+
+  /**
+   * The bug this pins cost a blank window: the summary folded its totals *inside* a store selector,
+   * which allocated a fresh object on every call, and a snapshot that is never reference-equal to
+   * itself spins React until it throws. Totals are accumulated by the store as the events arrive,
+   * so reading one twice hands back the same object — and the fold is linear in the run rather
+   * than quadratic.
+   */
+  it("givenAssertionsAcrossAnIteration_whenCounted_thenTheRunHoldsStableTotals", () => {
+    apply({ type: "run-start", runId: RUN_ID, total: ITERATED_TOTAL });
+    apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    apply({ type: "test", runId: RUN_ID, nodeId: PING_ID, result: testResult("first", "passed") });
+    apply({ type: "test", runId: RUN_ID, nodeId: PING_ID, result: testResult("second", "failed") });
+
+    const tests = useRunsStore.getState().runs.get(RUN_ID)?.tests;
+    expect(tests).toStrictEqual({ passed: 1, failed: 1, skipped: 0, total: 2 });
+    expect(useRunsStore.getState().runs.get(RUN_ID)?.tests).toBe(tests);
+  });
+
+  /** A row must repaint alone, for the same reason a sidebar row does: a run is thousands of them. */
+  it("givenTwoItemsInARun_whenOneReceivesAResponse_thenTheOtherObjectIsUntouched", () => {
+    apply({ type: "run-start", runId: RUN_ID, total: ITERATED_TOTAL });
+    apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    apply({ type: "request-start", runId: RUN_ID, nodeId: PROFILE_ID, name: "Profile", iteration: FIRST_ITERATION });
+
+    const untouchedBefore = useRunsStore.getState().requests.get(`${PING_ID}#0`);
+    apply({ type: "request-end", runId: RUN_ID, nodeId: PROFILE_ID, exitCode: EXIT_CODES.TEST });
+
+    expect(useRunsStore.getState().requests.get(`${PING_ID}#0`)).toBe(untouchedBefore);
+    expect(useRunsStore.getState().requests.get(`${PROFILE_ID}#0`)?.exitCode).toBe(EXIT_CODES.TEST);
+  });
+
+  /**
+   * `run-end` cannot be relied on - a run that dies on its selector never emits one - so `finish`
+   * is the terminal signal, and it has to leave nothing spinning or the export buttons never
+   * enable and a row claims forever that it is still in flight.
+   */
+  it("givenARunThatDiedMidRequest_whenFinished_thenNothingIsLeftRunning", () => {
+    apply({ type: "run-start", runId: RUN_ID, total: ITERATED_TOTAL });
+    apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+
+    useRunsStore.getState().finish(RUN_ID, {
+      warnings: [RUN_WARNING],
+      cancelled: true,
+      error: { message: "cancelled", details: [], exitCode: EXIT_CODES.TRANSPORT },
+    });
+
+    const run = useRunsStore.getState().runs.get(RUN_ID);
+    expect(run?.done).toBe(true);
+    expect(run?.cancelled).toBe(true);
+    expect(run?.warnings).toStrictEqual([RUN_WARNING]);
+    expect(useRunsStore.getState().requests.get(`${PING_ID}#0`)?.status).toBe("done");
+  });
+});
+
+describe("the overlay over the editor", () => {
+  beforeEach(resetStores);
+  afterEach(resetStores);
+
+  it("givenTheRunnerUp_whenVariablesAreShown_thenOneOverlayIsUpAtATime", () => {
+    const overlay = useOverlayStore.getState();
+
+    overlay.showRunner(PAYMENT_ID);
+    expect(useOverlayStore.getState().overlay).toStrictEqual({ kind: "runner", nodeId: PAYMENT_ID });
+
+    overlay.showVariables();
+    expect(useOverlayStore.getState().overlay).toStrictEqual({ kind: "variables" });
+
+    overlay.dismiss();
+    expect(useOverlayStore.getState().overlay).toBeNull();
+  });
+});

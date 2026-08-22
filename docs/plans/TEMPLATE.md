@@ -1,6 +1,6 @@
 # Plan template
 
-Copy this file to `docs/plans/<feature>.md` and replace every _italic guidance line_. Delete
+Copy this file to `docs/plans/NNN-<feature>.md` and replace every _italic guidance line_. Delete
 sections that genuinely do not apply — an empty heading is worse than no heading.
 
 Rules the existing plans follow, and this one should too:
