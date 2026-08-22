@@ -1,9 +1,9 @@
 import { parseStringPromise } from "xml2js";
 import { describe, expect, it } from "vitest";
-import { EXIT } from "@/errors.js";
-import { junitReporter } from "@/output/reporters/junit.js";
-import type { GroupRunItem, GroupRunOutcome, RunOutcome } from "@/runner.js";
-import type { TestResult } from "@/scripts/sandbox.js";
+import { EXIT } from "@preman/core/errors.js";
+import { junitReporter } from "@preman/cli/reporters/junit.js";
+import type { GroupRunItem, GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
+import type { TestResult } from "@preman/core/scripts/sandbox.js";
 
 const REQUEST_ORIGIN = { level: "request", label: "request" } as const;
 

@@ -2,29 +2,31 @@ import js from "@eslint/js";
 import prettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
 
-const SOURCE_FILES = ["src/**/*.ts"];
-const LEAF_FILES = ["src/errors.ts", "src/tls/**/*.ts", "src/data/**/*.ts", "src/vars/**/*.ts"];
-const OUTPUT_FILES = ["src/output/**/*.ts"];
+const SOURCE_FILES = ["packages/*/src/**/*.ts"];
+const LEAF_FILES = [
+  "packages/core/src/errors.ts",
+  "packages/core/src/tls/**/*.ts",
+  "packages/core/src/data/**/*.ts",
+  "packages/core/src/vars/**/*.ts",
+];
 const TEST_FILES = ["test/**/*.ts"];
 const SOURCE_LEAF_IMPORTS = [
-  "@/commands/**",
-  "@/runner.js",
-  "@/output/**",
-  "@/grpc/**",
-  "@/http/**",
-  "@/scripts/**",
-  "@/workspace/**",
+  "@preman/cli/**",
+  "@preman/core/runner.js",
+  "@preman/core/grpc/**",
+  "@preman/core/http/**",
+  "@preman/core/scripts/**",
+  "@preman/core/workspace/**",
 ];
 const SOURCE_IMPORT_PATTERNS = ["../*", "../**"];
-const TEST_SOURCE_IMPORT_PATTERNS = ["**/src/*", "**/src/**"];
-const TYPE_IMPORT_RULE = "Cross-directory imports use @/; imports within a directory stay relative.";
-const LEAF_IMPORT_RULE =
-  "Leaf modules must not depend on command, runner, protocol, script, output, or workspace layers.";
-const OUTPUT_IMPORT_RULE = "Output may depend on runner types but not runner values.";
+const TEST_SOURCE_IMPORT_PATTERNS = ["**/packages/*/src/*", "**/packages/*/src/**"];
+const TYPE_IMPORT_RULE =
+  "Cross-directory imports use @preman/core or @preman/cli; imports within a directory stay relative.";
+const LEAF_IMPORT_RULE = "Leaf modules must not depend on command, runner, protocol, script, or workspace layers.";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", "test/fixtures/**"],
+    ignores: ["dist/**", "**/dist/**", "node_modules/**", "test/fixtures/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
@@ -83,29 +85,6 @@ export default tseslint.config(
             {
               group: SOURCE_LEAF_IMPORTS,
               message: LEAF_IMPORT_RULE,
-            },
-          ],
-        },
-      ],
-    },
-  },
-  {
-    files: OUTPUT_FILES,
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "@/runner.js",
-              allowTypeImports: true,
-              message: OUTPUT_IMPORT_RULE,
-            },
-          ],
-          patterns: [
-            {
-              group: SOURCE_IMPORT_PATTERNS,
-              message: TYPE_IMPORT_RULE,
             },
           ],
         },

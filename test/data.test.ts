@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadIterationData, rowFor } from "@/data/rows.js";
-import { CliError } from "@/errors.js";
+import { loadIterationData, rowFor } from "@preman/core/data/rows.js";
+import { CliError } from "@preman/core/errors.js";
 import { dataPath } from "./helpers.js";
 
 describe("loadIterationData", () => {

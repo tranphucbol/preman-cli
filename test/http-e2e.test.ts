@@ -2,8 +2,8 @@ import { createHmac } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { main } from "@/cli.js";
-import { EXIT } from "@/errors.js";
+import { main } from "@preman/cli/main.js";
+import { EXIT } from "@preman/core/errors.js";
 import {
   cloneFixtureHttpWorkspace,
   collectionPath,

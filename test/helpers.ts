@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { requireWorkspace, type Workspace } from "@/workspace/discover.js";
+import { requireWorkspace, type Workspace } from "@preman/core/workspace/discover.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 

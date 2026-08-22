@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { CliError } from "@/errors.js";
-import { applyAuth } from "@/http/auth.js";
-import { readRequestBody, renderBody } from "@/http/body.js";
-import { CookieJar } from "@/http/cookies.js";
+import { CliError } from "@preman/core/errors.js";
+import { applyAuth } from "@preman/core/http/auth.js";
+import { readRequestBody, renderBody } from "@preman/core/http/body.js";
+import { CookieJar } from "@preman/core/http/cookies.js";
 import {
   dropEmptyValues,
   findHeader,
@@ -11,13 +11,13 @@ import {
   setHeaderIfAbsent,
   toOutgoingHeaders,
   type KeyValue,
-} from "@/http/headers.js";
-import { mergeQuery } from "@/http/query.js";
-import { buildHttpRequest, buildLiveHttpRequest, finaliseHttpRequest } from "@/http/request.js";
-import { pathPortion, resolveHttpUrl } from "@/http/target.js";
-import { VariableStore } from "@/vars/store.js";
-import type { HttpRequest } from "@/workspace/schemas.js";
-import type { FileReader } from "@/workspace/files.js";
+} from "@preman/core/http/headers.js";
+import { mergeQuery } from "@preman/core/http/query.js";
+import { buildHttpRequest, buildLiveHttpRequest, finaliseHttpRequest } from "@preman/core/http/request.js";
+import { pathPortion, resolveHttpUrl } from "@preman/core/http/target.js";
+import { VariableStore } from "@preman/core/vars/store.js";
+import type { HttpRequest } from "@preman/core/workspace/schemas.js";
+import type { FileReader } from "@preman/core/workspace/files.js";
 
 function pairs(headers: readonly KeyValue[]): Record<string, string> {
   return Object.fromEntries(headers.map((header) => [header.key, header.value]));

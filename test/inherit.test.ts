@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveScriptChain, type Protocol } from "@/scripts/chain.js";
-import type { RequestEntry } from "@/workspace/collections.js";
-import type { GroupDefinition, GroupKind } from "@/workspace/definitions.js";
-import { resolveAuth } from "@/workspace/inherit.js";
-import type { RequestAuth, RequestScript } from "@/workspace/schemas.js";
+import { resolveScriptChain, type Protocol } from "@preman/core/scripts/chain.js";
+import type { RequestEntry } from "@preman/core/workspace/collections.js";
+import type { GroupDefinition, GroupKind } from "@preman/core/workspace/definitions.js";
+import { resolveAuth } from "@preman/core/workspace/inherit.js";
+import type { RequestAuth, RequestScript } from "@preman/core/workspace/schemas.js";
 
 function group(
   kind: GroupKind,

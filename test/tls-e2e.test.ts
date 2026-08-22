@@ -5,10 +5,10 @@ import { createServer, type Server } from "node:https";
 import { join } from "node:path";
 import { rootCertificates, type TLSSocket } from "node:tls";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { main } from "@/cli.js";
-import { CliError, EXIT } from "@/errors.js";
-import { LOAD_OPTIONS } from "@/grpc/schema.js";
-import { httpsRequestOptions, resolveTlsCerts } from "@/tls/certs.js";
+import { main } from "@preman/cli/main.js";
+import { CliError, EXIT } from "@preman/core/errors.js";
+import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
+import { httpsRequestOptions, resolveTlsCerts } from "@preman/core/tls/certs.js";
 import {
   cloneFixtureHttpWorkspace,
   cloneFixtureWorkspace,

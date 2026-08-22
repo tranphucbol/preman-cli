@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateTests, type GroupRunItem, type RunOutcome } from "@/runner.js";
+import { aggregateTests, type GroupRunItem, type RunOutcome } from "@preman/core/runner.js";
 import {
   listGroups,
   listRequests,
@@ -8,7 +8,7 @@ import {
   targetPath,
   type RequestEntry,
   type RunTarget,
-} from "@/workspace/collections.js";
+} from "@preman/core/workspace/collections.js";
 import { fixtureWorkspace } from "./helpers.js";
 
 const requests = listRequests(fixtureWorkspace());

@@ -2,11 +2,16 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { listRequests, resolveRequest } from "@/workspace/collections.js";
-import { findWorkspace, requireWorkspace } from "@/workspace/discover.js";
-import { findEnvironment, listEnvironments, loadGlobals, saveEnvironmentValues } from "@/workspace/environments.js";
-import { deriveIncludeDirs, loadResources } from "@/workspace/resources.js";
-import { CliError } from "@/errors.js";
+import { listRequests, resolveRequest } from "@preman/core/workspace/collections.js";
+import { findWorkspace, requireWorkspace } from "@preman/core/workspace/discover.js";
+import {
+  findEnvironment,
+  listEnvironments,
+  loadGlobals,
+  saveEnvironmentValues,
+} from "@preman/core/workspace/environments.js";
+import { deriveIncludeDirs, loadResources } from "@preman/core/workspace/resources.js";
+import { CliError } from "@preman/core/errors.js";
 import {
   cloneFixtureWorkspace,
   collectionPath,

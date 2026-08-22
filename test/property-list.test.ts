@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { CliError, EXIT } from "@/errors.js";
-import { PropertyList, type Property } from "@/scripts/property-list.js";
+import { CliError, EXIT } from "@preman/core/errors.js";
+import { PropertyList, type Property } from "@preman/core/scripts/property-list.js";
 
 const HEADER_OPTIONS = { caseInsensitive: true, label: "request headers" };
 const QUERY_OPTIONS = { caseInsensitive: false, label: "request query parameters" };

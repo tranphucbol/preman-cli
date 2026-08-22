@@ -2,11 +2,11 @@ import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { main } from "@/cli.js";
-import { CliError, EXIT } from "@/errors.js";
-import { LOAD_OPTIONS } from "@/grpc/schema.js";
-import { extractReturnCode, isBusinessSuccess } from "@/runner.js";
-import { loadEnvironment } from "@/workspace/environments.js";
+import { main } from "@preman/cli/main.js";
+import { CliError, EXIT } from "@preman/core/errors.js";
+import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
+import { extractReturnCode, isBusinessSuccess } from "@preman/core/runner.js";
+import { loadEnvironment } from "@preman/core/workspace/environments.js";
 import {
   cloneFixtureWorkspace,
   collectionPath,

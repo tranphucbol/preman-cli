@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@preman/core": ["../core/src/index.ts"],
+      "@preman/core/*": ["../core/src/*"],
+      "@preman/cli/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "vite.config.ts", "../core/src/**/*.ts"]
+}

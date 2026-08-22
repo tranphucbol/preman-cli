@@ -1,6 +1,6 @@
 import { parseStringPromise } from "xml2js";
 import { describe, expect, it } from "vitest";
-import { escapeXml, renderXml } from "@/output/xml.js";
+import { escapeXml, renderXml } from "@preman/cli/reporters/xml.js";
 
 describe("escapeXml", () => {
   it("givenAmpersandAndAngles_whenEscape_thenEntitiesEmitted", () => {

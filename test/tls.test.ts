@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { rootCertificates } from "node:tls";
 import { describe, expect, it } from "vitest";
-import { CliError, EXIT } from "@/errors.js";
+import { CliError, EXIT } from "@preman/core/errors.js";
 import {
   emptyTlsCerts,
   grpcChannelCredentials,
@@ -10,7 +10,7 @@ import {
   secureContextOptions,
   tlsFailureHints,
   type TlsCertLayer,
-} from "@/tls/certs.js";
+} from "@preman/core/tls/certs.js";
 import { SSL_DIR, sslPath } from "./helpers.js";
 
 const CLI_LABEL = "--ssl-*";

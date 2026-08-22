@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LiveBody, Url } from "@/scripts/live-request.js";
+import { LiveBody, Url } from "@preman/core/scripts/live-request.js";
 
 describe("Url", () => {
   it("givenAbsoluteUrl_whenParse_thenPartsSplit", () => {

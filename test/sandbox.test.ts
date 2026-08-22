@@ -1,10 +1,16 @@
 import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CliError } from "@/errors.js";
-import { REQUEST_ORIGIN } from "@/scripts/chain.js";
-import { freezeRequest, LiveBody, LiveGrpcRequest, LiveHttpRequest, type LiveRequest } from "@/scripts/live-request.js";
-import { runScript, type GrpcScriptResponse, type ScriptResponseInfo } from "@/scripts/sandbox.js";
-import { VariableStore } from "@/vars/store.js";
+import { CliError } from "@preman/core/errors.js";
+import { REQUEST_ORIGIN } from "@preman/core/scripts/chain.js";
+import {
+  freezeRequest,
+  LiveBody,
+  LiveGrpcRequest,
+  LiveHttpRequest,
+  type LiveRequest,
+} from "@preman/core/scripts/live-request.js";
+import { runScript, type GrpcScriptResponse, type ScriptResponseInfo } from "@preman/core/scripts/sandbox.js";
+import { VariableStore } from "@preman/core/vars/store.js";
 
 /** Verbatim `beforeInvoke` script from postman/collections/payment/Long Chau.request.yaml. */
 const REAL_TRANS_ID_SCRIPT = `const date = new Date();

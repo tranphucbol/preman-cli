@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CliError } from "@/errors.js";
-import { fileReader } from "@/workspace/files.js";
+import { CliError } from "@preman/core/errors.js";
+import { fileReader } from "@preman/core/workspace/files.js";
 
 const roots: string[] = [];
 

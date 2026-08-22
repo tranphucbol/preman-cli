@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CliError } from "@/errors.js";
-import { listMethods, resolveMethod, splitMethodPath } from "@/grpc/schema.js";
-import { parseAuthority, readLocalGrpcPort, resolveTarget, shouldUseTls } from "@/grpc/target.js";
+import { CliError } from "@preman/core/errors.js";
+import { listMethods, resolveMethod, splitMethodPath } from "@preman/core/grpc/schema.js";
+import { parseAuthority, readLocalGrpcPort, resolveTarget, shouldUseTls } from "@preman/core/grpc/target.js";
 import { FIXTURE_INCLUDE_DIR, FIXTURE_WS, FIXTURES_DIR, requestPath } from "./helpers.js";
 
 /** The real base64 FileDescriptorSet captured by Postman for pe.aev2.ExchangeService.Exchange. */

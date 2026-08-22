@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CliError } from "@/errors.js";
+import { CliError } from "@preman/core/errors.js";
 import {
   assembleGeneratorTables,
   generateDynamicValue,
   supportedDynamicVariables,
   type GeneratorTable,
-} from "@/vars/dynamic/index.js";
+} from "@preman/core/vars/dynamic/index.js";
 
 const RANDOM_INT_MIN = 0;
 const RANDOM_INT_MAX = 1000;
@@ -28,11 +28,11 @@ describe("dynamic variables", () => {
   it("givenSeedSet_whenGeneratingTwice_thenValuesMatch", async () => {
     vi.stubEnv("PREMAN_FAKER_SEED", FAKER_SEED);
     vi.resetModules();
-    const firstModule = await import("@/vars/dynamic/index.js");
+    const firstModule = await import("@preman/core/vars/dynamic/index.js");
     const first = firstModule.generateDynamicValue("$randomEmail");
 
     vi.resetModules();
-    const secondModule = await import("@/vars/dynamic/index.js");
+    const secondModule = await import("@preman/core/vars/dynamic/index.js");
     const second = secondModule.generateDynamicValue("$randomEmail");
 
     expect(second).toBe(first);

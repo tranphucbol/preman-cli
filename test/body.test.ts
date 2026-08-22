@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CliError } from "@/errors.js";
-import { buildBody } from "@/http/body.js";
-import { VariableStore } from "@/vars/store.js";
-import type { FileReader } from "@/workspace/files.js";
+import { CliError } from "@preman/core/errors.js";
+import { buildBody } from "@preman/core/http/body.js";
+import { VariableStore } from "@preman/core/vars/store.js";
+import type { FileReader } from "@preman/core/workspace/files.js";
 
 const FILE_BYTES = Buffer.from([0, 1, 2, 255]);
 const BOUNDARY = "fixed-boundary";
