@@ -1,12 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import pc from "picocolors";
-import { commandRun } from "@preman/cli/commands/run.js";
+import { interactiveSelection } from "@preman/cli/prompt.js";
 import { renderEnvironment, renderEnvironmentSet } from "@preman/cli/render/env.js";
 import { renderList } from "@preman/cli/render/list.js";
-import { reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
+import { hasHumanReporter, renderReports, reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
 import { readEnvironment, writeEnvironmentValue } from "@preman/core/api/environments.js";
 import { describeWorkspace } from "@preman/core/api/inspect.js";
+import { runSelection } from "@preman/core/api/run.js";
 import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 
 declare const __PREMAN_VERSION__: string;
@@ -250,7 +251,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
       });
       const timeouts = resolveTimeouts(values);
       if (timeouts.warning !== undefined) process.stderr.write(`${pc.yellow(`warn: ${timeouts.warning}`)}\n`);
-      const { output, files, exitCode } = await commandRun({
+      const run = await runSelection({
         dir,
         selector: rest.length > 0 ? rest.join(" ") : undefined,
         env: values.env,
@@ -263,6 +264,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
           clientPassphrase: values["ssl-client-passphrase"],
           insecure: values.insecure === true ? true : undefined,
         },
+        certBaseDir: process.cwd(),
         runTimeoutMs: timeouts.runMs,
         timeoutMs: timeouts.requestMs,
         scriptTimeoutMs: timeouts.scriptMs,
@@ -276,12 +278,22 @@ export async function main(argv: string[]): Promise<ExitCode> {
         save: values["no-save"] !== true,
         preferDescriptor: values.descriptor === true,
         bail: values.bail === true,
-        reporters,
-        verbose,
         workingDir: values["working-dir"],
         insecureFileRead: values["insecure-file-read"] === true,
         safeEval: values["safe-eval"] === true,
+        select: interactiveSelection,
       });
+
+      // Warnings are advice for a person; a machine-readable reporter must stay clean.
+      if (hasHumanReporter(reporters)) {
+        for (const warning of run.warnings) process.stderr.write(`${pc.yellow(`warn: ${warning}`)}\n`);
+      }
+
+      const result =
+        run.group === undefined
+          ? { kind: "single" as const, outcome: run.outcome! }
+          : { kind: "group" as const, outcome: run.group };
+      const { output, files } = renderReports(result, reporters, verbose);
       if (output !== "") process.stdout.write(`${output}\n`);
       for (const file of files) {
         try {
@@ -292,7 +304,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
           });
         }
       }
-      return exitCode;
+      return run.exitCode;
     }
 
     default:

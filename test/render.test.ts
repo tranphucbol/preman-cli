@@ -1,7 +1,7 @@
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { commandRun, type RunArgs } from "@preman/cli/commands/run.js";
+import { runSelection, type RunSelectionArgs } from "@preman/core/api/run.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
 import { renderGroupOutcome, renderOutcome } from "@preman/cli/render/outcome.js";
 import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
@@ -9,6 +9,7 @@ import type { GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
 import {
   FIXTURE_HTTP_WS,
   FIXTURE_INCLUDE_DIR,
+  FIXTURES_DIR,
   FIXTURE_PROTO,
   FIXTURE_WS,
   HTTP_TOKEN,
@@ -70,7 +71,7 @@ afterAll(async () => {
   await http.close();
 });
 
-const BASE: Omit<RunArgs, "dir" | "selector" | "env" | "url"> = {
+const BASE: Omit<RunSelectionArgs, "dir" | "selector" | "env" | "url"> = {
   tls: undefined,
   tlsCerts: {},
   timeoutMs: 30_000,
@@ -83,16 +84,14 @@ const BASE: Omit<RunArgs, "dir" | "selector" | "env" | "url"> = {
   save: false,
   preferDescriptor: false,
   bail: false,
-  // No reporter: this suite renders the outcome itself.
-  reporters: [],
-  verbose: false,
+  certBaseDir: FIXTURES_DIR,
   workingDir: undefined,
   insecureFileRead: false,
   safeEval: false,
 };
 
-async function grpcOutcome(selector: string, overrides: Partial<RunArgs> = {}): Promise<RunOutcome> {
-  const result = await commandRun({
+async function grpcOutcome(selector: string, overrides: Partial<RunSelectionArgs> = {}): Promise<RunOutcome> {
+  const result = await runSelection({
     ...BASE,
     dir: FIXTURE_WS,
     selector,
@@ -104,8 +103,8 @@ async function grpcOutcome(selector: string, overrides: Partial<RunArgs> = {}): 
   return result.outcome;
 }
 
-async function grpcGroup(selector: string, overrides: Partial<RunArgs> = {}): Promise<GroupRunOutcome> {
-  const result = await commandRun({
+async function grpcGroup(selector: string, overrides: Partial<RunSelectionArgs> = {}): Promise<GroupRunOutcome> {
+  const result = await runSelection({
     ...BASE,
     dir: FIXTURE_WS,
     selector,
@@ -117,8 +116,8 @@ async function grpcGroup(selector: string, overrides: Partial<RunArgs> = {}): Pr
   return result.group;
 }
 
-async function httpOutcome(selector: string, overrides: Partial<RunArgs> = {}): Promise<RunOutcome> {
-  const result = await commandRun({
+async function httpOutcome(selector: string, overrides: Partial<RunSelectionArgs> = {}): Promise<RunOutcome> {
+  const result = await runSelection({
     ...BASE,
     dir: FIXTURE_HTTP_WS,
     selector,

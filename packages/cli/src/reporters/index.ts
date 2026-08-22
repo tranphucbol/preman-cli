@@ -39,6 +39,28 @@ export function reporterNames(): string[] {
   return Object.keys(REPORTERS);
 }
 
+export interface RenderedReports {
+  /** The one reporter without an export path, if any. */
+  output: string;
+  files: Array<{ path: string; content: string }>;
+}
+
+export function renderReports(result: ReportableRun, reporters: ResolvedReporter[], verbose: boolean): RenderedReports {
+  let output = "";
+  const files: Array<{ path: string; content: string }> = [];
+  for (const { reporter, exportPath } of reporters) {
+    const content = reporter.render(result, { exportPath, verbose });
+    if (exportPath === undefined) output = content;
+    else files.push({ path: exportPath, content });
+  }
+  return { output, files };
+}
+
+/** True when a person is reading stdout, which is the only time warnings are shown. */
+export function hasHumanReporter(reporters: ResolvedReporter[]): boolean {
+  return reporters.some(({ reporter }) => reporter.name === DEFAULT_REPORTER);
+}
+
 export function resolveReporters(names: string[]): Reporter[] {
   const requested = names.flatMap((name) => name.split(REPORTER_SEPARATOR)).map((name) => name.trim());
   const unique = [...new Set(requested.length === 0 ? [DEFAULT_REPORTER] : requested)];
