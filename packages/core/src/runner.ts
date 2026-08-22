@@ -24,6 +24,7 @@ import {
   countTests,
   runScript,
   type ConsoleLine,
+  type ScriptObserver,
   type ScriptResponseInfo,
   type SideRequestRecord,
   type TestSummary,
@@ -53,7 +54,10 @@ import type { RequestEntry } from "./workspace/collections.js";
 import type { Workspace } from "./workspace/discover.js";
 import type { FileReader } from "./workspace/files.js";
 import { resolveAuth } from "./workspace/inherit.js";
+import { nodeIdFor } from "./workspace/paths.js";
 import type { Resources } from "./workspace/resources.js";
+import type { BodyStore } from "./api/bodies.js";
+import { flattenHeaders, type HeaderPairs, type RunEventSink } from "./api/events.js";
 
 export const GRPC_KIND = "grpc-request";
 export const HTTP_KIND = "http-request";
@@ -64,6 +68,16 @@ const RUNNABLE_KINDS = new Set<string>([GRPC_KIND, HTTP_KIND]);
 /** Business-status field name, per `ReturnCode` in asset-exchange-v2-common.proto. */
 const RETURN_CODE_FIELDS = ["return_code", "returnCode"] as const;
 const RETURN_CODE_OK = "OK";
+
+/** How a gRPC response is rendered for the body store, which deals in bytes. */
+const GRPC_CONTENT_TYPE = "application/json";
+const GRPC_BODY_INDENT = 2;
+const BODY_ENCODING = "utf8";
+const CONTENT_TYPE_HEADER = "content-type";
+const TLS_SCHEME = "grpcs";
+const PLAIN_SCHEME = "grpc";
+/** Stands in for a request body that is not text, so no viewer tries to show it. */
+const BINARY_BODY = "<binary>";
 
 export type { Protocol };
 export { countTests, type TestSummary };
@@ -106,6 +120,17 @@ export interface RunOptions {
    * request so a login's `Set-Cookie` authenticates the requests that follow.
    */
   cookies?: CookieJar;
+  /**
+   * Report progress as it happens. Omitted by the CLI, which waits for the batch
+   * outcome; when it is omitted not one event is constructed.
+   */
+  sink?: RunEventSink;
+  /**
+   * Where the response body is deposited so a `response-body` event can name it
+   * instead of carrying it. Required for that event and for nothing else: with no
+   * store there is nowhere to hand a 50MB body to, so none is announced.
+   */
+  bodies?: BodyStore;
 }
 
 interface BaseRunOutcome {
@@ -185,6 +210,18 @@ export function aggregateTests(items: GroupRunItem[]): TestSummary {
   );
 }
 
+/** What a live run list shows as the destination of a gRPC call. */
+function grpcTargetLabel(target: GrpcTarget, methodPath: string): string {
+  return `${target.tls ? TLS_SCHEME : PLAIN_SCHEME}://${target.authority}/${methodPath}`;
+}
+
+/** Reads the response's declared media type, which decides how the viewer renders it. */
+function contentTypeOf(headers: Record<string, string | string[]>): string | null {
+  const raw = headers[CONTENT_TYPE_HEADER];
+  if (raw === undefined) return null;
+  return Array.isArray(raw) ? (raw[0] ?? null) : raw;
+}
+
 function groupProperties(entries: readonly Property[]): Record<string, string | string[]> {
   const grouped: Record<string, string | string[]> = {};
   for (const { key, value } of entries) {
@@ -259,6 +296,73 @@ function parseRequest(entry: RequestEntry): ParsedRequest {
   });
 }
 
+/**
+ * The run events of one request, with `runId` and `nodeId` already stamped.
+ *
+ * Exists so that no emission site in this file has to know either id, and so the
+ * whole feature costs one `undefined` check when nobody is listening.
+ */
+interface BodySource {
+  bytes: Buffer;
+  contentType: string | null;
+}
+
+interface RequestEvents {
+  start: (name: string, iteration: number) => void;
+  sent: (target: string, sent: unknown) => void;
+  head: (status: number | string, headers: HeaderPairs, timings: Record<string, number>) => void;
+  /**
+   * Lazy on purpose. Encoding a 50MB response into a `Buffer` for a CLI run that
+   * will never look at it is exactly the cost this whole seam exists to avoid.
+   */
+  body: (produce: () => BodySource) => void;
+  end: (exitCode: ExitCode, returnCode?: string) => void;
+  /** Handed to the sandbox so logs, tests and side requests stream out one at a time. */
+  observer: ScriptObserver | undefined;
+}
+
+const NO_REQUEST_EVENTS: RequestEvents = {
+  start: () => undefined,
+  sent: () => undefined,
+  head: () => undefined,
+  body: () => undefined,
+  end: () => undefined,
+  observer: undefined,
+};
+
+function requestEvents(options: Pick<RunOptions, "sink" | "bodies" | "workspace" | "entry">): RequestEvents {
+  const sink = options.sink;
+  if (sink === undefined) return NO_REQUEST_EVENTS;
+
+  const runId = sink.runId;
+  const nodeId = nodeIdFor(options.workspace.root, options.entry.filePath);
+  const bodies = options.bodies;
+
+  return {
+    start: (name, iteration) => sink.emit({ type: "request-start", runId, nodeId, name, iteration }),
+    sent: (target, sent) => sink.emit({ type: "request-sent", runId, nodeId, target, sent }),
+    head: (status, headers, timings) => sink.emit({ type: "response-head", runId, nodeId, status, headers, timings }),
+    body: (produce) => {
+      if (bodies === undefined) return;
+      const { bytes, contentType } = produce();
+      sink.emit({ type: "response-body", runId, nodeId, ...bodies.publish(bytes, contentType) });
+    },
+    end: (exitCode, returnCode) =>
+      sink.emit({
+        type: "request-end",
+        runId,
+        nodeId,
+        exitCode,
+        ...(returnCode === undefined ? {} : { returnCode }),
+      }),
+    observer: {
+      onLog: (line) => sink.emit({ type: "console", runId, nodeId, line }),
+      onTest: (result) => sink.emit({ type: "test", runId, nodeId, result }),
+      onSideRequest: (summary) => sink.emit({ type: "side-request", runId, nodeId, summary }),
+    },
+  };
+}
+
 interface ScriptSink {
   consoleLines: ConsoleLine[];
   tests: TestResult[];
@@ -286,6 +390,8 @@ interface ScriptSinkOptions {
    * then exposed read-only to post-response scripts.
    */
   request: () => LiveRequest;
+  /** Streams each log line, test result and side request as the script produces it. */
+  observer?: ScriptObserver;
 }
 
 /** Runs the scripts of one request, in file order, collecting logs and test results. */
@@ -311,6 +417,7 @@ function scriptSink(options: ScriptSinkOptions): ScriptSink {
         iteration: options.iteration,
         iterationCount: options.iterationCount,
         tlsCerts: options.tlsCerts,
+        ...(options.observer === undefined ? {} : { observer: options.observer }),
         ...(response === undefined ? {} : { response }),
       });
       consoleLines.push(...result.logs);
@@ -345,13 +452,28 @@ function persist(options: Pick<RunOptions, "save" | "environment">, store: Varia
  * `pm.request`; scripts that introduce a token can resolve it with replaceIn().
  */
 export async function runRequest(options: RunOptions): Promise<RunOutcome> {
-  const parsed = parseRequest(options.entry);
-  const store = options.store ?? newStore(options);
-  const cookies = options.cookies ?? new CookieJar();
+  const events = requestEvents(options);
+  // Announced before the file is even parsed, so a request that cannot be read still
+  // appears in a live run list rather than silently never starting.
+  events.start(options.entry.name, options.iteration ?? FIRST_ITERATION);
 
-  return parsed.protocol === "grpc"
-    ? runGrpcRequest(options, parsed.request, store, cookies)
-    : runHttpRequest(options, parsed.request, store, cookies);
+  try {
+    const parsed = parseRequest(options.entry);
+    const store = options.store ?? newStore(options);
+    const cookies = options.cookies ?? new CookieJar();
+
+    const outcome =
+      parsed.protocol === "grpc"
+        ? await runGrpcRequest(options, parsed.request, store, cookies, events)
+        : await runHttpRequest(options, parsed.request, store, cookies, events);
+
+    events.end(outcome.exitCode, outcome.protocol === "grpc" ? outcome.returnCode : undefined);
+    return outcome;
+  } catch (cause) {
+    // The throw still propagates; the event is so a live list can close the row.
+    events.end(EXIT.CLI);
+    throw cause;
+  }
 }
 
 async function runGrpcRequest(
@@ -359,6 +481,7 @@ async function runGrpcRequest(
   request: GrpcRequest,
   store: VariableStore,
   cookies: CookieJar,
+  events: RequestEvents,
 ): Promise<GrpcRunOutcome> {
   const { entry, workspace, resources } = options;
   const chain = resolveScriptChain({
@@ -412,6 +535,7 @@ async function runGrpcRequest(
     iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,
     request: () => liveRequest,
+    ...(events.observer === undefined ? {} : { observer: events.observer }),
   });
 
   // 1. Pre-request scripts edit the already-resolved request in place.
@@ -453,6 +577,7 @@ async function runGrpcRequest(
       : resolvedTarget;
 
   // 3. Invoke.
+  events.sent(grpcTargetLabel(target, liveRequest.methodPath), sentMessage);
   const invoke = await invokeUnary({
     target,
     method: method.definition,
@@ -462,6 +587,16 @@ async function runGrpcRequest(
     tlsCerts: options.tlsCerts,
   });
   freezeRequest(liveRequest);
+  // Metadata only: trailers arrive after the message, and the batch outcome carries them.
+  events.head(invoke.codeName, flattenHeaders(invoke.metadata), { durationMs: invoke.durationMs });
+  if (invoke.ok) {
+    // gRPC returns a decoded message, not bytes; the viewer wants the JSON it would
+    // have printed anyway, so that is what gets stored.
+    events.body(() => ({
+      bytes: Buffer.from(JSON.stringify(invoke.response, null, GRPC_BODY_INDENT), BODY_ENCODING),
+      contentType: GRPC_CONTENT_TYPE,
+    }));
+  }
 
   // 4. Post-response scripts, where the `pm.test` assertions live.
   const warnings = [...chain.warnings, ...authWarnings, ...method.warnings, ...invoke.warnings];
@@ -520,6 +655,7 @@ async function runHttpRequest(
   request: HttpRequest,
   store: VariableStore,
   cookies: CookieJar,
+  events: RequestEvents,
 ): Promise<HttpRunOutcome> {
   const { entry } = options;
 
@@ -550,6 +686,7 @@ async function runHttpRequest(
     iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,
     request: () => live.request,
+    ...(events.observer === undefined ? {} : { observer: events.observer }),
   });
 
   // 1. Scripts edit the interpolated request and rendered auth directly.
@@ -559,6 +696,14 @@ async function runHttpRequest(
   const built = finaliseHttpRequest(live.request, live.target, live.wireBody);
 
   // 3. Send it. The jar is shared with the rest of the run.
+  // `href`, not the `URL` itself: an event has to survive a structured clone.
+  const sentUrl = built.url.href;
+  events.sent(`${built.method} ${sentUrl}`, {
+    method: built.method,
+    url: sentUrl,
+    headers: built.headers.map(({ key, value }): [string, string] => [key, value]),
+    body: typeof built.body === "string" ? built.body : built.body === undefined ? undefined : BINARY_BODY,
+  });
   const invoke = await invokeHttp({
     url: built.url,
     method: built.method,
@@ -570,6 +715,13 @@ async function runHttpRequest(
   });
   syncFinalHttpRequest(live.request, invoke, built.body);
   freezeRequest(live.request);
+  if (invoke.statusCode !== NO_RESPONSE_STATUS) {
+    events.head(invoke.statusCode, flattenHeaders(invoke.headers), { durationMs: invoke.durationMs });
+    events.body(() => ({
+      bytes: Buffer.from(invoke.body, BODY_ENCODING),
+      contentType: contentTypeOf(invoke.headers),
+    }));
+  }
 
   // 4. Post-response scripts see the same request object, now read-only.
   const warnings = [...chain.warnings, ...live.warnings, ...built.warnings, ...invoke.warnings];
@@ -739,6 +891,9 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
     throw new PremanError(`"${options.groupPath}" contains no requests`);
   }
 
+  const sink = options.sink;
+  sink?.emit({ type: "run-start", runId: sink.runId, total: options.entries.length * options.iterationCount });
+
   const store = newStore({ ...options, data: {} });
   const cookies = new CookieJar();
   const started = performance.now();
@@ -768,6 +923,12 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
           outcome: undefined,
           error: { message: `${entry.kind} is not supported yet`, details: [] },
         });
+        // A skipped request never reaches `runRequest`, so its row is opened and
+        // closed here. Without this the live list would be missing an entry the
+        // batch report ends up containing.
+        const skipped = requestEvents({ ...options, entry });
+        skipped.start(entry.name, iteration);
+        skipped.end(EXIT.OK);
         continue;
       }
 
@@ -815,6 +976,7 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
   const { savedVars, savedTo } = persist(options, store);
   const itemExitCode = aggregateExit(items);
   const exitCode = bailReason === "timeout" && itemExitCode !== EXIT.CLI ? EXIT.TRANSPORT : itemExitCode;
+  sink?.emit({ type: "run-end", runId: sink.runId, exitCode });
 
   return {
     groupPath: options.groupPath,

@@ -1,0 +1,145 @@
+/*
+ * The one stylesheet. Tailwind v4 is CSS-first: there is no tailwind.config.js, the design
+ * system lives in `@theme` below, and utilities are generated from what the source actually uses.
+ *
+ * Decision 11 of docs/plans/desktop-app.md: the density tokens are retuned before any screen is
+ * built. shadcn ships `--radius: 0.625rem` and `h-9` (36px), which is a web app's density, not a
+ * tool's. Postman is 2-4px radii, 26-28px controls and 12-13px text, and that is what fits 40
+ * header rows and a 5,000-node tree on screen. Retuning here rather than per component is the
+ * whole point: a later Radix or shadcn control inherits it without being patched.
+ *
+ * v1 is dark only. Not "dark by default": there is no light theme and no OS following, because a
+ * request tool that repaints itself at sunset is a tool that changed under the user's hands
+ * mid-debug. A second palette is a real feature with a real cost and it is not in this phase.
+ *
+ * Every foreground token below states its worst-case contrast against the five surfaces. Those
+ * numbers are computed, not chosen: the ratios are the reason the values look the way they do.
+ */
+@import "tailwindcss";
+
+@theme {
+  /* Type. 13px body, 12px for chrome, 11px for the monospace method/label column. */
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem; /* 12px */
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.8125rem; /* 13px — the body size */
+  --text-sm--line-height: 1.25rem;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* Radii. Nothing in a tool this dense should look pill-shaped. */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  /* Control heights. `--spacing-row` is the sidebar's fixed row height, and it is a token
+   * because TanStack Virtual needs the same number in TypeScript: see ROW_HEIGHT. */
+  --spacing-row: 28px;
+  --spacing-control: 26px;
+  --spacing-control-lg: 30px;
+  --spacing-tab: 32px;
+  --spacing-gutter: 10px;
+
+  /* Surfaces, darkest to lightest: window, panel, control, hover.
+   *
+   * `--color-selected` is deliberately NOT the next grey up. A lighter-grey selected row is both
+   * the worst background in the app to put text on and, across a 5,000-row tree, visual noise.
+   * Tinting it toward the accent instead keeps it at hover luminance, so every ink level stays
+   * legible on it, and selection reads as "the accent is here" rather than "this grey is 8% off". */
+  --color-canvas: #111214;
+  --color-panel: #17191c;
+  --color-control: #1d2024;
+  --color-hover: #23262b;
+  --color-selected: #1d2632;
+
+  /* Decorative hairlines. These are 1px dividers and nothing else: never the sole affordance of
+   * a control, because at 1.4:1 they cannot be. Anything load-bearing uses --color-glyph. */
+  --color-line: #2a2d32;
+  --color-line-strong: #383c43;
+
+  /* Three text tiers, and all three clear WCAG AA (4.5:1) on all five surfaces above. A tool's
+   * third tier carries response times, byte counts and file paths, which are exactly the things
+   * you squint at, so "faint" here means quieter, never less legible. Verified, not eyeballed. */
+  --color-ink: #d8dade; /* worst case 10.8:1 */
+  --color-ink-dim: #a8adb6; /* worst case  6.7:1 */
+  --color-ink-faint: #8a8f98; /* worst case  4.7:1 */
+
+  /* The non-text tier: chevrons, drag handles, and any border that is a control's only
+   * affordance. WCAG 1.4.11 asks 3:1 for those and this clears it everywhere (worst 3.3:1).
+   * It is a separate token from --color-ink-faint so that "too low for text" is unmissable. */
+  --color-glyph: #6e7684;
+
+  /* One accent, locked. There is no dimmed variant: the one that used to live here read at
+   * 2.5:1 and every use of it would have been a contrast bug waiting for a screenshot. */
+  --color-accent: #6aa9ff;
+  --color-ok: #5ec27f;
+  --color-warn: #e0b355;
+  --color-danger: #ff7a6b;
+
+  /* The whole z-index scale, and it is deliberately this short. Arbitrary `z-50` sprinkled at the
+   * point of pain is how a tool ends up with a dropdown behind a drawer. Four systemic layers:
+   * sticky pane chrome, the resize handles that sit above it, portalled menus, and tooltips last
+   * because a tooltip explaining a menu item has to clear the menu. */
+  --z-index-chrome: 10;
+  --z-index-handle: 20;
+  --z-index-menu: 30;
+  --z-index-tooltip: 40;
+
+  /* HTTP method colours, keyed by verb so a row cannot invent its own. */
+  --color-method-get: #5ec27f;
+  --color-method-post: #e0b355;
+  --color-method-put: #6aa9ff;
+  --color-method-patch: #b78bff;
+  --color-method-delete: #ff7a6b;
+  --color-method-grpc: #4ec9c0;
+}
+
+@layer base {
+  /* The window chrome, not a document: no rubber-band scroll, no text selection by accident,
+   * no tap highlight. Anything that wants selection asks for it. */
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    @apply overflow-hidden bg-canvas font-sans text-sm text-ink antialiased select-none;
+  }
+
+  /* A tool has a lot of scrollbars. Overlay them so they cost no layout width. The thumb is a
+   * control you aim at, so it takes the non-text tier rather than a decorative hairline. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-glyph) transparent;
+  }
+
+  /* Keyboard focus is never subtle here. Postman parity means most of this app is reachable
+   * without the mouse, and a ring you have to hunt for is the same as no ring. */
+  :focus-visible {
+    @apply outline-2 outline-offset-1 outline-accent;
+  }
+
+  /* Reduced motion is the whole app's behaviour, not a per-component afterthought. MOTION is
+   * dialled to 2: hover and press transitions exist, nothing else moves, so honouring the
+   * preference costs one rule instead of a wrapper around every component. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  input,
+  textarea,
+  [contenteditable] {
+    @apply select-text;
+  }
+}

@@ -7,14 +7,29 @@ import * as core from "@preman/core";
  * erases them, which is exactly why widening the surface has to be deliberate.
  */
 const DECLARED_SURFACE = [
+  "BodyStore",
   "EXIT",
   "PremanError",
+  "buildCatalog",
+  "createCollection",
+  "createEnvironmentFile",
+  "createFolder",
+  "createRequestFile",
+  "deleteNode",
   "describeWorkspace",
+  "editDefinitionFile",
+  "editRequestFile",
   "failOnAmbiguity",
   "findWorkspace",
+  "flattenHeaders",
   "listGroups",
   "listRequests",
+  "moveNode",
   "readEnvironment",
+  "refreshCatalog",
+  "renameNode",
+  "reorderSiblings",
+  "replaceFileText",
   "requireWorkspace",
   "runGroup",
   "runRequest",
@@ -23,6 +38,7 @@ const DECLARED_SURFACE = [
   "targetLabel",
   "toGroupJsonReport",
   "toJsonReport",
+  "watchWorkspace",
   "writeEnvironmentValue",
 ];
 

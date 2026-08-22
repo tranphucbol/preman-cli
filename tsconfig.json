@@ -8,7 +8,8 @@
     "paths": {
       "@preman/core": ["packages/core/src/index.ts"],
       "@preman/core/*": ["packages/core/src/*"],
-      "@preman/cli/*": ["packages/cli/src/*"]
+      "@preman/cli/*": ["packages/cli/src/*"],
+      "@preman/desktop/*": ["packages/desktop/src/*"]
     },
     "types": ["node"],
     "strict": true,
@@ -22,5 +23,7 @@
     "noEmit": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/vite.config.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/vite.*.ts", "test/**/*.ts", "vitest.config.ts"],
+  // The renderer targets a browser, not Node: it has its own project, with DOM and without node types.
+  "exclude": ["packages/desktop/src/renderer/**"]
 }

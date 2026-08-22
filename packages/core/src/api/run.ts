@@ -1,5 +1,5 @@
 import { loadIterationData, type DataRow } from "@preman/core/data/rows.js";
-import { PremanError, type ExitCode } from "@preman/core/errors.js";
+import { EXIT, PremanError, type ExitCode } from "@preman/core/errors.js";
 import { runGroup, runRequest, type GroupRunOutcome, type RunOutcome } from "@preman/core/runner.js";
 import { resolveTlsCerts, type TlsCertInput, type TlsCertLayer } from "@preman/core/tls/certs.js";
 import {
@@ -13,12 +13,16 @@ import { requireWorkspace, type Workspace } from "@preman/core/workspace/discove
 import { listEnvironments, loadGlobals, type EnvironmentEntry } from "@preman/core/workspace/environments.js";
 import { fileReader } from "@preman/core/workspace/files.js";
 import { loadResources } from "@preman/core/workspace/resources.js";
+import type { BodyStore } from "./bodies.js";
+import type { RunEventSink } from "./events.js";
 import { failOnAmbiguity, type SelectionPort } from "./select.js";
 
 /** Layer labels, echoed back to the user when a certificate cannot be read. */
 const CLI_CERT_LABEL = "--ssl-*";
 const CONFIG_CERT_LABEL = ".postman/preman.yaml";
 const NO_ENVIRONMENT_WARNING = "no environment selected; only --var values are available";
+/** A single-request run has exactly one request to report progress against. */
+const SINGLE_REQUEST_TOTAL = 1;
 
 export interface RunSelectionArgs {
   dir: string;
@@ -47,6 +51,10 @@ export interface RunSelectionArgs {
   safeEval: boolean;
   /** How to resolve ambiguity. Defaults to refusing and listing the candidates. */
   select?: SelectionPort;
+  /** Report progress as it happens. Omitted by the CLI, which waits for the result. */
+  sink?: RunEventSink;
+  /** Where response bodies are deposited so the events can name them, not carry them. */
+  bodies?: BodyStore;
 }
 
 export interface RunSelectionResult {
@@ -157,6 +165,8 @@ export async function runSelection(args: RunSelectionArgs): Promise<RunSelection
     safeEval: args.safeEval || config?.safeEval === true,
     preferDescriptor: args.preferDescriptor,
     save: args.save,
+    ...(args.sink === undefined ? {} : { sink: args.sink }),
+    ...(args.bodies === undefined ? {} : { bodies: args.bodies }),
   };
 
   if (target.kind === "group") {
@@ -179,6 +189,17 @@ export async function runSelection(args: RunSelectionArgs): Promise<RunSelection
     });
   }
 
-  const outcome = await runRequest({ ...shared, entry: target.entry, data: data?.rows[0] });
-  return { outcome, group: undefined, exitCode: outcome.exitCode, warnings };
+  // `runGroup` owns the run boundary for a group; a lone request has no group to own
+  // it, so the seam that decided to run one emits it. Either way a listener sees
+  // exactly one `run-start` and one `run-end`.
+  const sink = args.sink;
+  sink?.emit({ type: "run-start", runId: sink.runId, total: SINGLE_REQUEST_TOTAL });
+  try {
+    const outcome = await runRequest({ ...shared, entry: target.entry, data: data?.rows[0] });
+    sink?.emit({ type: "run-end", runId: sink.runId, exitCode: outcome.exitCode });
+    return { outcome, group: undefined, exitCode: outcome.exitCode, warnings };
+  } catch (cause) {
+    sink?.emit({ type: "run-end", runId: sink.runId, exitCode: EXIT.CLI });
+    throw cause;
+  }
 }

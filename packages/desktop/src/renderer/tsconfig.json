@@ -1,0 +1,21 @@
+{
+  // The renderer is its own program because it is the only browser target in the repo: it needs
+  // `lib.dom` and must not be compiled against a Node global scope. `@preman/core` is mapped here
+  // only because `engine/protocol.ts` re-exports core's types, and the compiler has to resolve the
+  // declaration graph behind a type-only re-export. Renderer *source* may not name core, `node:*`
+  // or Electron, and may not touch a Node global; eslint.config.js enforces both.
+  "extends": "../../../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@preman/desktop/*": ["../*"],
+      "@preman/core": ["../../../core/src/index.ts"],
+      "@preman/core/*": ["../../../core/src/*"]
+    },
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // `react-jsx` so no file needs to import React just to return markup.
+    "jsx": "react-jsx"
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": []
+}

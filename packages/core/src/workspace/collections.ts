@@ -27,9 +27,41 @@ export interface RequestEntry {
   path: string;
   /** Collection first, then each folder outermost to innermost. Never empty. */
   ancestors: GroupDefinition[];
+  /**
+   * The badge an interface shows beside the name: the HTTP verb, or the trailing
+   * segment of a gRPC `methodPath`. Absent for kinds with nothing to show.
+   */
+  label?: string;
 }
 
-function readRequestHeader(filePath: string): { name: string; kind: string; order: number | undefined } {
+const HTTP_KIND = "http-request";
+const GRPC_KIND = "grpc-request";
+const DEFAULT_HTTP_METHOD = "GET";
+
+function readLabel(kind: string, raw: Record<string, unknown>): string | undefined {
+  if (kind === HTTP_KIND) {
+    return (typeof raw.method === "string" && raw.method.length > 0 ? raw.method : DEFAULT_HTTP_METHOD).toUpperCase();
+  }
+  if (kind === GRPC_KIND && typeof raw.methodPath === "string") {
+    return raw.methodPath.split(".").pop();
+  }
+  return undefined;
+}
+
+export interface RequestHeader {
+  name: string;
+  kind: string;
+  order: number | undefined;
+  label: string | undefined;
+}
+
+/**
+ * The fields needed to place and label a request without interpreting it.
+ *
+ * Deliberately parses the whole document and keeps four fields: the parse is the
+ * expensive part and a second reader would drift from this one's fallbacks.
+ */
+export function readRequestHeader(filePath: string): RequestHeader {
   const fallbackName = basename(filePath).slice(0, -REQUEST_SUFFIX.length);
   let raw: Record<string, unknown>;
   try {
@@ -37,25 +69,36 @@ function readRequestHeader(filePath: string): { name: string; kind: string; orde
   } catch (cause) {
     throw new PremanError(`failed to parse ${filePath}: ${(cause as Error).message}`);
   }
+  const kind = typeof raw.$kind === "string" ? raw.$kind : "unknown";
   return {
     name: typeof raw.name === "string" && raw.name.length > 0 ? raw.name : fallbackName,
-    kind: typeof raw.$kind === "string" ? raw.$kind : "unknown",
+    kind,
     order: typeof raw.order === "number" ? raw.order : undefined,
+    label: readLabel(kind, raw),
   };
+}
+
+/** The two keys Postman sorts siblings by, for anything that has them. */
+export interface Ordered {
+  order: number | undefined;
+  name: string;
 }
 
 /**
  * One entry at a level of the tree: a request, or a folder to descend into.
  * Both carry the two keys Postman sorts siblings by.
  */
-interface Sibling {
-  order: number | undefined;
-  name: string;
+interface Sibling extends Ordered {
   emit: (out: RequestEntry[]) => void;
 }
 
-/** Postman sibling order: `order` ascending with missing last, then name. */
-function compareSiblings(a: Sibling, b: Sibling): number {
+/**
+ * Postman sibling order: `order` ascending with missing last, then name.
+ *
+ * Exported because the catalog walks the same tree for a different shape, and two
+ * comparators would eventually disagree about where a request sits.
+ */
+export function compareOrderThenName(a: Ordered, b: Ordered): number {
   const ao = a.order ?? Number.POSITIVE_INFINITY;
   const bo = b.order ?? Number.POSITIVE_INFINITY;
   if (ao !== bo) return ao - bo;
@@ -94,11 +137,12 @@ function walk(dir: string, ancestors: GroupDefinition[], out: RequestEntry[]): v
       folders: folders.map((folder) => folder.name),
       path: `${parent.path}/${header.name}`,
       ancestors,
+      label: header.label,
     };
     siblings.push({ order: header.order, name: header.name, emit: (target) => target.push(request) });
   }
 
-  siblings.sort(compareSiblings);
+  siblings.sort(compareOrderThenName);
   for (const sibling of siblings) sibling.emit(out);
 }
 
@@ -125,7 +169,7 @@ export function listRequests(ws: Workspace): RequestEntry[] {
     });
   }
 
-  collections.sort(compareSiblings);
+  collections.sort(compareOrderThenName);
   const out: RequestEntry[] = [];
   for (const collection of collections) collection.emit(out);
   return out;

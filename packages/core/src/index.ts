@@ -30,6 +30,43 @@ export {
   type WorkspaceSnapshot,
 } from "@preman/core/api/inspect.js";
 export {
+  buildCatalog,
+  refreshCatalog,
+  type Catalog,
+  type CatalogNode,
+  type CatalogNodeKind,
+  type CatalogProtocol,
+} from "@preman/core/api/catalog.js";
+export { watchWorkspace, type WatchHandle, type WatchOptions } from "@preman/core/api/watch.js";
+export {
+  createCollection,
+  createFolder,
+  createEnvironmentFile,
+  createRequestFile,
+  deleteNode,
+  editDefinitionFile,
+  editRequestFile,
+  moveNode,
+  renameNode,
+  reorderSiblings,
+  replaceFileText,
+  type CreateCollectionArgs,
+  type CreateEnvironmentArgs,
+  type CreateGroupArgs,
+  type CreateRequestArgs,
+  type FieldEdit,
+  type MoveArgs,
+  type RequestKind,
+} from "@preman/core/api/mutate.js";
+export { flattenHeaders, type HeaderPairs, type RunEvent, type RunEventSink } from "@preman/core/api/events.js";
+export {
+  BodyStore,
+  type BodyHead,
+  type BodyMatch,
+  type BodyPublication,
+  type BodyWindow,
+} from "@preman/core/api/bodies.js";
+export {
   readEnvironment,
   selectEnvironment,
   writeEnvironmentValue,

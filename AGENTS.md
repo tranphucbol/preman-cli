@@ -3,7 +3,8 @@
 CLI that runs requests from a Postman filesystem-format workspace (`.postman/` + `postman/`).
 Unary gRPC and HTTP. See `README.md` for behaviour; this file is about how to change the code.
 
-Two workspace packages: `@preman/core` is the engine, `preman` is the terminal in front of it.
+Three workspace packages: `@preman/core` is the engine, `preman` is the terminal in front of it,
+and `@preman/desktop` is the window in front of it. Both front ends read and write the same files.
 
 ## Commands
 
@@ -12,12 +13,13 @@ Two workspace packages: `@preman/core` is the engine, `preman` is the terminal i
 - `bun run typecheck:core` - the engine alone; proves it compiles without the CLI
 - `bun run test` - Vitest, all must pass
 - `bun run test -- test/e2e.test.ts` - single file
-- `bun run build` - both packages; `packages/cli/dist/preman.js` is the shipped artifact
+- `bun run build` - every package; `packages/cli/dist/preman.js` is the shipped CLI artifact
+- `bun run desktop` - build the Electron app and launch it
 - `bun run lint` - ESLint, must be clean
 - `bun run lint:fix` - apply ESLint fixes
 - `bun run format` - apply Prettier formatting
 - `bun run format:check` - verify Prettier formatting
-- `bun run packages/cli/src/bin.ts <args>` - run from source
+- `bun run packages/cli/src/bin.ts <args>` - run the CLI from source
 
 Never mark work done without clean `typecheck`, `lint`, `format:check`, and a full green `test` run.
 
@@ -46,9 +48,22 @@ packages/cli/                    preman - the published CLI
   src/prompt.ts                  the TTY SelectionPort; the only @inquirer/prompts consumer
   src/render/                    outcome, list and env painting
   src/reporters/                 reporter registry, cli/json/junit, xml
-vitest.config.ts                 the one test project, shared by both packages
-packages/*/vite.config.ts        per-package build
-eslint.config.js                 lint, import layering, and the engine purity fence
+packages/desktop/                @preman/desktop - the Electron app, private, three processes
+  src/main/                      lifecycle, one window, menu, dialogs; holds no workspace state
+    hosts.ts                     one utilityProcess per open workspace; MessageChannelMain transfer
+    store.ts                     app data: workspaces, tabs, drafts, window bounds
+  src/preload/                   contextBridge surface; relays the engine port into the page
+  src/engine/                    the utility process: Catalog, BodyStore, watcher, proto cache
+    protocol.ts                  the typed contract; the only module engine and renderer share
+  src/renderer/                  the pure view: React 19, Zustand, Tailwind v4, CodeMirror 6
+    app.css                      the design system; every token is contrast-audited
+    stores/                      catalog, tabs, runs, session - one file per subscription surface
+    model/request.ts             reads and writes request fields without importing the engine
+    ui/                          cn, icons, Menu, Controls, Dialog, CodeEditor
+    panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid
+vitest.config.ts                 the one test project, shared by every package
+packages/*/vite.*.config.ts      per-package build; the desktop has one config per process
+eslint.config.js                 lint, import layering, and the two purity fences
 test/fixtures/ws/                a real Postman workspace + .proto used by every suite
 test/fixtures/http-ws/           the HTTP workspace; `Legacy Http` in `ws/` is a skipped websocket
 test/fixtures/ssl/               committed certificates; regenerate with `generate.sh`
@@ -59,8 +74,14 @@ test/fixtures/ssl/               committed certificates; regenerate with `genera
 - TypeScript strict, ESM. Import with explicit `.js` specifiers; cross a directory with
   `@preman/core/…` or `@preman/cli/…` (including inside core), stay relative within one, and use
   `import type` for types.
-- The engine may not know it is a CLI: nothing under `packages/core/` imports `picocolors` or
-  `@inquirer/prompts`, or touches `process` beyond `env`. Terminal concerns are arguments.
+- The engine may not know what is in front of it: nothing under `packages/core/` imports
+  `picocolors`, `@inquirer/prompts` or `electron`, or touches `process` beyond `env`. Terminal and
+  window concerns are arguments.
+- The renderer may not reach the engine in process: nothing under
+  `packages/desktop/src/renderer/` imports `@preman/core`, `node:*` or `electron`, or names
+  `process`, `Buffer` or `require`. It talks over the transferred port and imports types from
+  `@preman/desktop/engine/protocol.js`. That one rule is the whole architecture; if the renderer
+  can `import { runRequest }`, the app becomes Postman.
 - No magic literals in logic: hoist to a named module-scope `const`/`Set`/`Record`.
 - Errors are `PremanError` with an `exitCode` and actionable `details[]`. Never throw a bare
   string, never swallow a cause.
