@@ -3,7 +3,8 @@ import * as protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { commandRun, type RunArgs } from "@preman/cli/commands/run.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
-import { renderGroupOutcome, renderOutcome, toGroupJsonReport, toJsonReport } from "@preman/cli/render/outcome.js";
+import { renderGroupOutcome, renderOutcome } from "@preman/cli/render/outcome.js";
+import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
 import type { GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
 import {
   FIXTURE_HTTP_WS,

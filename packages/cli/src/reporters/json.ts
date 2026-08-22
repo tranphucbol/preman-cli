@@ -1,4 +1,4 @@
-import { toGroupJsonReport, toJsonReport } from "@preman/cli/render/outcome.js";
+import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
 import type { Reporter } from "./index.js";
 
 export const jsonReporter: Reporter = {
