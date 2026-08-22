@@ -1,11 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import pc from "picocolors";
-import { commandEnvSet, commandEnvShow } from "@preman/cli/commands/env.js";
-import { commandList } from "@preman/cli/commands/list.js";
 import { commandRun } from "@preman/cli/commands/run.js";
-import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
+import { renderEnvironment, renderEnvironmentSet } from "@preman/cli/render/env.js";
+import { renderList } from "@preman/cli/render/list.js";
 import { reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
+import { readEnvironment, writeEnvironmentValue } from "@preman/core/api/environments.js";
+import { describeWorkspace } from "@preman/core/api/inspect.js";
+import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 
 declare const __PREMAN_VERSION__: string;
 
@@ -219,14 +221,14 @@ export async function main(argv: string[]): Promise<ExitCode> {
 
   switch (command) {
     case "list": {
-      process.stdout.write(`${commandList({ dir, json, verbose })}\n`);
+      process.stdout.write(`${renderList(describeWorkspace(dir), { json, verbose })}\n`);
       return EXIT.OK;
     }
 
     case "env": {
       const sub = rest[0] ?? "show";
       if (sub === "show") {
-        process.stdout.write(`${commandEnvShow({ dir, env: values.env, json })}\n`);
+        process.stdout.write(`${renderEnvironment(readEnvironment(dir, values.env), { json })}\n`);
         return EXIT.OK;
       }
       if (sub === "set") {
@@ -234,7 +236,8 @@ export async function main(argv: string[]): Promise<ExitCode> {
         if (key === undefined || valueParts.length === 0) {
           throw new PremanError("usage: preman env set <key> <value>");
         }
-        process.stdout.write(`${commandEnvSet({ dir, env: values.env, json, key, value: valueParts.join(" ") })}\n`);
+        const write = writeEnvironmentValue(dir, values.env, key, valueParts.join(" "));
+        process.stdout.write(`${renderEnvironmentSet(write, { json })}\n`);
         return EXIT.OK;
       }
       throw new PremanError(`unknown env subcommand "${sub}"`, { details: ["expected `show` or `set`"] });
