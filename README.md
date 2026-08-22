@@ -32,11 +32,11 @@ git clone https://github.com/tranphucbol/preman-cli.git
 cd preman-cli
 bun install
 bun run build
-npm link
+cd packages/cli && npm link
 ```
 
-The built `dist/preman.js` resolves runtime dependencies from `node_modules`; it is not a
-standalone file. Keep it with the installed package, or install through npm so those dependencies
+The built `packages/cli/dist/preman.js` resolves runtime dependencies from `node_modules`; it is not
+a standalone file. Keep it with the installed package, or install through npm so those dependencies
 are present.
 
 From a repository connected to Postman Local View:
@@ -137,6 +137,7 @@ scripts, assertions, exit codes, and schema resolution.
 
 ```sh
 bun run typecheck
+bun run typecheck:core
 bun run test
 bun run test:watch
 bun run build
