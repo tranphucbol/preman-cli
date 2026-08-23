@@ -1,6 +1,7 @@
 import pc from "picocolors";
 import { EXIT } from "@preman/core/errors.js";
 import { NO_RESPONSE_STATUS } from "@preman/core/http/invoke.js";
+import { originTag } from "@preman/core/report/origin.js";
 import { countTests, type TestResult } from "@preman/core/scripts/sandbox.js";
 import type {
   GroupRunItem,
@@ -10,7 +11,6 @@ import type {
   ItemStatus,
   RunOutcome,
 } from "@preman/core/runner.js";
-import type { ScriptOrigin } from "@preman/core/scripts/chain.js";
 
 const TEST_MARK: Record<TestResult["status"], { mark: string; paint: (s: string) => string }> = {
   passed: { mark: "✓", paint: pc.green },
@@ -93,14 +93,6 @@ function httpStatusLabel(outcome: HttpRunOutcome, ms: string): string {
 function statusLabel(outcome: RunOutcome): string {
   const ms = `${outcome.invoke.durationMs.toFixed(0)}ms`;
   return outcome.protocol === "grpc" ? grpcStatusLabel(outcome, ms) : httpStatusLabel(outcome, ms);
-}
-
-/**
- * Decision 8: only a non-request origin is named. Inheritance must not reformat the output
- * of the request-level scripts that were the only kind preman used to run.
- */
-export function originTag(origin: ScriptOrigin): string {
-  return origin.level === "request" ? "" : ` [${origin.label}]`;
 }
 
 /** Per-test lines plus a one-line tally. Always shown: a silent test is a useless test. */

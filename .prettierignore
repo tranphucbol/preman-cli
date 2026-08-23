@@ -4,3 +4,6 @@ dist/
 bun.lock
 docs/plans/
 test/fixtures/
+# Vendored verbatim from openchamber. Reformatting them would lose the byte-for-byte match with
+# upstream, which is the only thing that makes a re-vendor a readable diff.
+packages/desktop/scripts/palettes/

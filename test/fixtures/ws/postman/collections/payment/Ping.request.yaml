@@ -7,6 +7,12 @@ message:
     {
       "text": "ping"
     }
+metadata:
+  # Never sent. `Echo` covers the entries that are, so this one is here to prove the
+  # disabled flag is honoured all the way onto the `request-sent` event.
+  - key: x-disabled
+    value: never sent
+    disabled: true
 settings: {}
 schema:
   source: file

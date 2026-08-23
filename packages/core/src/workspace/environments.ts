@@ -6,6 +6,9 @@ import { environmentSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
 
 const ENV_SUFFIX = ".environment.yaml";
+const ENV_DIR = "environments";
+const GLOBALS_DIR = "globals";
+const GLOBALS_FILE = "workspace.globals.yaml";
 
 export interface EnvironmentEntry {
   filePath: string;
@@ -16,7 +19,7 @@ export interface EnvironmentEntry {
 }
 
 export function listEnvironments(ws: Workspace): EnvironmentEntry[] {
-  const dir = join(ws.postmanDir, "environments");
+  const dir = join(ws.postmanDir, ENV_DIR);
   if (!existsSync(dir)) return [];
 
   return readdirSync(dir, { withFileTypes: true })
@@ -25,12 +28,17 @@ export function listEnvironments(ws: Workspace): EnvironmentEntry[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Where workspace globals live, whether or not anyone has written the file yet. */
+export function globalsFile(ws: Workspace): string {
+  return join(ws.postmanDir, GLOBALS_DIR, GLOBALS_FILE);
+}
+
 /**
  * Workspace globals (`postman/globals/workspace.globals.yaml`).
  * Same file shape as an environment; absent file means "no globals".
  */
 export function loadGlobals(ws: Workspace): Record<string, string> {
-  const filePath = join(ws.postmanDir, "globals", "workspace.globals.yaml");
+  const filePath = globalsFile(ws);
   return existsSync(filePath) ? loadEnvironment(filePath).values : {};
 }
 

@@ -1,0 +1,225 @@
+/*
+ * The one stylesheet. Tailwind v4 is CSS-first: there is no tailwind.config.js, the design
+ * system lives in `@theme` below, and utilities are generated from what the source actually uses.
+ *
+ * Decision 11 of docs/plans/desktop-app.md: the density tokens are retuned before any screen is
+ * built. shadcn ships `--radius: 0.625rem` and `h-9` (36px), which is a web app's density, not a
+ * tool's. Postman is 2-4px radii, 26-28px controls and 12-13px text, and that is what fits 40
+ * header rows and a 5,000-node tree on screen. Retuning here rather than per component is the
+ * whole point: a later Radix or shadcn control inherits it without being patched.
+ *
+ * What this file declares is a default, not the only answer. The colour and height tokens are
+ * configurable at run time: `renderer/appearance/` holds forty-three themes and three density
+ * presets in TypeScript, and `appearance/apply.ts` writes the chosen pair onto `:root` before React
+ * exists. The literals below are what `preman-dark` and `default` resolve to, kept here so the
+ * stylesheet is readable on its own and so an unstyled document is still the shipped design.
+ * Decisions 20 and 21.
+ *
+ * Light themes are in; following the OS is not. There is no `nativeTheme` and no
+ * `prefers-color-scheme`, because a request tool that repaints itself at sunset is a tool that
+ * changed under the user's hands mid-debug. Which theme is in use is a choice, made once.
+ *
+ * Every foreground token below states its worst-case contrast against the five surfaces. Those
+ * numbers are computed, not chosen: the ratios are the reason the values look the way they do, and
+ * the same arithmetic is a gate every other theme has to pass — `packages/desktop/scripts/audit.ts`
+ * states it, `test/renderer/themes.test.ts` runs it over all forty-three.
+ */
+@import "tailwindcss";
+
+@theme {
+  /* Type. 13.5px body, 12px for chrome, 11px for the monospace method/label column.
+   *
+   * The body size is a half pixel on purpose. It renders exactly on the HiDPI displays this app is
+   * used on and rounds to 14px on a 1x display, which is the right direction to round: a tool read
+   * for hours wants the extra half pixel, and 28px rows have the room for it. The 1.25rem line
+   * height is unchanged, so the row rhythm and `--spacing-row` still agree. */
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem; /* 12px */
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.84375rem; /* 13.5px — the body size */
+  --text-sm--line-height: 1.25rem;
+
+  /* The shipped stacks, with a slot in front of each for a family the user named.
+   *
+   * `--font-user-*` is unset until someone chooses one, and an unset `var()` resolves to its
+   * fallback — which here is the first entry of the stack that shipped. So the default is not
+   * reconstructed in TypeScript and then written back; it is simply what these declarations
+   * already say. `renderer/appearance/fonts.ts` writes the slot and nothing else. */
+  --font-sans:
+    var(--font-user-sans, ui-sans-serif), system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: var(--font-user-mono, ui-monospace), "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* The editor's size, and the editor's alone. CodeMirror is the one surface where the type size
+   * is a reading preference rather than a consequence of how tightly the chrome is packed, so it
+   * is a token the settings pane writes directly instead of a step on the density scale. */
+  --editor-font-size: 12px;
+
+  /* Radii. One scale, and every step stays well under half of the control it rounds, so nothing
+   * reads as pill-shaped: 8px on a 30px control is a rounded rect, 15px would be a pill. */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Control heights, and the five values below them, are the `default` density preset.
+   *
+   * TypeScript owns these now: `renderer/appearance/density.ts` holds all three presets and
+   * `apply.ts` writes the chosen one onto `:root` at startup, before React exists. What is written
+   * here is what `default` says, so an unstyled first frame and the applied one are the same
+   * pixels. Six virtualizers need `--spacing-row` as a number and the main process needs
+   * `--spacing-bar` as one, and a token that CSS owns and TypeScript copies is a token that gets
+   * copied wrong. See docs/decisions/021.
+   *
+   * This is also why the block is `@theme` and not `@theme inline`: `inline` substitutes the
+   * literal into every utility at build time, and there would be nothing left on `:root` for a
+   * preset to override.
+   *
+   * A row is sized by the tallest control it holds plus the same breathing room either side, so
+   * `--spacing-tab` is for a row of 26px controls and `--spacing-bar` for a row of 30px ones. One
+   * token for both is how the title bar ended up with a 30px select in 32px of room. */
+  --spacing-row: 28px;
+  --spacing-control: 26px;
+  --spacing-control-lg: 30px;
+  --spacing-tab: 32px;
+  --spacing-bar: 40px;
+  --spacing-gutter: 10px;
+
+  /* Surfaces, darkest to lightest: window, panel, control, hover.
+   *
+   * `--color-selected` is deliberately NOT the next grey up. A lighter-grey selected row is both
+   * the worst background in the app to put text on and, across a 5,000-row tree, visual noise.
+   * Tinting it toward the accent instead keeps it at hover luminance, so every ink level stays
+   * legible on it, and selection reads as "the accent is here" rather than "this grey is 8% off". */
+  --color-canvas: #111214;
+  --color-panel: #17191c;
+  --color-control: #1d2024;
+  --color-hover: #23262b;
+  --color-selected: #1d2632;
+
+  /* Decorative hairlines. These are 1px dividers and nothing else: never the sole affordance of
+   * a control, because at 1.4:1 they cannot be. Anything load-bearing uses --color-glyph. */
+  --color-line: #2a2d32;
+  --color-line-strong: #383c43;
+
+  /* Three text tiers, and all three clear WCAG AA (4.5:1) on all five surfaces above. A tool's
+   * third tier carries response times, byte counts and file paths, which are exactly the things
+   * you squint at, so "faint" here means quieter, never less legible. Verified, not eyeballed. */
+  --color-ink: #d8dade; /* worst case 10.8:1 */
+  --color-ink-dim: #a8adb6; /* worst case  6.7:1 */
+  --color-ink-faint: #8a8f98; /* worst case  4.7:1 */
+
+  /* The non-text tier: chevrons, drag handles, and any border that is a control's only
+   * affordance. WCAG 1.4.11 asks 3:1 for those and this clears it everywhere (worst 3.3:1).
+   * It is a separate token from --color-ink-faint so that "too low for text" is unmissable. */
+  --color-glyph: #6e7684;
+
+  /* One accent, locked. There is no dimmed variant: the one that used to live here read at
+   * 2.5:1 and every use of it would have been a contrast bug waiting for a screenshot. */
+  --color-accent: #6aa9ff;
+  --color-ok: #5ec27f;
+  --color-warn: #e0b355;
+  --color-danger: #ff7a6b;
+
+  /* The whole z-index scale, and it is deliberately this short. Arbitrary `z-50` sprinkled at the
+   * point of pain is how a tool ends up with a dropdown behind a drawer. Five systemic layers:
+   * sticky pane chrome, the resize handles that sit above it, the drag preview, portalled menus,
+   * and tooltips last because a tooltip explaining a menu item has to clear the menu.
+   *
+   * The drag preview sits below menus rather than above because the two are never on screen at
+   * once: a drag begins on pointer-down, which closes any open menu. It has to clear the resize
+   * handle, and that is the only thing it has to clear. */
+  --z-index-chrome: 10;
+  --z-index-handle: 20;
+  --z-index-drag: 25;
+  --z-index-menu: 30;
+  --z-index-tooltip: 40;
+
+  /* The one elevation in the app, used by the one thing that genuinely floats: the drag preview.
+   * Tinted to the canvas hue rather than pure black, because a black shadow on a near-black
+   * surface reads as a smudge. Everything else groups with a hairline or with space. */
+  --shadow-float: 0 4px 12px rgb(9 10 12 / 0.55);
+
+  /* HTTP method colours, keyed by verb so a row cannot invent its own. */
+  --color-method-get: #5ec27f;
+  --color-method-post: #e0b355;
+  --color-method-put: #6aa9ff;
+  --color-method-patch: #b78bff;
+  --color-method-delete: #ff7a6b;
+  --color-method-grpc: #4ec9c0;
+}
+
+/*
+ * The window is frameless, so a region of the page has to be the title bar. Everything inside a
+ * drag region stops receiving clicks, which is why `no-drag` exists: a button in the title bar
+ * needs it or it becomes a handle. Vendor-prefixed with no standard alternative; Chromium is the
+ * only engine this runs in.
+ */
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * Scrollable, with nothing drawn to say so.
+ *
+ * For the one strip where the scrollbar is worse than useless: the tab bar is 32px tall, so a
+ * horizontal bar across the bottom of it lands on the tabs themselves, and the tabs are already
+ * their own overflow indicator - a half-clipped tab at the edge says "there are more" better than
+ * a hairline does. Everything else in the app keeps the thin bar set in the base layer, because
+ * everything else is a pane where not knowing you can scroll is a real loss.
+ */
+@utility no-scrollbar {
+  scrollbar-width: none;
+}
+
+@layer base {
+  /* The window chrome, not a document: no rubber-band scroll, no text selection by accident,
+   * no tap highlight. Anything that wants selection asks for it. */
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    @apply overflow-hidden bg-canvas font-sans text-sm text-ink antialiased select-none;
+  }
+
+  /* A tool has a lot of scrollbars. Overlay them so they cost no layout width. The thumb is a
+   * control you aim at, so it takes the non-text tier rather than a decorative hairline. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-glyph) transparent;
+  }
+
+  /* Keyboard focus is never subtle here. Postman parity means most of this app is reachable
+   * without the mouse, and a ring you have to hunt for is the same as no ring. */
+  :focus-visible {
+    @apply outline-2 outline-offset-1 outline-accent;
+  }
+
+  /* Reduced motion is the whole app's behaviour, not a per-component afterthought. MOTION is
+   * dialled to 2: hover and press transitions exist, nothing else moves, so honouring the
+   * preference costs one rule instead of a wrapper around every component. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  input,
+  textarea,
+  [contenteditable] {
+    @apply select-text;
+  }
+}

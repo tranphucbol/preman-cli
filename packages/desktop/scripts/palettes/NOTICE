@@ -1,0 +1,48 @@
+Third-party colour palettes
+===========================
+
+The JSON files in this directory are vendored verbatim from openchamber:
+
+    https://github.com/openchamber/openchamber
+    packages/ui/src/lib/theme/themes/
+    Copyright (c) 2025 Bohdan Triapitsyn
+    MIT
+
+They are copied rather than depended on because they are data, not code: a dependency would
+put a package resolution between a reviewer and a hex value, and preman does not ship them at
+runtime — `scripts/generate-themes.ts` reads them once, by hand, and the audited result is what
+is committed under `src/renderer/appearance/themes/`.
+
+Verbatim also means unformatted: this directory is in `.prettierignore`, so re-vendoring is a
+readable diff instead of a reflow.
+
+openchamber's files are themselves ports of upstream colour schemes. Each generated theme module
+carries its own `source` and `licence` fields, taken from the table below, and the settings pane
+shows them. Every scheme is MIT except JetBrains, which is Apache-2.0.
+
+    Aura                    daltonmenezes                       MIT
+    Ayu                     dempfi                              MIT
+    Carbonfox (Nightfox)    EdenEast                            MIT
+    Catppuccin              Catppuccin                          MIT
+    Dracula                 Zeno Rocha                          MIT
+    Fields of the Shire     openchamber                         MIT
+    Flexoki                 Steph Ango                          MIT
+    gruvbox                 morhetz                             MIT
+    JetBrains               Darcula / IntelliJ Light            Apache-2.0
+    Kanagawa                rebelot                             MIT
+    Mono                    openchamber                         MIT
+    Mono+                   openchamber                         MIT
+    Monokai                 Wimer Hazenberg                     MIT
+    Night Owl               Sarah Drasner                       MIT
+    Nord                    Arctic Ice Studio                   MIT
+    One Dark Pro            binaryify                           MIT
+    openchamber             openchamber                         MIT
+    Solarized               Ethan Schoonover                    MIT
+    Tokyo Night             enkia                               MIT
+    Vesper                  Rauno Freiberg                      MIT
+    Vitesse                 Anthony Fu                          MIT
+
+The generated modules are not these palettes. Three colours in each are solved for contrast
+rather than read, the surface ladder is re-spaced where it was too flat to see, and a verb colour
+is rotated where two verbs arrived the same. A theme here is best described as "after gruvbox",
+not "gruvbox".

@@ -216,6 +216,13 @@ The target is selected in this order:
 TLS is inferred from a `grpcs` or `https` scheme, port `443`, or a `.zalopay.vn` hostname. Use
 `--tls` or `--plaintext` to override the inference.
 
+### When the call is refused
+
+A non-`OK` status exits `2` and prints the status name, the server's message and the trailers. The
+desktop app shows the same three things in place of the response body, under a headline naming what
+that status means. An HTTP 4xx or 5xx is not this case: it has a body, and the body is shown as the
+server sent it.
+
 ### Authentication
 
 gRPC uses the same `auth` block and the same supported types as HTTP, rendered into call metadata.
@@ -654,3 +661,91 @@ explicitly. `pm.test.skip` and `pm.test.todo` record skipped tests.
 Variables changed by scripts are written back after post-response scripts finish. The YAML edit
 preserves comments, key order, and quoting. Collection runs write once after the group completes.
 Use `--no-save` to disable writeback.
+
+## Engine protocol
+
+The desktop app runs the same engine as the CLI, in a different process. The window holds no
+workspace state and cannot call the engine directly: it sends messages over a port. The contract is
+`packages/desktop/src/engine/protocol.ts`, the only module the engine and the renderer share.
+
+One workspace is one engine host — a Node `utilityProcess` started by the main process, which
+creates a `MessageChannelMain` and transfers one end to the renderer. From then on the main process
+is not in the path; it owns windows, menus, and dialogs, and nothing about a request. Opening a
+second workspace starts a second host and leaves the first one running for five minutes, so
+switching back is a port transfer rather than a process start. A host that dies is respawned up to
+three times before the failure is reported to the window.
+
+Only types cross from `@preman/core` into that module, and they are erased at build time. That is
+what stops a `Catalog` type import from becoming a `runRequest` call in the renderer bundle.
+
+### Requests
+
+An `EngineRequest` carries a caller-chosen `id` and a `kind`. Every request is answered exactly once
+by an `EngineResponse` with the same `id`:
+
+```ts
+type EngineResponse = { id: number; ok: true; data: EngineResult } | { id: number; ok: false; error: EngineError };
+```
+
+`EngineError` is a `PremanError` flattened for the wire — `message`, `details[]`, and `exitCode`.
+The details are carried, never dropped: a window that shows only the first line of an engine error
+is worse than the CLI.
+
+`EngineResults` maps each kind to what it resolves to, so a typed client is derived from the union
+rather than written twice.
+
+| Kind                                                     | Resolves to         | Purpose                                                        |
+| -------------------------------------------------------- | ------------------- | -------------------------------------------------------------- |
+| `catalog`                                                | `Catalog`           | The whole tree; cached by the host and pushed on change        |
+| `read-node`                                              | `NodeDocument`      | One request, group, or environment file, raw text and parsed   |
+| `write-node`                                             | `NodeDocument`      | Apply `FieldEdit[]`; comments and key order survive            |
+| `write-text`                                             | `NodeDocument`      | Replace the file from the raw YAML tab                         |
+| `mutate`                                                 | `MutateResult`      | Create, rename, move, delete, reorder                          |
+| `run`                                                    | `{ runId }`         | Acknowledged before it starts; results arrive as pushes        |
+| `cancel`                                                 | `null`              | Cancel a run by `runId`                                        |
+| `variables`, `write-variable`                            | `VariableView`      | The resolved layers, and a write that returns the re-read view |
+| `run-report`                                             | `RunReportText`     | A finished run as `json` or `junit` text                       |
+| `list-methods`                                           | `MethodChoices`     | Every method the declared protos offer, with `schema.location` |
+| `message-skeleton`                                       | `string`            | A request body for a method, with `{{token}}` where one exists |
+| `grep`                                                   | `GrepResult`        | Search the workspace                                           |
+| `git-status`                                             | `GitStatus`         | The tree's decorations                                         |
+| `body-head`, `-window`, `-search`, `-format`, `-release` | see `EngineResults` | Read a response body that never traveled whole                 |
+
+A response body stays in the host's `BodyStore` and is addressed by handle. The renderer asks for
+windows of it, so a 200MB response costs a 64KB message rather than a structured clone of 200MB.
+
+### Pushes
+
+An `EnginePush` is unsolicited and has no `id`. `isEnginePush` separates the two.
+
+| Push              | Meaning                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `run-event`       | One `RunEvent`; see below                                                            |
+| `run-done`        | The terminal signal for a run, with `warnings`, `cancelled`, and an optional `error` |
+| `catalog`         | The tree, re-read after the workspace changed on disk                                |
+| `external-change` | Node ids whose files changed outside the app                                         |
+| `git-status`      | The decorations, re-read; a branch switch changes every row at once                  |
+| `degraded`        | The watcher could not do its job, so external edits will be missed                   |
+
+`run-done` always arrives, and `run-end` does not: a selector that resolves to nothing fails before
+core emits any event at all. Anything waiting on a run waits for `run-done`.
+
+### Run events
+
+`RunEvent` is core's, not the app's — the same type the CLI's reporters could consume. Events are
+ordered by arrival rather than importance, so a window paints as the run happens instead of staying
+blank until it ends:
+
+`run-start` → per request `request-start`, `request-sent`, `response-head`, `response-body`,
+interleaved `console`, `test`, and `side-request`, then `request-end` → `run-end`.
+
+Every variant carries `runId`, so two concurrent runs cannot be interleaved by mistake. Every
+per-request variant carries `nodeId`, which is the same string as that node's `CatalogNode.id`.
+
+### Duplicated constants
+
+A few of core's constants are declared in the protocol module rather than imported: `EXIT_CODES`,
+`ORDER_STEP`, `ORDER_ABSENT`, `BODY_FORMAT_LIMIT_BYTES`, and `GROUP_DEFINITION_SUFFIX`. The
+renderer needs the numbers to plan a reorder or decorate a row, and importing them from core would
+mean importing the engine. `test/desktop.protocol.test.ts` pins each one to core's value, so the
+duplication cannot drift without a red test.

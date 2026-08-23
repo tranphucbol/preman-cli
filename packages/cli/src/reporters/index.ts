@@ -1,5 +1,5 @@
 import { PremanError } from "@preman/core/errors.js";
-import type { GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
+import type { RunReport } from "@preman/core/report/junit.js";
 import { cliReporter } from "./cli.js";
 import { jsonReporter } from "./json.js";
 import { junitReporter } from "./junit.js";
@@ -21,8 +21,8 @@ export interface Reporter {
   render(result: ReportableRun, context: ReporterContext): string;
 }
 
-/** Either shape a run can end in. */
-export type ReportableRun = { kind: "single"; outcome: RunOutcome } | { kind: "group"; outcome: GroupRunOutcome };
+/** Either shape a run can end in, under the name the reporters have always used. */
+export type ReportableRun = RunReport;
 
 export interface ResolvedReporter {
   reporter: Reporter;

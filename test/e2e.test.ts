@@ -3,6 +3,8 @@ import * as protoLoader from "@grpc/proto-loader";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "@preman/cli/main.js";
+import type { RunEvent, RunEventSink } from "@preman/core/api/events.js";
+import { runSelection } from "@preman/core/api/run.js";
 import { PremanError, EXIT } from "@preman/core/errors.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
 import { extractReturnCode, isBusinessSuccess } from "@preman/core/runner.js";
@@ -267,6 +269,47 @@ describe("preman run (end to end against a real gRPC server)", () => {
     expect(report.status.name).toBe("INTERNAL");
     expect(report.status.message).toContain("handler exploded");
     expect(report.trailers["x-handled-by"]).toBe("test-server");
+  });
+
+  /**
+   * A rejection is where servers attach structured detail, so unlike a success this
+   * path puts the trailers on the wire for the window as well as in the batch report.
+   */
+  it("givenGrpcCallRejected_whenRun_thenTrailersReachTheSink", async () => {
+    const sink: RunEventSink & { events: RunEvent[] } = {
+      runId: "run-under-test",
+      events: [],
+      emit(event) {
+        this.events.push(event);
+      },
+    };
+    await runSelection({
+      dir: FIXTURE_WS,
+      selector: "Echo",
+      env: "LOCAL",
+      url: target(),
+      tls: undefined,
+      tlsCerts: {},
+      certBaseDir: FIXTURE_WS,
+      timeoutMs: 10_000,
+      runTimeoutMs: 0,
+      scriptTimeoutMs: 5_000,
+      iterationCount: undefined,
+      iterationData: undefined,
+      delayRequestMs: 0,
+      vars: { mode: "TRANSPORT_FAIL" },
+      save: false,
+      preferDescriptor: false,
+      bail: false,
+      workingDir: undefined,
+      insecureFileRead: false,
+      safeEval: false,
+      sink,
+    });
+
+    const failure = sink.events.find((event) => event.type === "response-failure");
+    expect(failure?.message).toContain("handler exploded");
+    expect(failure?.trailers).toContainEqual(["x-handled-by", "test-server"]);
   });
 
   it("givenUnreachableTarget_whenRun_thenReportsUnavailableWithinTheDeadline", async () => {

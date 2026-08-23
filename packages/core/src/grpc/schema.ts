@@ -104,8 +104,14 @@ export function listMethods(pkg: PackageDefinition): string[] {
   return out.sort();
 }
 
-/** proto-loader flattens messages and services into one map; services hold MethodDefinitions. */
-function isServiceDefinition(entry: unknown): entry is ServiceDefinition {
+/**
+ * proto-loader flattens messages and services into one map; services hold MethodDefinitions.
+ *
+ * Exported because the proto index walks the same map for a different shape, and two
+ * copies of "which entries are services" would eventually disagree about whether
+ * something is invocable.
+ */
+export function isServiceDefinition(entry: unknown): entry is ServiceDefinition {
   if (typeof entry !== "object" || entry === null) return false;
   const values = Object.values(entry as Record<string, unknown>);
   if (values.length === 0) return false;

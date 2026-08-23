@@ -5,5 +5,8 @@
   "singleQuote": false,
   "trailingComma": "all",
   "arrowParens": "always",
-  "endOfLine": "lf"
+  "endOfLine": "lf",
+  "plugins": ["prettier-plugin-tailwindcss"],
+  "tailwindStylesheet": "packages/desktop/src/renderer/app.css",
+  "tailwindFunctions": ["clsx", "cn", "cva"]
 }

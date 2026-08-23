@@ -1,0 +1,568 @@
+/**
+ * One engine host per open workspace. It holds every piece of state a GUI needs the
+ * engine to keep across sends — the catalog, the body store, the watcher — so the
+ * renderer holds none of it and `runSelection` is not asked to re-read the workspace
+ * to answer a question the host already knows the answer to.
+ *
+ * Nothing here imports `electron`. The Electron wiring is the last twenty lines, and
+ * `createEngineHost` is driven directly by the tests.
+ */
+import { readFileSync, statSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { parse } from "yaml";
+import { BodyStore } from "@preman/core/api/bodies.js";
+import { buildCatalog, refreshCatalog, type Catalog, type CatalogNode } from "@preman/core/api/catalog.js";
+import type { RunEvent, RunEventSink } from "@preman/core/api/events.js";
+import { readGitStatus, type GitStatus } from "@preman/core/api/git.js";
+import { grepWorkspace, type GrepResult } from "@preman/core/api/grep.js";
+import { ProtoCache } from "@preman/core/api/protos.js";
+import {
+  createCollection,
+  createEnvironmentFile,
+  createFolder,
+  createRequestFile,
+  deleteNode,
+  editDefinitionFile,
+  editRequestFile,
+  moveNode,
+  renameNode,
+  reorderSiblings,
+  replaceFileText,
+} from "@preman/core/api/mutate.js";
+import { writeEnvironmentValue } from "@preman/core/api/environments.js";
+import { runSelection, type RunSelectionArgs, type RunSelectionResult } from "@preman/core/api/run.js";
+import { readVariables, type VariableView } from "@preman/core/api/variables.js";
+import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
+import { EXIT, PremanError } from "@preman/core/errors.js";
+import { toJunitReport, type RunReport } from "@preman/core/report/junit.js";
+import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
+import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
+import { toEngineError } from "@preman/desktop/engine/errors.js";
+import {
+  BODY_WINDOW_BYTES,
+  type MethodChoice,
+  type MethodChoices,
+  type DocumentKind,
+  type EngineMessage,
+  type EngineRequest,
+  type EngineResponse,
+  type EngineResult,
+  type MutateOp,
+  type MutateResult,
+  type NodeDocument,
+  type ReportFormat,
+  type RunArgs,
+  type RunReportText,
+  type VariableWrite,
+} from "@preman/desktop/engine/protocol.js";
+
+/** Matching the CLI's defaults, so the app and `preman run` behave the same by default. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_SCRIPT_TIMEOUT_MS = 5_000;
+const DEFAULT_RUN_TIMEOUT_MS = 0;
+const NO_DELAY_MS = 0;
+const RUN_ID_PREFIX = "run-";
+const FIRST_RUN = 1;
+const SELECTOR_SEPARATOR = "/";
+const PARENT_SEGMENT = "..";
+const ENCODING = "utf8";
+const BODY_SEARCH_LIMIT = 500;
+/**
+ * How many finished runs stay exportable. A report is the whole outcome tree, so this is
+ * a memory bound, not a policy: the runner only ever exports the run in front of you.
+ */
+const RETAINED_REPORTS = 20;
+const REPORT_EXTENSION: Record<ReportFormat, string> = { json: "json", junit: "xml" };
+/** Matching the CLI's json reporter, so the two write the same bytes. */
+const JSON_INDENT = 2;
+const NAME_SEPARATOR = "-";
+/** Anything a file name should not carry, collapsed so the save dialog gets one token. */
+const UNSAFE_NAME_CHARACTERS = /[^A-Za-z0-9._-]+/g;
+/**
+ * How long the tree's git decorations wait after a change before being re-read.
+ *
+ * A branch switch or a `git stash` rewrites dozens of files, and the watcher reports them
+ * in bursts. Shelling out once per burst is the point; the delay is long enough to
+ * coalesce one and short enough that a save feels like it decorated the row immediately.
+ */
+const GIT_STATUS_DEBOUNCE_MS = 400;
+/** `schema.location` is posix in every workspace, whatever host wrote it. */
+const LOCATION_SEPARATOR = "/";
+
+export interface EngineHostOptions {
+  /** The workspace root. Every node id in the protocol is relative to this. */
+  root: string;
+  /** A property, not a method, because the host destructures it and calls it unbound. */
+  post: (message: EngineMessage) => void;
+}
+
+export interface EngineHost {
+  /**
+   * Answer one request. Never rejects: a failure is a response with `ok: false`, so a
+   * dropped promise cannot cost the caller a pending id.
+   */
+  handle(request: EngineRequest): Promise<EngineResponse>;
+  dispose(): void;
+}
+
+interface RunState {
+  cancelled: boolean;
+}
+
+function usage(message: string, details: string[] = []): PremanError {
+  return new PremanError(message, { exitCode: EXIT.CLI, details });
+}
+
+/**
+ * Turn a node id back into a path, refusing anything that leaves the workspace. Ids
+ * come from a catalog this host built, but a renderer is the untrusted side of the
+ * port, so containment is checked here rather than assumed.
+ */
+function resolveWithinRoot(root: string, nodeId: string): string {
+  if (nodeId.length === 0) throw usage("a node id is required");
+  if (isAbsolute(nodeId)) throw usage(`"${nodeId}" is not a node id`, ["node ids are relative to the workspace root"]);
+
+  const absolute = resolve(root, nodeId);
+  const step = relative(root, absolute);
+  if (step.length === 0 || step === PARENT_SEGMENT || step.startsWith(`${PARENT_SEGMENT}/`)) {
+    throw usage(`"${nodeId}" is outside the workspace`, [`workspace root: ${root}`]);
+  }
+  return absolute;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The `RunTarget` selector for a node, rebuilt from the catalog rather than looked up
+ * in a second full read. `RequestEntry.path` and `RequestGroup.path` are the chain of
+ * declared names, which is exactly what walking `parentId` produces.
+ */
+function selectorFor(catalog: Catalog, nodeId: string): string {
+  const byId = new Map(catalog.nodes.map((node) => [node.id, node] as const));
+  const start = byId.get(nodeId);
+  if (start === undefined) {
+    throw usage(`"${nodeId}" is not in the catalog`, ["reload the workspace and try again"]);
+  }
+
+  const segments: string[] = [];
+  let cursor: CatalogNode | undefined = start;
+  while (cursor !== undefined) {
+    segments.unshift(cursor.name);
+    cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId);
+  }
+  return segments.join(SELECTOR_SEPARATOR);
+}
+
+/** What ran, as one path, so an exported file is named after it rather than after the run id. */
+function reportSubject(report: RunReport): string {
+  return report.kind === "single" ? report.outcome.entry.path : report.outcome.groupPath;
+}
+
+function reportName(report: RunReport, runId: string, format: ReportFormat): string {
+  const subject = reportSubject(report)
+    .split(SELECTOR_SEPARATOR)
+    .join(NAME_SEPARATOR)
+    .replace(UNSAFE_NAME_CHARACTERS, NAME_SEPARATOR);
+  return `${subject}${NAME_SEPARATOR}${runId}.${REPORT_EXTENSION[format]}`;
+}
+
+/**
+ * Render a finished run. Both formats are core's, so the app cannot drift from what
+ * `preman -r json` and `preman -r junit` write for the same run.
+ */
+function renderReport(report: RunReport, format: ReportFormat): string {
+  if (format === "junit") return toJunitReport(report);
+  const json = report.kind === "single" ? toJsonReport(report.outcome) : toGroupJsonReport(report.outcome);
+  return JSON.stringify(json, null, JSON_INDENT);
+}
+
+export function createEngineHost(options: EngineHostOptions): EngineHost {
+  const { root, post } = options;
+  const bodies = new BodyStore();
+  /** One per host, because the load is the expensive part and it only changes with a `.proto`. */
+  const protos = new ProtoCache(root);
+  const runs = new Map<string, RunState>();
+  /** Finished runs, oldest first, so a report can be exported after `run-done`. */
+  const reports = new Map<string, RunReport>();
+  let catalog: Catalog | undefined;
+  let watcher: WatchHandle | undefined;
+  let nextRun = FIRST_RUN;
+  /** Refreshes are serialised: two overlapping `refreshCatalog` calls would race on `catalog`. */
+  let reconciling: Promise<void> = Promise.resolve();
+  let gitTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  function publish(next: Catalog): Catalog {
+    catalog = next;
+    post({ push: "catalog", catalog: next });
+    return next;
+  }
+
+  async function reconcile(paths: string[]): Promise<void> {
+    if (disposed || catalog === undefined) return;
+    const next = await refreshCatalog(catalog, paths);
+    publish(next);
+    post({ push: "external-change", nodeIds: paths.map((path) => nodeIdFor(root, path)) });
+    scheduleGitStatus();
+  }
+
+  function startWatching(): void {
+    watcher = watchWorkspace(
+      root,
+      (paths) => {
+        reconciling = reconciling.then(() => reconcile(paths)).catch(() => undefined);
+      },
+      { onDegraded: (message) => post({ push: "degraded", message }) },
+    );
+  }
+
+  async function ensureCatalog(): Promise<Catalog> {
+    if (catalog !== undefined) return catalog;
+    const built = await buildCatalog(root);
+    catalog = built;
+    if (watcher === undefined && !disposed) startWatching();
+    return built;
+  }
+
+  /** After any write, the catalog on disk and the catalog in hand must agree. */
+  async function rebuild(): Promise<Catalog> {
+    return publish(await buildCatalog(root));
+  }
+
+  async function documentKindFor(nodeId: string, path: string): Promise<DocumentKind> {
+    if (path.endsWith(REQUEST_SUFFIX)) return "request";
+    if (path.endsWith(ENVIRONMENT_SUFFIX)) return "environment";
+    const node = (await ensureCatalog()).nodes.find((candidate) => candidate.id === nodeId);
+    if (node !== undefined) return node.kind;
+    throw usage(`"${nodeId}" is not a request, a group or an environment`);
+  }
+
+  /** Where a node's editable bytes live: a group edits its definition, not its directory. */
+  function fileFor(path: string, kind: DocumentKind): string {
+    return kind === "collection" || kind === "folder" ? definitionPathFor(path) : path;
+  }
+
+  async function readNode(nodeId: string): Promise<NodeDocument> {
+    const path = resolveWithinRoot(root, nodeId);
+    const kind = await documentKindFor(nodeId, path);
+    const file = fileFor(path, kind);
+    let text: string;
+    try {
+      text = readFileSync(file, ENCODING);
+    } catch (cause) {
+      throw usage(`cannot read ${nodeId}`, [String(cause)]);
+    }
+    return { nodeId, file, kind, text, data: parse(text) as unknown };
+  }
+
+  async function writeNode(nodeId: string, edits: EngineRequest & { kind: "write-node" }): Promise<NodeDocument> {
+    const path = resolveWithinRoot(root, nodeId);
+    const kind = await documentKindFor(nodeId, path);
+    const file = fileFor(path, kind);
+    if (kind === "environment") {
+      throw usage("an environment is edited through its values, not through field edits");
+    }
+    if (kind === "request") await editRequestFile(file, edits.edits);
+    else await editDefinitionFile(file, edits.edits);
+    return readNode(nodeId);
+  }
+
+  /** The raw YAML tab. The mutation seam owns the refusal, so an invalid document never lands. */
+  async function writeText(nodeId: string, text: string): Promise<NodeDocument> {
+    const path = resolveWithinRoot(root, nodeId);
+    const kind = await documentKindFor(nodeId, path);
+    await replaceFileText(fileFor(path, kind), text);
+    return readNode(nodeId);
+  }
+
+  async function mutate(op: MutateOp): Promise<MutateResult> {
+    const created = await applyMutation(op);
+    const next = await rebuild();
+    return { nodeId: created === undefined ? null : nodeIdFor(root, created), revision: next.revision };
+  }
+
+  async function applyMutation(op: MutateOp): Promise<string | undefined> {
+    switch (op.op) {
+      case "create-request":
+        return createRequestFile({
+          parentDir: requireDirectory(op.parentId),
+          name: op.name,
+          kind: op.kind,
+          ...(op.order === undefined ? {} : { order: op.order }),
+        });
+      case "create-folder":
+        return createFolder({
+          parentDir: requireDirectory(op.parentId),
+          name: op.name,
+          ...(op.order === undefined ? {} : { order: op.order }),
+        });
+      case "create-collection":
+        return createCollection({ root, name: op.name, ...(op.order === undefined ? {} : { order: op.order }) });
+      case "create-environment":
+        return createEnvironmentFile({ root, name: op.name });
+      case "rename":
+        return renameNode({ target: resolveWithinRoot(root, op.targetId), name: op.name });
+      case "move":
+        return moveNode({
+          target: resolveWithinRoot(root, op.targetId),
+          targetDir: requireDirectory(op.parentId),
+          ...(op.order === undefined ? {} : { order: op.order }),
+        });
+      case "delete":
+        await deleteNode(resolveWithinRoot(root, op.targetId));
+        return undefined;
+      case "reorder": {
+        const orderByFile: Record<string, number> = {};
+        for (const [nodeId, order] of Object.entries(op.orderById)) {
+          const path = resolveWithinRoot(root, nodeId);
+          orderByFile[isDirectory(path) ? definitionPathFor(path) : path] = order;
+        }
+        await reorderSiblings({ orderByFile });
+        return undefined;
+      }
+    }
+  }
+
+  function requireDirectory(nodeId: string): string {
+    const path = resolveWithinRoot(root, nodeId);
+    if (!isDirectory(path)) throw usage(`"${nodeId}" is not a collection or folder`);
+    return path;
+  }
+
+  /**
+   * Keep a finished run exportable, evicting the oldest once {@link RETAINED_REPORTS} are
+   * held. A cancelled run is remembered too: cancellation stops the reporting, not the
+   * requests that already completed, and the partial report is still worth having.
+   */
+  function remember(runId: string, result: RunSelectionResult): void {
+    const report: RunReport | undefined =
+      result.group !== undefined
+        ? { kind: "group", outcome: result.group }
+        : result.outcome !== undefined
+          ? { kind: "single", outcome: result.outcome }
+          : undefined;
+    if (report === undefined) return;
+
+    reports.set(runId, report);
+    while (reports.size > RETAINED_REPORTS) {
+      const oldest = reports.keys().next();
+      if (oldest.done === true) break;
+      reports.delete(oldest.value);
+    }
+  }
+
+  function runReport(runId: string, format: ReportFormat): RunReportText {
+    const report = reports.get(runId);
+    if (report === undefined) {
+      throw usage(`no report is held for ${runId}`, ["only the most recent runs can be exported"]);
+    }
+    return { format, text: renderReport(report, format), suggestedName: reportName(report, runId, format) };
+  }
+
+  /**
+   * Write one value and hand back the re-read view. `writeEnvironmentValue` rewrites the
+   * YAML in place, so comments and key order survive an edit made in the app.
+   */
+  function writeVariable(write: VariableWrite): VariableView {
+    writeEnvironmentValue(root, write.environment, write.key, write.value);
+    return readVariables(root, write.environment);
+  }
+
+  function startRun(args: RunArgs): string {
+    const runId = `${RUN_ID_PREFIX}${String(nextRun++)}`;
+    const state: RunState = { cancelled: false };
+    runs.set(runId, state);
+
+    const sink: RunEventSink = {
+      runId,
+      emit: (event: RunEvent) => {
+        if (state.cancelled) return;
+        post({ push: "run-event", event });
+      },
+    };
+
+    // Deliberately not awaited: the caller gets `runId` before the first byte leaves,
+    // which is the only way it can correlate the events that follow.
+    void (async () => {
+      try {
+        const catalogNow = await ensureCatalog();
+        const selection: RunSelectionArgs = {
+          dir: root,
+          selector: selectorFor(catalogNow, args.nodeId),
+          env: args.environment,
+          url: undefined,
+          tls: undefined,
+          tlsCerts: {},
+          certBaseDir: root,
+          timeoutMs: args.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+          runTimeoutMs: DEFAULT_RUN_TIMEOUT_MS,
+          scriptTimeoutMs: DEFAULT_SCRIPT_TIMEOUT_MS,
+          iterationCount: args.iterationCount,
+          iterationData: args.iterationData,
+          delayRequestMs: args.delayRequestMs ?? NO_DELAY_MS,
+          vars: {},
+          save: true,
+          preferDescriptor: false,
+          bail: args.bail ?? false,
+          workingDir: root,
+          insecureFileRead: false,
+          safeEval: false,
+          sink,
+          bodies,
+        };
+        const result = await runSelection(selection);
+        remember(runId, result);
+        if (!state.cancelled) {
+          post({ push: "run-done", runId, warnings: result.warnings, cancelled: false });
+        }
+      } catch (cause) {
+        if (!state.cancelled) {
+          post({ push: "run-done", runId, warnings: [], cancelled: false, error: toEngineError(cause) });
+        }
+      } finally {
+        runs.delete(runId);
+      }
+    })();
+
+    return runId;
+  }
+
+  /**
+   * Core has no cancellation and Phase 2 deliberately did not add one: an in-flight
+   * request completes, its writeback still happens, and what stops is the reporting.
+   * Saying so here is the honest version of a Cancel button.
+   */
+  function cancelRun(runId: string): null {
+    const state = runs.get(runId);
+    if (state === undefined || state.cancelled) return null;
+    state.cancelled = true;
+    post({ push: "run-done", runId, warnings: [], cancelled: true });
+    return null;
+  }
+
+  /**
+   * Every method the declared protos offer, plus the `schema.location` a given request
+   * would need to reach each one. The relative path is computed from the request's own
+   * directory, which is the only place that arithmetic can honestly happen.
+   */
+  function listMethods(nodeId: string | undefined): MethodChoices {
+    const index = protos.index();
+    const from = nodeId === undefined ? undefined : dirname(fileFor(resolveWithinRoot(root, nodeId), "request"));
+    const methods: MethodChoice[] = index.methods.map((method) => ({
+      methodPath: method.methodPath,
+      serviceName: method.serviceName,
+      methodName: method.methodName,
+      spec: method.spec,
+      specLabel: nodeIdFor(root, method.spec),
+      requestType: method.requestType,
+      responseType: method.responseType,
+      streaming: method.streaming,
+      ...(from === undefined
+        ? {}
+        : { schemaLocation: relative(from, method.spec).split(sep).join(LOCATION_SEPARATOR) }),
+    }));
+    return { methods, warnings: index.warnings };
+  }
+
+  /**
+   * The tokens offered to a skeleton are every variable name in scope for that
+   * environment, shadowed ones included: a shadowed key still interpolates, so a field
+   * named after it should still be written as `{{token}}`.
+   */
+  function messageSkeleton(methodPath: string, environment: string | null): string {
+    const tokens = new Set(readVariables(root, environment).bindings.map((binding) => binding.key));
+    return protos.skeleton(methodPath, tokens);
+  }
+
+  async function grep(query: string, limit: number | undefined): Promise<GrepResult> {
+    return grepWorkspace(await ensureCatalog(), query, { limit });
+  }
+
+  /**
+   * Re-read after a burst of changes and pushed, because a rebase moves every row and
+   * nothing in the renderer could know to ask. A failure here is already a `warning`
+   * inside the status, so there is nothing to catch.
+   */
+  function scheduleGitStatus(): void {
+    if (gitTimer !== undefined) clearTimeout(gitTimer);
+    gitTimer = setTimeout(() => {
+      gitTimer = undefined;
+      void readGitStatus(root).then((status: GitStatus) => {
+        if (!disposed) post({ push: "git-status", status });
+      });
+    }, GIT_STATUS_DEBOUNCE_MS);
+  }
+
+  async function dispatch(request: EngineRequest): Promise<EngineResult> {
+    // A disposed host has closed its watcher, so its catalog can no longer be trusted to match
+    // the disk. Refusing is honest; serving the last known state is how a GUI shows a lie.
+    if (disposed) throw usage(`the engine for ${root} is closed`);
+    switch (request.kind) {
+      case "catalog":
+        return ensureCatalog();
+      case "read-node":
+        return readNode(request.nodeId);
+      case "write-node":
+        return writeNode(request.nodeId, request);
+      case "write-text":
+        return writeText(request.nodeId, request.text);
+      case "mutate":
+        return mutate(request.op);
+      case "run":
+        return { runId: startRun(request.args) };
+      case "cancel":
+        return cancelRun(request.runId);
+      case "variables":
+        return readVariables(root, request.environment);
+      case "write-variable":
+        return writeVariable(request.write);
+      case "run-report":
+        return runReport(request.runId, request.format);
+      case "list-methods":
+        return listMethods(request.nodeId);
+      case "message-skeleton":
+        return messageSkeleton(request.methodPath, request.environment);
+      case "grep":
+        return grep(request.query, request.limit);
+      case "git-status":
+        return readGitStatus(root);
+      case "body-head":
+        return bodies.head(request.handle);
+      case "body-window":
+        return bodies.window(request.handle, request.offset, request.length ?? BODY_WINDOW_BYTES);
+      case "body-search":
+        return bodies.search(request.handle, request.query, request.limit ?? BODY_SEARCH_LIMIT);
+      case "body-format":
+        return bodies.format(request.handle);
+      case "body-release":
+        bodies.release(request.handle);
+        return null;
+    }
+  }
+
+  return {
+    async handle(request: EngineRequest): Promise<EngineResponse> {
+      try {
+        return { id: request.id, ok: true, data: await dispatch(request) };
+      } catch (cause) {
+        return { id: request.id, ok: false, error: toEngineError(cause) };
+      }
+    },
+    dispose(): void {
+      disposed = true;
+      watcher?.close();
+      watcher = undefined;
+      if (gitTimer !== undefined) clearTimeout(gitTimer);
+      gitTimer = undefined;
+      for (const state of runs.values()) state.cancelled = true;
+      runs.clear();
+      reports.clear();
+    },
+  };
+}

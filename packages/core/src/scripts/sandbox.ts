@@ -97,6 +97,19 @@ export interface ScriptRunResult {
   sideRequests: SideRequestRecord[];
 }
 
+/**
+ * Watches a script as it runs, one item at a time.
+ *
+ * Deliberately protocol-free: the sandbox reports what happened, and the caller
+ * decides what a `nodeId` is and where it goes. Without this, a script with thirty
+ * assertions would deliver all thirty at once, when it finishes.
+ */
+export interface ScriptObserver {
+  onLog?(line: ConsoleLine): void;
+  onTest?(result: TestResult): void;
+  onSideRequest?(record: SideRequestRecord): void;
+}
+
 export interface RunScriptOptions {
   code: string;
   store: VariableStore;
@@ -118,6 +131,8 @@ export interface RunScriptOptions {
   iterationCount?: number;
   /** Certificate material for `pm.sendRequest`; Node's defaults when omitted. */
   tlsCerts?: TlsCertOptions;
+  /** Watches logs, tests and side requests as they happen. Omitted by the CLI. */
+  observer?: ScriptObserver;
   /**
    * Expose `eval` so a script can rehydrate a shared library, the way Postman's
    * `eval(pm.globals.get("pmlib_code"))` idiom does. Off by default.
@@ -277,11 +292,25 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   const cookies = options.cookies ?? new CookieJar();
   const logs: ConsoleLine[] = [];
   const tests: TestResult[] = [];
+  const observer = options.observer;
+
+  /**
+   * Collect and announce in one step, so no site can add to the batch result without
+   * also telling the observer about it.
+   */
+  const addLog = (line: ConsoleLine): void => {
+    logs.push(line);
+    observer?.onLog?.(line);
+  };
+  const addTest = (result: TestResult): void => {
+    tests.push(result);
+    observer?.onTest?.(result);
+  };
 
   const record =
     (level: ConsoleLine["level"]) =>
     (...args: unknown[]) => {
-      logs.push({ level, text: args.map(formatArg).join(" "), origin });
+      addLog({ level, text: args.map(formatArg).join(" "), origin });
     };
 
   /**
@@ -295,6 +324,10 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   };
 
   const sideRequests: SideRequestRecord[] = [];
+  const addSideRequest = (item: SideRequestRecord): void => {
+    sideRequests.push(item);
+    observer?.onSideRequest?.(item);
+  };
 
   /** The logs and tests gathered so far, as `PremanError` details. */
   const gathered = (): string[] => [
@@ -335,7 +368,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       timeoutMs: options.requestTimeoutMs ?? timeoutMs,
       tlsCerts: options.tlsCerts ?? emptyTlsCerts(),
     });
-    sideRequests.push({
+    addSideRequest({
       method: result.method,
       url: result.finalUrl,
       statusCode: result.statusCode,
@@ -433,13 +466,13 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
   const test = (name: unknown, fn?: () => unknown): void => {
     const label = String(name);
     if (typeof fn !== "function") {
-      tests.push({ name: label, status: "skipped", error: undefined, origin });
+      addTest({ name: label, status: "skipped", error: undefined, origin });
       return;
     }
     // `done => ...` and `async () => ...` would both report a false pass, because
     // nothing here waits for them. Fail loudly instead.
     if (fn.length > 0) {
-      tests.push({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE, origin });
+      addTest({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE, origin });
       return;
     }
     try {
@@ -449,17 +482,17 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
           () => undefined,
           () => undefined,
         );
-        tests.push({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE, origin });
+        addTest({ name: label, status: "failed", error: ASYNC_TEST_MESSAGE, origin });
         return;
       }
-      tests.push({ name: label, status: "passed", error: undefined, origin });
+      addTest({ name: label, status: "passed", error: undefined, origin });
     } catch (cause) {
-      tests.push({ name: label, status: "failed", error: messageOf(cause), origin });
+      addTest({ name: label, status: "failed", error: messageOf(cause), origin });
     }
   };
 
   const skip = (name: unknown): void => {
-    tests.push({ name: String(name), status: "skipped", error: undefined, origin });
+    addTest({ name: String(name), status: "skipped", error: undefined, origin });
   };
 
   const pm = {
@@ -563,7 +596,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
         try {
           (fn as (...rest: unknown[]) => unknown)(...args);
         } catch (cause) {
-          logs.push({ level: "error", text: messageOf(cause), origin });
+          addLog({ level: "error", text: messageOf(cause), origin });
         }
       }, ms);
       pending.add(handle);

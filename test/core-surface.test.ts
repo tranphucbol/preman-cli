@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as core from "@preman/core";
+import type { SentRequest } from "@preman/core";
+
+const NO_PAIRS: [string, string][] = [];
 
 /**
  * The barrel is a contract with consumers that do not live in this repo, so its runtime
@@ -7,14 +10,30 @@ import * as core from "@preman/core";
  * erases them, which is exactly why widening the surface has to be deliberate.
  */
 const DECLARED_SURFACE = [
+  "BodyStore",
   "EXIT",
   "PremanError",
+  "buildCatalog",
+  "createCollection",
+  "createEnvironmentFile",
+  "createFolder",
+  "createRequestFile",
+  "deleteNode",
   "describeWorkspace",
+  "editDefinitionFile",
+  "editRequestFile",
   "failOnAmbiguity",
   "findWorkspace",
+  "flattenHeaders",
   "listGroups",
   "listRequests",
+  "moveNode",
   "readEnvironment",
+  "readVariables",
+  "refreshCatalog",
+  "renameNode",
+  "reorderSiblings",
+  "replaceFileText",
   "requireWorkspace",
   "runGroup",
   "runRequest",
@@ -23,11 +42,36 @@ const DECLARED_SURFACE = [
   "targetLabel",
   "toGroupJsonReport",
   "toJsonReport",
+  "toJunitReport",
+  "watchWorkspace",
   "writeEnvironmentValue",
 ];
 
 describe("core barrel", () => {
   it("givenCoreBarrel_whenImported_thenSurfaceMatchesTheDeclaredList", () => {
     expect(Object.keys(core).sort()).toEqual(DECLARED_SURFACE);
+  });
+
+  /**
+   * A type export leaves nothing behind to count, so this asserts where types still exist: the
+   * `import type` above stops compiling if the barrel drops it, and these two literals stop
+   * compiling if the union loses an arm or renames a field.
+   */
+  it("givenTheCoreEntrypoint_whenImported_thenSentRequestIsExported", () => {
+    const http: SentRequest = {
+      protocol: "http",
+      method: "GET",
+      url: "https://example.test/",
+      headers: NO_PAIRS,
+      body: undefined,
+    };
+    const grpc: SentRequest = {
+      protocol: "grpc",
+      methodPath: "pkg.Service.Method",
+      metadata: NO_PAIRS,
+      message: {},
+    };
+
+    expect([http.protocol, grpc.protocol]).toEqual(["http", "grpc"]);
   });
 });
