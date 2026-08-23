@@ -1,0 +1,28 @@
+# How the four Vite bundles become an installable app. `bun run build` produces `dist/`;
+# electron-builder only wraps it, so this file describes packing and never compilation.
+appId: dev.preman.desktop
+productName: preman
+
+directories:
+  # `dist/` is the build's output, not the packer's - pointing electron-builder at it would
+  # have the packer overwrite its own input on the second run.
+  output: release
+  buildResources: resources
+
+# The manifest's `dependencies` are exactly what the engine host externalises, so the default
+# "pack dependencies, prune devDependencies" rule already ships the right node_modules; the
+# renderer's packages are devDependencies because Vite inlines them into the bundle.
+files:
+  - dist/**
+
+# Nothing the engine requires is a native module, so there is no addon to rebuild against
+# Electron's ABI - and rebuilding would only walk a workspace it cannot own.
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  icon: resources/icon.png
+  target:
+    - dmg
+  # Ad-hoc signing. A real identity belongs to whoever ships the build, not to the repository.
+  identity: null

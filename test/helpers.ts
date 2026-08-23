@@ -77,6 +77,33 @@ export function definitionPath(root: string, ...segments: string[]): string {
   return collectionPath(root, ...segments, ".resources/definition.yaml");
 }
 
+/**
+ * Longer than every debounce a poke can restart — the watcher's 50ms and the engine host's 400ms
+ * `git-status`. A shorter interval starves the timer it is waiting on: each write resets the
+ * debounce, so the push never fires and the loop times out having caused the failure it reports.
+ */
+const POKE_INTERVAL_MS = 1_000;
+
+/**
+ * Repeat `poke` until `ready` returns true, or fail at `timeoutMs`.
+ *
+ * Every watcher assertion needs this. A single write straight after `fs.watch` returns is
+ * sometimes never delivered on macOS: the FSEvents stream is registered but not yet streaming,
+ * so a change made in that gap falls into it and no event ever arrives. "Touch it once and wait"
+ * therefore fails a few runs in a hundred for a reason that has nothing to do with the code under
+ * test, while "keep touching it until the watcher notices" asserts the same property and cannot
+ * pass if the watcher is genuinely broken — it still fails at the deadline.
+ */
+export async function pokeUntil(poke: () => void, ready: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    poke();
+    await new Promise((done) => setTimeout(done, POKE_INTERVAL_MS));
+    if (ready()) return;
+    if (Date.now() >= deadline) throw new Error("the watcher never reported the change");
+  }
+}
+
 /** The only token `GET /profile` accepts. */
 export const HTTP_TOKEN = "jwt-123";
 /** Session cookie name the login route sets, and `/profile` echoes back. */

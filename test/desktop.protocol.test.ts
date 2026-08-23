@@ -33,6 +33,7 @@ import {
   cloneFixtureWorkspace,
   dataPath,
   HTTP_TOKEN,
+  pokeUntil,
   startHttpServer,
   type ClonedWorkspace,
   type HttpTestServer,
@@ -208,14 +209,16 @@ function initRepository(root: string): void {
   run("commit", "--quiet", "--message", "fixture");
 }
 
-async function waitForGitStatus(harness: Harness): Promise<GitStatus> {
-  const deadline = Date.now() + GIT_SETTLE_MS;
-  while (Date.now() < deadline) {
-    const pushed = harness.pushesOf("git-status").at(-1);
-    if (pushed !== undefined) return pushed.status;
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-  }
-  throw new Error("the git status was never pushed");
+/**
+ * The push is driven by the watcher, so the edit has to be repeated rather than made once —
+ * see `pokeUntil`. `touch` writes the same bytes every time, so what git reports cannot drift
+ * with the number of attempts.
+ */
+async function waitForGitStatus(harness: Harness, touch: () => void): Promise<GitStatus> {
+  await pokeUntil(touch, () => harness.pushesOf("git-status").length > 0, GIT_SETTLE_MS);
+  const pushed = harness.pushesOf("git-status").at(-1);
+  if (pushed === undefined) throw new Error("the git status was never pushed");
+  return pushed.status;
 }
 
 describe("the engine host protocol", () => {
@@ -515,9 +518,9 @@ describe("the engine host protocol", () => {
           // The watcher only starts once the catalog has been built.
           await app.send("catalog", {});
           const file = join(repo.root, ECHO_NODE_ID);
-          writeFileSync(file, `${readFileSync(file, "utf8")}\ndescription: touched outside the app\n`);
+          const touched = `${readFileSync(file, "utf8")}\ndescription: touched outside the app\n`;
 
-          const status = await waitForGitStatus(app);
+          const status = await waitForGitStatus(app, () => writeFileSync(file, touched));
           expect(status.repository).toBe(true);
           expect(status.files[ECHO_NODE_ID]).toBe("modified");
         } finally {

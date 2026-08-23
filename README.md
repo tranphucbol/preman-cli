@@ -133,6 +133,25 @@ a collection run are reported instead of being executed.
 See [the reference](docs/reference.md) for selection rules, variable precedence, protocol behavior,
 scripts, assertions, exit codes, and schema resolution.
 
+## Desktop app
+
+`@preman/desktop` puts a window in front of the same engine: it opens a workspace, edits requests
+and environments, and runs them. The CLI and the app read and write the same files, so a request
+created in the window runs from the terminal, and a file changed by either one appears in the other
+on its next read.
+
+```sh
+bun run desktop          # build the app and launch it
+bun run desktop:package  # build, then wrap it into packages/desktop/release
+```
+
+Window bounds, open tabs, and unsaved drafts live in Electron's `userData`, never in the workspace,
+so `git status` stays clean while the app is open. Packaging targets are configured for macOS in
+`packages/desktop/electron-builder.yml`.
+
+The window holds no engine: it talks to a separate process over a message port. See
+[the engine protocol](docs/reference.md#engine-protocol) for that contract.
+
 ## Development
 
 ```sh
@@ -146,3 +165,14 @@ bun run lint:fix
 bun run format
 bun run format:check
 ```
+
+The performance budgets in `test/perf.test.ts` run with the normal suite. The ones that need a real
+window launch Electron five times, so they are gated and want a built app:
+
+```sh
+bun run build && PREMAN_PERF=1 bunx vitest run test/renderer/perf.app.test.ts
+```
+
+[`docs/performance.md`](docs/performance.md) is the budget itself, and what each number counts.
+[`docs/decisions/`](docs/decisions/README.md) is why the app is shaped the way it is — three
+processes, a synchronous core, an editor that never reformats your files.

@@ -9,6 +9,7 @@ import {
   definitionPath,
   FIXTURE_HTTP_WS,
   FIXTURE_WS,
+  pokeUntil,
   type ClonedWorkspace,
 } from "./helpers.js";
 
@@ -26,7 +27,7 @@ const EXPECTED_ROWS = [
   "request Deep Echo",
 ];
 /** macOS FSEvents is not instant; the assertion is that events arrive, not when. */
-const WATCH_SETTLE_MS = 2_000;
+const WATCH_SETTLE_MS = 10_000;
 
 function rows(catalog: Catalog): string[] {
   return catalog.nodes.map((node) => `${node.kind} ${node.name}`);
@@ -169,19 +170,31 @@ describe("watchWorkspace", () => {
     const batches: string[][] = [];
     const handle = watchWorkspace(clone.root, (paths) => batches.push(paths), { debounceMs: 20 });
 
+    const sawBoth = () => {
+      const seen = batches.flat();
+      return (
+        seen.some((path) => path.endsWith("Ping.request.yaml")) &&
+        seen.some((path) => path.endsWith("Echo.request.yaml"))
+      );
+    };
+
     try {
       const first = collectionPath(clone.root, "payment", "Ping.request.yaml");
       const second = collectionPath(clone.root, "payment", "Echo.request.yaml");
-      writeFileSync(first, readFileSync(first, "utf8"));
-      writeFileSync(second, readFileSync(second, "utf8"));
-      await new Promise((done) => setTimeout(done, WATCH_SETTLE_MS));
+      const rewrite = (file: string) => writeFileSync(file, readFileSync(file, "utf8"));
+      await pokeUntil(
+        () => {
+          rewrite(first);
+          rewrite(second);
+        },
+        sawBoth,
+        WATCH_SETTLE_MS,
+      );
     } finally {
       handle.close();
     }
 
-    const seen = batches.flat();
-    expect(seen.some((path) => path.endsWith("Ping.request.yaml"))).toBe(true);
-    expect(seen.some((path) => path.endsWith("Echo.request.yaml"))).toBe(true);
+    expect(sawBoth()).toBe(true);
   });
 
   it("givenNoWatchableDirs_whenWatching_thenDegradationIsReported", () => {

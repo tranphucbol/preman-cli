@@ -33,6 +33,15 @@ export interface HostRegistryOptions {
 
 export interface HostRegistry {
   /**
+   * Start the host for `root` without handing anybody a port.
+   *
+   * The engine host is a Node process and the window is a Chromium one, and nothing orders
+   * them: forking at launch puts the host's startup alongside Chromium's rather than after
+   * it. Idempotent, and safe to call for a workspace that is never opened — an unused host
+   * is reaped by {@link HostRegistry.release} like any other.
+   */
+  prewarm(root: string): void;
+  /**
    * Make sure a host for `root` exists and give `contents` a fresh port to it.
    * Idempotent: calling it again for a live host re-attaches rather than respawns.
    */
@@ -87,13 +96,20 @@ export function createHostRegistry(options: HostRegistryOptions): HostRegistry {
     host.idleTimer = undefined;
   }
 
+  function ensure(root: string): Host {
+    const existing = hosts.get(root);
+    if (existing !== undefined) return existing;
+    const host = spawn(root, 0);
+    hosts.set(root, host);
+    return host;
+  }
+
   return {
+    prewarm(root) {
+      clearIdle(ensure(root));
+    },
     open(root, contents) {
-      let host = hosts.get(root);
-      if (host === undefined) {
-        host = spawn(root, 0);
-        hosts.set(root, host);
-      }
+      const host = ensure(root);
       clearIdle(host);
       transfer(host, root, contents);
     },

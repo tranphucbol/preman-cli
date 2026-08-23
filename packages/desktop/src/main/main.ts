@@ -318,12 +318,17 @@ function start(): void {
   buildMenu();
   window = createWindow();
 
-  // Reopening the last workspace is why `activeRoot` is persisted at all. It waits for
-  // `did-finish-load` because `openWorkspace` transfers a port to the renderer, and a port sent
-  // to a document that has not run its script yet is a port nobody is listening on.
+  // Reopening the last workspace is why `activeRoot` is persisted at all. The port transfer waits
+  // for `did-finish-load`, because a port sent to a document that has not run its script yet is a
+  // port nobody is listening on — but the fork does not. Spawning the host here overlaps a Node
+  // process starting with Chromium starting, which is a quarter of a second of the cold start that
+  // was previously spent queueing behind the window.
+  const last = requireStore().read().activeRoot;
+  const reopening = last !== null && looksLikeWorkspace(last) ? last : null;
+  if (reopening !== null) requireHosts().prewarm(reopening);
+
   window.webContents.once("did-finish-load", () => {
-    const last = requireStore().read().activeRoot;
-    if (last !== null && looksLikeWorkspace(last)) openWorkspace(last);
+    if (reopening !== null) openWorkspace(reopening);
   });
 
   window.on("closed", () => {

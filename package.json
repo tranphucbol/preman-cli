@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/desktop/src/renderer/tsconfig.json && tsc --noEmit -p test/renderer/tsconfig.json",
     "typecheck:core": "tsc --noEmit -p packages/core/tsconfig.json",
-    "desktop": "bun run --filter '@preman/desktop' build && bun run --cwd packages/desktop start"
+    "desktop": "bun run --filter '@preman/desktop' build && bun run --cwd packages/desktop start",
+    "desktop:package": "bun run --filter '@preman/desktop' build && bun run --cwd packages/desktop package"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -34,6 +35,7 @@
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "playwright-core": "^1.62.1",
     "prettier": "^3.9.6",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "typescript": "^5.7.2",

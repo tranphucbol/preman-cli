@@ -15,6 +15,7 @@ and `@preman/desktop` is the window in front of it. Both front ends read and wri
 - `bun run test -- test/e2e.test.ts` - single file
 - `bun run build` - every package; `packages/cli/dist/preman.js` is the shipped CLI artifact
 - `bun run desktop` - build the Electron app and launch it
+- `bun run desktop:package` - build it, then wrap it with electron-builder into `packages/desktop/release`
 - `bun run lint` - ESLint, must be clean
 - `bun run lint:fix` - apply ESLint fixes
 - `bun run format` - apply Prettier formatting
@@ -64,16 +65,25 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
                                  BodyViewer, ConsoleDrawer
   resources/                     the app icon; macOS masks nothing, so the rounding is in the art
     generate.swift               icon.source.png -> icon.png on Apple's grid; regenerate by hand
+  electron-builder.yml           packs the built dist/ into release/; compiles nothing
 vitest.config.ts                 the one test project, shared by every package
 packages/*/vite.*.config.ts      per-package build; the desktop has one config per process
 eslint.config.js                 lint, import layering, and the two purity fences
 test/fixtures/ws/                a real Postman workspace + .proto used by every suite
 test/fixtures/http-ws/           the HTTP workspace; `Legacy Http` in `ws/` is a skipped websocket
 test/fixtures/ssl/               committed certificates; regenerate with `generate.sh`
+test/support/big-workspace.ts    generates an N-request workspace in a temp dir; never committed
+test/perf.test.ts                the catalog and workspace-switch budgets; runs with the suite
+test/renderer/perf.app.test.ts   the budgets that need a window; gated behind PREMAN_PERF=1
 ```
 
 ## Conventions
 
+- `docs/decisions/` holds the ADRs. Read the record before changing the process model, the
+  synchrony of core, how files are written, or how the perf budget is read. Make a decision of that
+  weight — one with a real alternative, or one the next reader would otherwise reopen — and add the
+  next-numbered file from `TEMPLATE.md`, listed in the index, stating what it cost and not only what
+  was chosen. Numbers are never reused; a reversal keeps its file and changes its status.
 - TypeScript strict, ESM. Import with explicit `.js` specifiers; cross a directory with
   `@preman/core/…` or `@preman/cli/…` (including inside core), stay relative within one, and use
   `import type` for types.
@@ -102,3 +112,11 @@ test/fixtures/ssl/               committed certificates; regenerate with `genera
 - Prefer adding scripts/vars to existing fixtures over adding request files: several suites
   assert the exact 5-request list and its group statuses.
 - Use `cloneFixtureWorkspace()` before anything that writes to the workspace.
+- Performance budgets live in `docs/performance.md`. `test/perf.test.ts` holds the ones that
+  are a function call, and takes the best of three runs rather than the first. The ones that need a
+  real window are `test/renderer/perf.app.test.ts`, gated behind `PREMAN_PERF=1` because it launches
+  Electron eight times against a built `dist/`; run it with
+  `bun run build && PREMAN_PERF=1 bunx vitest run test/renderer/perf.app.test.ts`.
+- The interaction budgets there are blocking time, attributed to the interaction that caused it,
+  and asserted against the median rather than the worst: the idle app blocks its own main thread
+  for 7-16ms every so often, which is above the tab-switch and keystroke budgets both.

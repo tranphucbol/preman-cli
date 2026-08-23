@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# electron-builder's own output; `dist/` is what it packs, `release/` is what it produces.
+release/
 *.log
 .DS_Store
 .idea/
