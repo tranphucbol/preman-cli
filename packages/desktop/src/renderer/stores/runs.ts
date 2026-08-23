@@ -15,6 +15,7 @@ import { addTest, NO_TESTS } from "@preman/desktop/renderer/model/response.js";
 import type {
   ConsoleLine,
   ResponseBody,
+  ResponseFailure,
   ResponseHead,
   SideRequestSummary,
   TestResult,
@@ -40,6 +41,8 @@ export interface RequestRun {
   readonly sent: unknown;
   readonly head: ResponseHead | null;
   readonly body: ResponseBody | null;
+  /** Set instead of `body` when the transport produced nothing to inspect. */
+  readonly failure: ResponseFailure | null;
   readonly tests: readonly TestResult[];
   readonly exitCode: ExitCode | null;
   readonly returnCode: string | null;
@@ -168,6 +171,7 @@ export const useRunsStore = create<RunsState>((set) => ({
             target: null,
             sent: undefined,
             head: null,
+            failure: null,
             body: null,
             tests: [],
             exitCode: null,
@@ -267,7 +271,7 @@ export const useRunsStore = create<RunsState>((set) => ({
  */
 type ItemEvent = Extract<
   RunEvent,
-  { type: "request-sent" | "response-head" | "response-body" | "test" | "request-end" }
+  { type: "request-sent" | "response-head" | "response-body" | "response-failure" | "test" | "request-end" }
 >;
 
 function applyToItem(state: RunsState, event: ItemEvent): Partial<RunsState> {
@@ -293,6 +297,17 @@ function applyToItem(state: RunsState, event: ItemEvent): Partial<RunsState> {
           contentType: event.contentType,
           preview: event.preview,
           truncated: event.truncated,
+        },
+      });
+      break;
+    case "response-failure":
+      requests.set(key, {
+        ...item,
+        failure: {
+          stage: event.stage,
+          message: event.message,
+          details: event.details,
+          trailers: event.trailers,
         },
       });
       break;

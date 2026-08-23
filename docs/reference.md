@@ -216,6 +216,13 @@ The target is selected in this order:
 TLS is inferred from a `grpcs` or `https` scheme, port `443`, or a `.zalopay.vn` hostname. Use
 `--tls` or `--plaintext` to override the inference.
 
+### When the call is refused
+
+A non-`OK` status exits `2` and prints the status name, the server's message and the trailers. The
+desktop app shows the same three things in place of the response body, under a headline naming what
+that status means. An HTTP 4xx or 5xx is not this case: it has a body, and the body is shown as the
+server sent it.
+
 ### Authentication
 
 gRPC uses the same `auth` block and the same supported types as HTTP, rendered into call metadata.

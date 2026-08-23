@@ -35,6 +35,7 @@ import {
 import {
   exitLabel,
   exitTone,
+  failureCopy,
   isCleanExit,
   mergeConsole,
   parseSetCookie,
@@ -274,6 +275,86 @@ describe("what the response pane reads off a run", () => {
     store.clear();
   });
 
+  it("givenResponseFailureEvent_whenApplied_thenTheItemHoldsIt", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    store.apply({
+      type: "response-head",
+      runId: RUN_ID,
+      nodeId: PING_ID,
+      status: "NOT_FOUND",
+      headers: [],
+      timings: { durationMs: 55 },
+    });
+    store.apply({
+      type: "response-failure",
+      runId: RUN_ID,
+      nodeId: PING_ID,
+      stage: "transport",
+      message: "Not found app_id=100331.",
+      details: [],
+      trailers: [["x-handled-by", "test-server"]],
+    });
+
+    // The body stays null: the pane branches on `failure` first, so "no body" is never
+    // the last word on a call that the server refused.
+    expect(onlyRequest().body).toBeNull();
+    expect(onlyRequest().failure).toEqual({
+      stage: "transport",
+      message: "Not found app_id=100331.",
+      details: [],
+      trailers: [["x-handled-by", "test-server"]],
+    });
+    store.clear();
+  });
+
+  it("givenBuildFailureEvent_whenApplied_thenTheItemHoldsTheStageAndDetails", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    // No `response-head`: nothing was sent, so there is no status to carry one.
+    store.apply({
+      type: "response-failure",
+      runId: RUN_ID,
+      nodeId: PING_ID,
+      stage: "build",
+      message: "no usable schema for acquiring_core.upay.v1.UserPayment.CreateOrder",
+      details: ["schema.location resolved to /Users/Shared/postman-protos/acquiring-core/user_payment.proto"],
+      trailers: [],
+    });
+
+    expect(onlyRequest().head).toBeNull();
+    expect(onlyRequest().failure?.stage).toBe("build");
+    expect(onlyRequest().failure?.details).toHaveLength(1);
+    store.clear();
+  });
+
+  it("givenKnownGrpcStatus_whenFailureCopy_thenTitleAndHintAreReturned", () => {
+    // The status name is for the reader who already knew; the copy is for the one who did not.
+    expect(failureCopy("transport", "NOT_FOUND")).toEqual({
+      title: "Could not find the entity",
+      hint: "The server looked and found nothing. Check the identifiers in the message you sent.",
+    });
+  });
+
+  it("givenUnknownStatusName_whenFailureCopy_thenTheGenericFailureIsReturned", () => {
+    expect(failureCopy("transport", "SOMETHING_NEW").title).toBe("The call failed");
+    // A numeric status never reaches here, and under-explaining beats throwing in a pane.
+    expect(failureCopy("transport", 500).title).toBe("The call failed");
+  });
+
+  it("givenNoStatus_whenFailureCopy_thenTheNoResponseCopyIsReturned", () => {
+    expect(failureCopy("transport", undefined).title).toBe("No response arrived");
+  });
+
+  it("givenBuildStage_whenFailureCopy_thenItDoesNotClaimAResponseWasAwaited", () => {
+    // "No response arrived" would be a lie of omission: no request was placed to answer.
+    expect(failureCopy("build", undefined).title).toBe("The request could not be built");
+  });
+
   it("givenSetCookieHeaders_whenParsed_thenAttributesAreSplitOut", () => {
     const cookies = parseSetCookie([
       ["Set-Cookie", "session=abc123; Path=/; HttpOnly; SameSite=Lax; Domain=example.com"],
@@ -304,6 +385,21 @@ describe("what the response pane reads off a run", () => {
     expect(statusTone(200)).toBe("ok");
     expect(statusTone(404)).toBe("warn");
     expect(statusTone(503)).toBe("danger");
+  });
+
+  it("givenTheSameFailureOverEitherTransport_whenToned_thenBothReadTheSame", () => {
+    // `google/rpc/code.proto` maps NOT_FOUND to 404 and UNAVAILABLE to 503, so a reader
+    // should not see a gRPC call painted worse than the identical HTTP one.
+    expect(statusTone("NOT_FOUND")).toBe(statusTone(404));
+    expect(statusTone("UNAUTHENTICATED")).toBe(statusTone(401));
+    expect(statusTone("UNAVAILABLE")).toBe(statusTone(503));
+    expect(statusTone("INTERNAL")).toBe(statusTone(500));
+  });
+
+  it("givenAStatusNameThisBuildDoesNotKnow_whenToned_thenItIsNotExcused", () => {
+    // Falling back to warn would tell the reader the call is theirs to fix, which is a
+    // claim we cannot make about a name we do not recognise.
+    expect(statusTone("SOMETHING_NEW")).toBe("danger");
   });
 
   it("givenCleanExit_whenSummarised_thenTheOutcomeIsLeftOutAndEveryFailureIsNamed", () => {

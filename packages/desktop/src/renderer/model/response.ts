@@ -9,7 +9,7 @@
  *
  * Everything here is pure. Nothing imports React, and nothing reads a store.
  */
-import { EXIT_CODES, type ExitCode, type RunEvent } from "@preman/desktop/engine/protocol.js";
+import { EXIT_CODES, type ExitCode, type FailureStage, type RunEvent } from "@preman/desktop/engine/protocol.js";
 
 /* The sandbox's and the transport's own shapes, as they arrive. */
 export type ConsoleLine = Extract<RunEvent, { type: "console" }>["line"];
@@ -19,6 +19,7 @@ export type TestStatus = TestResult["status"];
 export type SideRequestSummary = Extract<RunEvent, { type: "side-request" }>["summary"];
 export type ResponseHead = Omit<Extract<RunEvent, { type: "response-head" }>, "type" | "runId" | "nodeId">;
 export type ResponseBody = Omit<Extract<RunEvent, { type: "response-body" }>, "type" | "runId" | "nodeId">;
+export type ResponseFailure = Omit<Extract<RunEvent, { type: "response-failure" }>, "type" | "runId" | "nodeId">;
 export type HeaderPairs = ResponseHead["headers"];
 
 /**
@@ -45,6 +46,25 @@ export function toneClass(tone: Tone): string {
   return TONE_CLASS[tone];
 }
 
+/**
+ * The filled variant, for a status worn as a tag rather than set as text. It sits beside
+ * `TONE_CLASS` so that the palette stays in one file and the contrast audit in `app.css`
+ * has one place to look: every pair below is ink on its own tint over `--color-panel`.
+ *
+ * Neutral takes `--color-control` rather than a grey tint, because a grey wash on a grey
+ * surface is not a tag, it is a smudge.
+ */
+const TONE_TAG_CLASS: Record<Tone, string> = {
+  ok: "bg-ok/10 text-ok",
+  warn: "bg-warn/10 text-warn",
+  danger: "bg-danger/10 text-danger",
+  neutral: "bg-control text-ink-dim",
+};
+
+export function toneTagClass(tone: Tone): string {
+  return TONE_TAG_CLASS[tone];
+}
+
 const HTTP_SUCCESS_MIN = 200;
 const HTTP_REDIRECT_MIN = 300;
 const HTTP_CLIENT_ERROR_MIN = 400;
@@ -53,12 +73,44 @@ const HTTP_SERVER_ERROR_MIN = 500;
 const GRPC_OK = "OK";
 
 /**
+ * Which failures the caller can fix, and which mean the far side broke.
+ *
+ * The split is not invented here: it is the canonical mapping in `google/rpc/code.proto`,
+ * the one grpc-gateway uses to turn a status into an HTTP code. Every status it maps to a
+ * 4xx reads warn and every 5xx reads danger, so `NOT_FOUND` and `404` are the same colour
+ * for the same event - which they were not before, when every non-`OK` status was red and
+ * a gRPC call therefore looked worse than the identical HTTP call.
+ *
+ * A name this build has never heard of falls through to danger: an unrecognised status is
+ * not evidence that the caller can fix it.
+ */
+const GRPC_STATUS_TONE: Record<string, Tone> = {
+  [GRPC_OK]: "ok",
+  CANCELLED: "warn", // 499
+  UNKNOWN: "danger", // 500
+  INVALID_ARGUMENT: "warn", // 400
+  DEADLINE_EXCEEDED: "danger", // 504
+  NOT_FOUND: "warn", // 404
+  ALREADY_EXISTS: "warn", // 409
+  PERMISSION_DENIED: "warn", // 403
+  RESOURCE_EXHAUSTED: "warn", // 429
+  FAILED_PRECONDITION: "warn", // 400
+  ABORTED: "warn", // 409
+  OUT_OF_RANGE: "warn", // 400
+  UNIMPLEMENTED: "danger", // 501
+  INTERNAL: "danger", // 500
+  UNAVAILABLE: "danger", // 503
+  DATA_LOSS: "danger", // 500
+  UNAUTHENTICATED: "warn", // 401
+};
+
+/**
  * A gRPC status is a string, an HTTP status is a number, and `response-head` carries
  * whichever the transport produced. Redirects read neutral rather than ok: the engine
  * follows them itself, so a 3xx that survived to the pane means the chain stopped there.
  */
 export function statusTone(status: number | string): Tone {
-  if (typeof status === "string") return status === GRPC_OK ? "ok" : "danger";
+  if (typeof status === "string") return GRPC_STATUS_TONE[status] ?? "danger";
   if (status >= HTTP_SERVER_ERROR_MIN) return "danger";
   if (status >= HTTP_CLIENT_ERROR_MIN) return "warn";
   if (status >= HTTP_SUCCESS_MIN && status < HTTP_REDIRECT_MIN) return "ok";
@@ -67,6 +119,119 @@ export function statusTone(status: number | string): Tone {
 
 export function statusText(status: number | string): string {
   return typeof status === "string" ? status : String(status);
+}
+
+/**
+ * What a failed call is called, and what to do about it.
+ *
+ * The status name alone tells the reader who already knew what it meant. This table is
+ * for the one who did not, and it is here rather than in the pane because deciding what
+ * a status *means* is the same job as deciding what tone it reads in.
+ */
+export interface FailureCopy {
+  readonly title: string;
+  readonly hint: string;
+}
+
+/** Keyed by gRPC code name, which is what `response-head` carries for a gRPC call. */
+const GRPC_FAILURE_COPY: Record<string, FailureCopy> = {
+  CANCELLED: {
+    title: "The call was cancelled",
+    hint: "Something on either end gave up before the server answered.",
+  },
+  UNKNOWN: {
+    title: "The server failed without saying why",
+    hint: "It threw before it could set a status. Its own logs will have more than this.",
+  },
+  INVALID_ARGUMENT: {
+    title: "The request was rejected",
+    hint: "The server understood the message and refused it. Check the fields it names below.",
+  },
+  DEADLINE_EXCEEDED: {
+    title: "The call ran out of time",
+    hint: "The deadline passed before an answer arrived. Raise the timeout, or find what the server is waiting on.",
+  },
+  NOT_FOUND: {
+    title: "Could not find the entity",
+    hint: "The server looked and found nothing. Check the identifiers in the message you sent.",
+  },
+  ALREADY_EXISTS: {
+    title: "The entity already exists",
+    hint: "The server refused to create something it already has.",
+  },
+  PERMISSION_DENIED: {
+    title: "Not allowed to call this",
+    hint: "The caller was identified and refused. This is authorisation, not authentication.",
+  },
+  RESOURCE_EXHAUSTED: {
+    title: "The server is out of a resource",
+    hint: "A quota, a rate limit, or a message larger than it accepts.",
+  },
+  FAILED_PRECONDITION: {
+    title: "The system is not in a state for this",
+    hint: "The call is valid but the server is not ready for it. Retrying it unchanged will fail the same way.",
+  },
+  ABORTED: {
+    title: "The call was aborted",
+    hint: "Usually a concurrency conflict. Retrying may work.",
+  },
+  OUT_OF_RANGE: {
+    title: "A value was out of range",
+    hint: "The server was asked to read past the end of something.",
+  },
+  UNIMPLEMENTED: {
+    title: "The server does not implement this method",
+    hint: "Check the method path, and that the server runs the schema you are compiling against.",
+  },
+  INTERNAL: {
+    title: "The server broke",
+    hint: "An invariant failed inside it. Its own logs will have more than this.",
+  },
+  UNAVAILABLE: {
+    title: "Could not reach the server",
+    hint: "It is down, restarting, or the address is wrong. Retrying may work.",
+  },
+  DATA_LOSS: {
+    title: "Data was lost",
+    hint: "Unrecoverable on the server's side.",
+  },
+  UNAUTHENTICATED: {
+    title: "The caller was not authenticated",
+    hint: "No valid credentials were presented. Check the auth on this request, or on a folder above it.",
+  },
+};
+
+const UNKNOWN_FAILURE: FailureCopy = {
+  title: "The call failed",
+  hint: "The server refused the call with a status this build does not recognise.",
+};
+
+/** No status at all is HTTP's way of saying the socket never produced one. */
+const NO_RESPONSE_FAILURE: FailureCopy = {
+  title: "No response arrived",
+  hint: "The request never reached a server that answered. The message below is what the socket reported.",
+};
+
+/**
+ * Nothing was sent, so no status exists and none is implied. Saying "no response
+ * arrived" here would be a lie of omission: no request was placed to answer.
+ */
+const BUILD_FAILURE: FailureCopy = {
+  title: "The request could not be built",
+  hint: "preman stopped before sending anything. The message below says what it could not resolve.",
+};
+
+/**
+ * A numeric status never reaches here: HTTP emits a failure only when it has no status,
+ * because a 4xx or 5xx has a body and the body is the server's own account of the error.
+ * If one ever does, this under-explains rather than throwing - a pane that crashes on an
+ * unexpected status is worse than one that says less than it could.
+ */
+export function failureCopy(stage: FailureStage, status: number | string | undefined): FailureCopy {
+  if (stage === "build") return BUILD_FAILURE;
+  if (status === undefined) return NO_RESPONSE_FAILURE;
+  if (typeof status === "number") return UNKNOWN_FAILURE;
+  return GRPC_FAILURE_COPY[status] ?? UNKNOWN_FAILURE;
 }
 
 /** The words behind the exit codes, so the pane never shows a bare number. */

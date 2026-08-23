@@ -35,8 +35,6 @@ import {
   exitLabel,
   exitTone,
   formatDuration,
-  statusText,
-  statusTone,
   testTotals,
   toneClass,
 } from "@preman/desktop/renderer/model/response.js";
@@ -50,8 +48,10 @@ import {
   type Run,
 } from "@preman/desktop/renderer/stores/runs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { Button, Field, IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { CancelIcon, CloseIcon, ExportIcon, RunnerIcon, SendIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
 
 import { ResponseView } from "./ResponsePane.js";
 
@@ -158,16 +158,7 @@ export function RunnerPane({
         }}
       />
 
-      {failure !== null && (
-        <div role="alert" className="shrink-0 border-b border-danger/30 bg-danger/10 px-gutter py-1.5">
-          <p className="text-xs text-danger">{failure.message}</p>
-          {failure.details.map((detail) => (
-            <p key={detail} className="text-2xs text-ink-dim">
-              {detail}
-            </p>
-          ))}
-        </div>
-      )}
+      {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
 
       {run === undefined ? (
         <p className="p-gutter text-xs text-ink-faint">
@@ -445,7 +436,7 @@ function ItemRow({
       {status === undefined ? (
         <span className="shrink-0 text-2xs text-ink-faint">{item.status === "running" ? "…" : EMPTY}</span>
       ) : (
-        <span className={cn("shrink-0 font-mono text-2xs", toneClass(statusTone(status)))}>{statusText(status)}</span>
+        <StatusTag status={status} />
       )}
       {ms !== null && <span className="w-12 shrink-0 text-right text-2xs text-ink-faint">{formatDuration(ms)}</span>}
     </button>

@@ -24,6 +24,7 @@ import { readVariables, writeVariable, type Failure } from "@preman/desktop/rend
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { AddIcon, CloseIcon, RefreshIcon } from "@preman/desktop/renderer/ui/icons.js";
 
@@ -107,16 +108,7 @@ export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void })
         </IconButton>
       </div>
 
-      {failure !== null && (
-        <div role="alert" className="shrink-0 border-b border-danger/30 bg-danger/10 px-gutter py-1.5">
-          <p className="text-xs text-danger">{failure.message}</p>
-          {failure.details.map((detail) => (
-            <p key={detail} className="text-2xs text-ink-dim">
-              {detail}
-            </p>
-          ))}
-        </div>
-      )}
+      {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
 
       {view === null ? <Hint>{LOADING_HINT}</Hint> : <Table view={view} onCommit={commit} />}
     </div>

@@ -19,8 +19,6 @@ import {
   formatDuration,
   isCleanExit,
   parseSetCookie,
-  statusText,
-  statusTone,
   testTone,
   testTotals,
   toneClass,
@@ -31,8 +29,10 @@ import { formatBytes } from "@preman/desktop/renderer/model/body.js";
 import { useLatestRunFor, type RequestRun } from "@preman/desktop/renderer/stores/runs.js";
 import { CodeEditor } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
 
 import { BodyViewer } from "./BodyViewer.js";
+import { ResponseFailure } from "./ResponseFailure.js";
 
 const TABS = ["body", "headers", "cookies", "tests", "timeline"] as const;
 type ResponseTab = (typeof TABS)[number];
@@ -101,7 +101,10 @@ export function ResponseView({ run }: { readonly run: RequestRun | undefined }) 
       </div>
 
       <Pane value="body">
-        {run.body === null ? (
+        {run.failure !== null ? (
+          // A failed call has no body, and "no body" is not a report of what went wrong.
+          <ResponseFailure status={run.head?.status} failure={run.failure} />
+        ) : run.body === null ? (
           <Hint>{run.status === "running" ? RUNNING_HINT : NO_BODY_HINT}</Hint>
         ) : (
           // Keyed on the handle so a new response gets a new viewer rather than a reset one.
@@ -155,9 +158,7 @@ function Summary({ run }: { readonly run: RequestRun }) {
   return (
     <div className="flex shrink-0 items-center gap-2.5 text-2xs">
       {run.status === "running" && <span className="text-ink-faint">{RUNNING_HINT}</span>}
-      {status !== undefined && (
-        <span className={cn("font-mono", toneClass(statusTone(status)))}>{statusText(status)}</span>
-      )}
+      {status !== undefined && <StatusTag status={status} />}
       {run.returnCode !== null && (
         <span className="font-mono text-ink-dim">
           return_code <span className="text-ink">{run.returnCode}</span>

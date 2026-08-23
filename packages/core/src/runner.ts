@@ -57,7 +57,7 @@ import { resolveAuth } from "./workspace/inherit.js";
 import { nodeIdFor } from "./workspace/paths.js";
 import type { Resources } from "./workspace/resources.js";
 import type { BodyStore } from "./api/bodies.js";
-import { flattenHeaders, type HeaderPairs, type RunEventSink } from "./api/events.js";
+import { flattenHeaders, type FailureStage, type HeaderPairs, type RunEventSink } from "./api/events.js";
 
 export const GRPC_KIND = "grpc-request";
 export const HTTP_KIND = "http-request";
@@ -74,6 +74,8 @@ const GRPC_CONTENT_TYPE = "application/json";
 const GRPC_BODY_INDENT = 2;
 const BODY_ENCODING = "utf8";
 const CONTENT_TYPE_HEADER = "content-type";
+/** HTTP has no trailing metadata; named so the empty array reads as a statement. */
+const NO_TRAILERS: HeaderPairs = [];
 const TLS_SCHEME = "grpcs";
 const PLAIN_SCHEME = "grpc";
 /** Stands in for a request body that is not text, so no viewer tries to show it. */
@@ -316,6 +318,14 @@ interface RequestEvents {
    * will never look at it is exactly the cost this whole seam exists to avoid.
    */
   body: (produce: () => BodySource) => void;
+  /**
+   * Emitted instead of `body` when there is nothing to inspect: a non-`OK` gRPC
+   * status, an HTTP request that never got a response, or a request preman could
+   * not build in the first place. A 4xx or 5xx has a body and gets one, because
+   * that body is the server's own account of the error and this app does not talk
+   * over it.
+   */
+  failure: (stage: FailureStage, message: string, details: string[], trailers: HeaderPairs) => void;
   end: (exitCode: ExitCode, returnCode?: string) => void;
   /** Handed to the sandbox so logs, tests and side requests stream out one at a time. */
   observer: ScriptObserver | undefined;
@@ -326,6 +336,7 @@ const NO_REQUEST_EVENTS: RequestEvents = {
   sent: () => undefined,
   head: () => undefined,
   body: () => undefined,
+  failure: () => undefined,
   end: () => undefined,
   observer: undefined,
 };
@@ -347,6 +358,8 @@ function requestEvents(options: Pick<RunOptions, "sink" | "bodies" | "workspace"
       const { bytes, contentType } = produce();
       sink.emit({ type: "response-body", runId, nodeId, ...bodies.publish(bytes, contentType) });
     },
+    failure: (stage, message, details, trailers) =>
+      sink.emit({ type: "response-failure", runId, nodeId, stage, message, details, trailers }),
     end: (exitCode, returnCode) =>
       sink.emit({
         type: "request-end",
@@ -470,7 +483,11 @@ export async function runRequest(options: RunOptions): Promise<RunOutcome> {
     events.end(outcome.exitCode, outcome.protocol === "grpc" ? outcome.returnCode : undefined);
     return outcome;
   } catch (cause) {
-    // The throw still propagates; the event is so a live list can close the row.
+    // The throw still propagates and the CLI prints this on the way out. A window has
+    // no such exit path: without the failure event it would show an exit code and no
+    // reason, which is the same dead end as a transport failure with no message.
+    const info = toErrorInfo(cause);
+    events.failure("build", info.message, info.details, NO_TRAILERS);
     events.end(EXIT.CLI);
     throw cause;
   }
@@ -587,7 +604,8 @@ async function runGrpcRequest(
     tlsCerts: options.tlsCerts,
   });
   freezeRequest(liveRequest);
-  // Metadata only: trailers arrive after the message, and the batch outcome carries them.
+  // Metadata only: trailers arrive after the message, and on a success the batch
+  // outcome is the only thing that carries them.
   events.head(invoke.codeName, flattenHeaders(invoke.metadata), { durationMs: invoke.durationMs });
   if (invoke.ok) {
     // gRPC returns a decoded message, not bytes; the viewer wants the JSON it would
@@ -596,6 +614,10 @@ async function runGrpcRequest(
       bytes: Buffer.from(JSON.stringify(invoke.response, null, GRPC_BODY_INDENT), BODY_ENCODING),
       contentType: GRPC_CONTENT_TYPE,
     }));
+  } else {
+    // A rejection is where servers attach structured detail, so unlike a success
+    // this path does put the trailers on the wire.
+    events.failure("transport", invoke.message, invoke.warnings, flattenHeaders(invoke.trailers));
   }
 
   // 4. Post-response scripts, where the `pm.test` assertions live.
@@ -721,6 +743,11 @@ async function runHttpRequest(
       bytes: Buffer.from(invoke.body, BODY_ENCODING),
       contentType: contentTypeOf(invoke.headers),
     }));
+  } else {
+    // No status, no headers, no body: the socket is all there is to report. A 4xx or
+    // 5xx does not come through here, because it has a body and the body is the
+    // server's own account of the error.
+    events.failure("transport", invoke.message, invoke.warnings, NO_TRAILERS);
   }
 
   // 4. Post-response scripts see the same request object, now read-only.

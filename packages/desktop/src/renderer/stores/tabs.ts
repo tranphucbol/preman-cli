@@ -14,6 +14,7 @@ import { create } from "zustand";
 import type { DocumentKind, EngineError, FieldEdit, NodeDocument } from "@preman/desktop/engine/protocol.js";
 
 const NO_ACTIVE = null;
+const NO_SCRIPT_PHASE = null;
 
 /**
  * Every editor sub-tab id in the app. gRPC and HTTP show different subsets of these.
@@ -37,6 +38,15 @@ export interface Tab {
   readonly title: string;
   readonly kind: DocumentKind;
   readonly subTab: SubTab;
+  /**
+   * Which script phase the Scripts sub-tab is showing, or null before one was picked.
+   *
+   * A `string` rather than a union because the phases a request has depend on whether it is gRPC
+   * or HTTP, and that is not known when the tab opens - only once the document has loaded. The
+   * pane resolves this against the slots it actually has and falls back to the first, so a stale
+   * phase from the other protocol selects nothing rather than blanking the editor.
+   */
+  readonly scriptPhase: string | null;
   /** The document as the engine last read it, or null while loading. */
   readonly saved: NodeDocument | null;
   /** Field edits not yet written. Upserted by path, so retyping one cell does not grow this. */
@@ -80,6 +90,7 @@ export interface TabsState {
   close: (nodeId: string) => void;
   activate: (nodeId: string) => void;
   setSubTab: (nodeId: string, subTab: SubTab) => void;
+  setScriptPhase: (nodeId: string, scriptPhase: string) => void;
   /** Install the document the engine read, clearing loading and any previous error. */
   loaded: (nodeId: string, document: NodeDocument) => void;
   failed: (nodeId: string, error: EngineError) => void;
@@ -127,6 +138,7 @@ export const useTabsStore = create<TabsState>((set) => ({
         title: node.name,
         kind: node.kind,
         subTab: DEFAULT_SUB_TAB,
+        scriptPhase: NO_SCRIPT_PHASE,
         saved: null,
         edits: [],
         text: null,
@@ -158,6 +170,10 @@ export const useTabsStore = create<TabsState>((set) => ({
 
   setSubTab(nodeId, subTab) {
     set((state) => patch(state, nodeId, { subTab }));
+  },
+
+  setScriptPhase(nodeId, scriptPhase) {
+    set((state) => patch(state, nodeId, { scriptPhase }));
   },
 
   loaded(nodeId, document) {

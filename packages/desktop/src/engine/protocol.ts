@@ -8,7 +8,7 @@
  */
 import type { BodyHead, BodyMatch, BodyWindow } from "@preman/core/api/bodies.js";
 import type { Catalog, CatalogNode, CatalogNodeKind, CatalogProtocol } from "@preman/core/api/catalog.js";
-import type { RunEvent } from "@preman/core/api/events.js";
+import type { FailureStage, RunEvent } from "@preman/core/api/events.js";
 import type { SnapshotEnvironment } from "@preman/core/api/inspect.js";
 import type { GitFileStatus, GitStatus } from "@preman/core/api/git.js";
 import type { GrepMatch, GrepResult } from "@preman/core/api/grep.js";
@@ -26,6 +26,7 @@ export type {
   CatalogNodeKind,
   CatalogProtocol,
   ExitCode,
+  FailureStage,
   FieldEdit,
   GitFileStatus,
   GitStatus,

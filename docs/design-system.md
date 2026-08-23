@@ -25,7 +25,7 @@ Two heights, and a control belongs to a tier by what it is for, never by where i
 | ----------- | ---------------------- | ------ | --------------------------------------------------------- |
 | **content** | `--spacing-control-lg` | 30px   | `Button` primary/neutral/danger, `Field`, `Select`        |
 | **chrome**  | `--spacing-control`    | 26px   | `Button` quiet, `IconButton` (`size-control`), menu items |
-| **row**     | `--spacing-row`        | 28px   | `CellField`, and every virtualized list row               |
+| **row**     | `--spacing-row`        | 28px   | `CellField`, every virtualized list row, the phase rail   |
 
 Content tier is the thing you came to the pane to operate: the URL, the method, Send. Chrome tier
 is everything that acts on the pane rather than being it: toolbars, menus, icon affordances.
@@ -82,6 +82,15 @@ because TanStack Virtual needs the number, not the class.
 The two that are not 28 are not drift: both hold more than one line. A new list that holds one line
 uses 28 and mirrors `--spacing-row`.
 
+## Vertical selection lists
+
+A vertical list with one current entry takes the **row** tier and the sidebar's paint —
+`bg-selected` for the current one, `bg-hover` under the pointer — and not the horizontal sub-tab's
+accent underline. The Scripts phase rail (`ScriptsPane` in `RequestEditor.tsx`) is a Radix tab list
+and still follows this rule, because it is read as a list. Two visual languages for "this is the
+current one" inside one pane is the confusion; picking by orientation rather than by widget is what
+stops it.
+
 ## Ink and surfaces
 
 Five surfaces, darkest to lightest, and each has one job.
@@ -133,6 +142,58 @@ obvious next thing and it should not be invented at 10 by hand.
 Tooltips clear menus because a tooltip explaining a menu item has to. The drag preview sits _below_
 menus because the two are never on screen at once: a drag begins on pointer-down, which closes any
 open menu.
+
+## Saying something went wrong
+
+Three things, and they are not interchangeable.
+
+| Shape                | Component                   | For                                                                       |
+| -------------------- | --------------------------- | ------------------------------------------------------------------------- |
+| a strip above a pane | `ui/Banner.tsx`             | this pane is usable but something is off: a stale file, a run that failed |
+| the pane's content   | `panes/ResponseFailure.tsx` | there is nothing to show, and why there is nothing is the information     |
+| one faint line       | a local `Hint`              | there is nothing to show and that is unremarkable: no cookies, no tests   |
+
+`Banner` is `border-{tone}/40 bg-{tone}/10` with a `WarningIcon`, chrome tier, `px-gutter py-1.5`,
+and only two tones: `danger` and `warn`. `ok` and `neutral` do not warrant a bar. It takes either a
+`detail` beside the message — monospace and truncated, so an id or a path — or `details` below it,
+one prose line each, which is what a `PremanError` carries. It exists because four panes wanted it
+and three had already written their own with three different class strings.
+
+A failure that fills a pane is centred in `max-w-lg`: a 24px mark, the headline with its status tag
+beside it, one line of guidance, then the server's own words verbatim in a
+`rounded-sm border-danger/30 bg-danger/10` block, with any `PremanError` details inside that same
+block below a hairline rather than floating under it. The block's own text stays left-aligned — it
+is parsed character by character, not read.
+
+Centre it with `m-auto` on the child, never `items-center` on the scroll container. A
+cross-axis-centred flex child in `overflow-auto` has a top that cannot be scrolled back to, so a
+failure with its trailers open would lose its own headline. Auto margins absorb free space when
+there is some and collapse to zero when there is not, which is the same composition without the
+trap. The block is `select-text`, which is a
+deliberate exception to the app-wide `select-none` in `app.css`: it is the one string the reader
+wants in their clipboard. Trailers go in a collapsed native `<details>` — most of what a server
+attaches to a rejection is `date` and `content-type`, and five rows of that bury the one line that
+matters. No illustration — at these sizes a drawing pushes the informative line below the fold, and
+it would be the same drawing for every failure.
+
+## Statuses wear one tag
+
+`ui/StatusTag.tsx` paints every response status, both transports, in both the response summary and
+the failure block: `rounded-sm px-1.5 py-px font-mono text-2xs` over `toneTagClass(statusTone(…))`.
+
+The tone is graded, and the grading is not ours: `statusTone` maps each gRPC code name through the
+canonical `google/rpc/code.proto` HTTP equivalent, so everything that is a 4xx reads `warn` and
+everything that is a 5xx reads `danger`. `NOT_FOUND` and `404` are therefore the same colour,
+because they are the same event. A code name this build does not know reads `danger`, since an
+unrecognised status is no evidence that the caller can fix it.
+
+The filled pairs are audited like every other: `ok` 6.72:1, `warn` 7.52:1, `danger` 5.97:1 on their
+own `/10` tint over `--color-panel`, and `neutral` 7.26:1 on `--color-control` — a grey tint on a
+grey surface is a smudge, not a tag.
+
+What the tag grades is the status. What surrounds it does not: the mark and the report block in
+`ResponseFailure` stay `danger` whatever the code, because that pane only renders when nothing came
+back, so its tone is a constant and carries no information.
 
 ## The sidebar column invariant
 

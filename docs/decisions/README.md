@@ -26,8 +26,9 @@ These are the decisions behind the desktop app. The CLI predates the practice.
 | [016](016-the-performance-budget-is-asserted.md)                 | The performance budget is an assertion, not an aspiration            |
 | [017](017-interaction-budgets-measure-blocking-at-the-median.md) | Interaction budgets measure blocking time, attributed, at the median |
 | [018](018-what-goes-in-the-packaged-bundle.md)                   | What goes in the packaged bundle                                     |
+| [019](019-the-failure-crosses-the-wire.md)                       | The failure crosses the wire                                         |
 
-001-015 were taken before implementation began. 016-018 were taken during it, and 017 in particular
+001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased.
 
 `TEMPLATE.md` is the shape of a new one.

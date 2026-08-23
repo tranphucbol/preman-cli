@@ -60,9 +60,9 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
     app.css                      the tokens and their why; docs/design-system.md picks between them
     stores/                      catalog, tabs, runs, session - one file per subscription surface
     model/                       pure, no React: request fields, drop plans, body windows, responses
-    ui/                          cn, icons, Menu, Controls, Dialog, CodeEditor
+    ui/                          cn, icons, Menu, Controls, Banner, Dialog, CodeEditor
     panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid, ResponsePane,
-                                 BodyViewer, ConsoleDrawer
+                                 BodyViewer, ResponseFailure, ConsoleDrawer
   resources/                     the app icon; macOS masks nothing, so the rounding is in the art
     generate.swift               icon.source.png -> icon.png on Apple's grid; regenerate by hand
   electron-builder.yml           packs the built dist/ into release/; compiles nothing

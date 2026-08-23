@@ -23,7 +23,6 @@ import {
   NO_BODY,
   type Pair,
   type PairList,
-  type ScriptSlot,
   edit,
   editPairAdded,
   editPairEnabled,
@@ -70,6 +69,7 @@ import {
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
+import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { KeyValueGrid } from "@preman/desktop/renderer/panes/KeyValueGrid.js";
 
@@ -91,6 +91,28 @@ const SUB_TABS: readonly { readonly id: SubTab; readonly label: string }[] = [
 
 const TRIGGER_CLASS =
   "h-tab shrink-0 border-b-2 border-transparent px-2.5 text-xs text-ink-dim hover:text-ink data-[state=active]:border-accent data-[state=active]:text-ink";
+
+/**
+ * What each script phase is called in the interface. The `scripts` entry's `type` is what the file
+ * says and what core matches on; this is only how it is read out loud. `test` is one label for
+ * both protocols because it is the same moment in both.
+ */
+const SCRIPT_LABELS: Record<string, string> = {
+  prerequest: "Pre-request",
+  beforeInvoke: "Before invoke",
+  test: "After response",
+};
+
+/**
+ * The phase rail is a vertical selection list, so it takes the row tier and the sidebar's selected
+ * paint rather than the horizontal sub-tab's underline. Two things claiming to be the current
+ * thing in two different visual languages, a few hundred pixels apart, is the confusion.
+ */
+const PHASE_CLASS =
+  "flex h-row shrink-0 items-center gap-2 px-gutter text-left text-xs text-ink-dim hover:bg-hover hover:text-ink data-[state=active]:bg-selected data-[state=active]:text-ink focus:outline-none";
+
+const FIRST_SLOT = 0;
+const EMPTY_SCRIPT = "";
 
 export interface RequestEditorProps {
   readonly tab: Tab;
@@ -259,7 +281,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
         </Pane>
 
         <Pane value="scripts">
-          <ScriptsPane data={data} grpc={grpc} apply={apply} />
+          <ScriptsPane tab={tab} data={data} grpc={grpc} apply={apply} />
         </Pane>
 
         <Pane value="settings">
@@ -760,38 +782,71 @@ function rebase(change: FieldEdit, path: readonly string[]): FieldEdit {
   return { path: [...path, ...change.path.slice(1)], value: change.value };
 }
 
-function ScriptsPane({ data, grpc, apply }: { readonly data: unknown; readonly grpc: boolean; readonly apply: Apply }) {
-  const slots = readScripts(data, grpc ? GRPC_SCRIPT_TYPES : HTTP_SCRIPT_TYPES);
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {slots.map((slot) => (
-        <ScriptSlotPane key={slot.type} slot={slot} data={data} apply={apply} />
-      ))}
-    </div>
-  );
-}
-
-function ScriptSlotPane({
-  slot,
+/**
+ * The phases down the side, one editor beside them.
+ *
+ * Showing both phases at once split the height between two editors that were each too short to
+ * hold a test. A request is written one phase at a time, so only one of them needs the room.
+ *
+ * There is deliberately no `onMessage` row. Core recognises the type (`scripts/chain.ts`) but
+ * preman only invokes unary, so the phase could never fire and the row would be a promise the
+ * app does not keep.
+ */
+function ScriptsPane({
+  tab,
   data,
+  grpc,
   apply,
 }: {
-  readonly slot: ScriptSlot;
+  readonly tab: Tab;
   readonly data: unknown;
+  readonly grpc: boolean;
   readonly apply: Apply;
 }) {
+  const slots = readScripts(data, grpc ? GRPC_SCRIPT_TYPES : HTTP_SCRIPT_TYPES);
+  const first = slots[FIRST_SLOT];
+  if (first === undefined) return <Notice message="This request kind has no script phases." />;
+
+  // A phase remembered from the other protocol names a slot this request does not have, so it is
+  // resolved against the slots rather than trusted, and falls back to the first.
+  const active = slots.find((slot) => slot.type === tab.scriptPhase)?.type ?? first.type;
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <SectionLabel>{slot.type}</SectionLabel>
-      <CodeEditor
-        value={slot.code}
-        language="javascript"
-        placeholder={`pm.test("it works", () => { ... })`}
-        onCommit={(next) => {
-          if (next !== slot.code) apply(editScript(data, slot, next));
-        }}
-      />
-    </div>
+    <Tabs.Root
+      orientation="vertical"
+      value={active}
+      onValueChange={(next) => {
+        useTabsStore.getState().setScriptPhase(tab.nodeId, next);
+      }}
+      className="flex min-h-0 flex-1"
+    >
+      <Tabs.List className="flex w-40 shrink-0 flex-col border-r border-line bg-panel" aria-label="Script phases">
+        {slots.map((slot) => (
+          <Tabs.Trigger key={slot.type} value={slot.type} className={PHASE_CLASS}>
+            <span className="truncate">{SCRIPT_LABELS[slot.type] ?? slot.type}</span>
+            {slot.code.trim() === EMPTY_SCRIPT ? null : (
+              <span className="ml-auto size-1.5 shrink-0 rounded-full bg-ink-faint" role="img" aria-label="has code" />
+            )}
+          </Tabs.Trigger>
+        ))}
+      </Tabs.List>
+
+      {/* One `Content` per phase, so the inactive trigger's `aria-controls` points at something
+          real. Radix mounts only the active one, and `CodeEditor` commits on teardown, so
+          switching phase saves the last thing typed without depending on blur landing first. */}
+      {slots.map((slot) => (
+        <Tabs.Content key={slot.type} value={slot.type} className="flex min-h-0 flex-1 flex-col focus:outline-none">
+          <CodeEditor
+            value={slot.code}
+            language="javascript"
+            placeholder={`pm.test("it works", () => { ... })`}
+            onCommit={(next) => {
+              if (next !== slot.code) apply(editScript(data, slot, next));
+            }}
+          />
+        </Tabs.Content>
+      ))}
+    </Tabs.Root>
   );
 }
 
@@ -912,29 +967,6 @@ function ConflictBanner({ nodeId }: { readonly nodeId: string }) {
           Keep mine
         </Button>
       </div>
-    </div>
-  );
-}
-
-function Banner({
-  tone,
-  message,
-  detail,
-}: {
-  readonly tone: "danger" | "warn";
-  readonly message: string;
-  readonly detail?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex shrink-0 items-center gap-2 border-b px-gutter py-1.5",
-        tone === "danger" ? "border-danger/40 bg-danger/10" : "border-warn/40 bg-warn/10",
-      )}
-    >
-      <WarningIcon className={cn("shrink-0", tone === "danger" ? "text-danger" : "text-warn")} />
-      <span className="text-xs text-ink">{message}</span>
-      {detail === undefined ? null : <span className="truncate font-mono text-2xs text-ink-faint">{detail}</span>}
     </div>
   );
 }

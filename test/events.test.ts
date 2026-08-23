@@ -172,9 +172,82 @@ describe("run events, single request", () => {
 
     await expect(runSelection(args)).rejects.toThrow(/does not support/);
 
-    expect(typesOf(sink.events)).toEqual(["run-start", "request-start", "request-end", "run-end"]);
+    // The failure sits between the two, so the row is never closed with an exit code
+    // and no reason.
+    expect(typesOf(sink.events)).toEqual(["run-start", "request-start", "response-failure", "request-end", "run-end"]);
     expect(firstOf(sink.events, "request-end")?.exitCode).toBe(EXIT.CLI);
     expect(firstOf(sink.events, "run-end")?.exitCode).toBe(EXIT.CLI);
+  });
+});
+
+describe("run events, failures", () => {
+  /** No server is listening on the fixture's LOCAL target, so every gRPC call is UNAVAILABLE. */
+  const DEAD_GRPC = { dir: FIXTURE_WS, env: "LOCAL", timeoutMs: 1_000 } as const;
+
+  it("givenGrpcCallRejected_whenRun_thenResponseFailureCarriesServerMessage", async () => {
+    const sink = collectingSink();
+    await runSelection(selectionArgs("payment/Echo", { ...DEAD_GRPC, sink }));
+
+    const failure = firstOf(sink.events, "response-failure");
+    expect(failure).toBeDefined();
+    expect(failure?.message).not.toBe("");
+    // The status stays on the head, which is what the pane pairs the message with.
+    expect(firstOf(sink.events, "response-head")?.status).toBe("UNAVAILABLE");
+  });
+
+  it("givenGrpcCallRejected_whenRun_thenNoResponseBodyIsEmitted", async () => {
+    const sink = collectingSink();
+    const bodies = new BodyStore();
+    await runSelection(selectionArgs("payment/Echo", { ...DEAD_GRPC, sink, bodies }));
+
+    expect(typesOf(sink.events)).toContain("response-failure");
+    expect(typesOf(sink.events)).not.toContain("response-body");
+  });
+
+  it("givenNoResponseArrives_whenRun_thenResponseFailureCarriesTheSocketMessage", async () => {
+    const sink = collectingSink();
+    // Port 1 is reserved and nothing binds it, so the connection is refused outright.
+    await runSelection(selectionArgs("admin/Profile", { sink, vars: { http_url: "http://127.0.0.1:1", token: "x" } }));
+
+    const failure = firstOf(sink.events, "response-failure");
+    expect(failure?.message).not.toBe("");
+    expect(failure?.trailers).toEqual([]);
+    // Nothing arrived, so there is no status to pair the message with.
+    expect(typesOf(sink.events)).not.toContain("response-head");
+  });
+
+  /**
+   * A 4xx has a body, and that body is the server's own account of the error. Replacing
+   * it with a headline would be this app talking over the server.
+   */
+  it("givenHttpClientError_whenRun_thenNoResponseFailureIsEmittedAndTheBodyStands", async () => {
+    const sink = collectingSink();
+    const bodies = new BodyStore();
+    await runSelection(selectionArgs("admin/Denied", { sink, bodies }));
+
+    expect(typesOf(sink.events)).not.toContain("response-failure");
+    expect(firstOf(sink.events, "response-head")?.status).toBe(401);
+    expect(firstOf(sink.events, "response-body")?.byteLength).toBeGreaterThan(0);
+  });
+
+  /**
+   * The CLI prints a thrown `PremanError` on its way out. A window has no such exit
+   * path, so without this event it shows an exit code and no reason - the same dead
+   * end the transport case had.
+   */
+  it("givenRequestCannotBeBuilt_whenRun_thenResponseFailureCarriesThePremanError", async () => {
+    const sink = collectingSink();
+    // `Legacy Http` is a websocket request, refused out of `parseRequest` before a
+    // target, a socket or a response exists.
+    const args = selectionArgs("payment/Legacy Http", { dir: FIXTURE_WS, env: "LOCAL", sink });
+    await expect(runSelection(args)).rejects.toThrow(/does not support/);
+
+    const failure = firstOf(sink.events, "response-failure");
+    expect(failure?.stage).toBe("build");
+    expect(failure?.message).toMatch(/does not support/);
+    // Nothing was sent, so there is neither a status nor trailers to pair it with.
+    expect(typesOf(sink.events)).not.toContain("response-head");
+    expect(failure?.trailers).toEqual([]);
   });
 });
 
