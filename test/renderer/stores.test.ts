@@ -39,7 +39,7 @@ import {
 } from "@preman/desktop/renderer/persist.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
-import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
+import { CONSOLE_MAX_LINES, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { applyExternalChange, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 
@@ -664,6 +664,127 @@ describe("what the collection runner reads off a run", () => {
     expect(run?.cancelled).toBe(true);
     expect(run?.warnings).toStrictEqual([RUN_WARNING]);
     expect(useRunsStore.getState().requests.get(`${PING_ID}#0`)?.status).toBe("done");
+  });
+});
+
+/**
+ * The console's three streams. The call is the one that has to be a reference rather than a
+ * copy: it mutates three times - sent, head, body - and copying it into the stream would
+ * replace the array on every response event and re-run the merge over every row in the run.
+ */
+describe("what the console reads off a run", () => {
+  beforeEach(resetStores);
+  afterEach(resetStores);
+
+  function apply(event: RunEvent): void {
+    useRunsStore.getState().apply(event);
+  }
+
+  function started(nodeId: string, iteration = FIRST_ITERATION): void {
+    apply({ type: "run-start", runId: RUN_ID, total: ITERATED_TOTAL });
+    apply({ type: "request-start", runId: RUN_ID, nodeId, name: nodeId, iteration });
+  }
+
+  function sent(nodeId: string): RunEvent {
+    return {
+      type: "request-sent",
+      runId: RUN_ID,
+      nodeId,
+      target: `POST https://api.example/${nodeId}`,
+      sent: { protocol: "http", method: "POST", url: "https://api.example/", headers: [], body: undefined },
+    };
+  }
+
+  function logged(text: string, nodeId: string): RunEvent {
+    return {
+      type: "console",
+      runId: RUN_ID,
+      nodeId,
+      line: { level: "log", text, origin: { level: "request", label: "request" } },
+    };
+  }
+
+  it("givenRequestSentEvent_whenApplied_thenACallEntryIsAppended", () => {
+    started(PING_ID);
+    apply(sent(PING_ID));
+
+    const key = `${PING_ID}#${String(FIRST_ITERATION)}`;
+    expect(useRunsStore.getState().calls).toStrictEqual([{ runId: RUN_ID, nodeId: PING_ID, seq: 0, itemKey: key }]);
+    // A reference, not a copy: the row reads the live item, which is how it repaints as the
+    // response lands without the console stream being rebuilt.
+    expect(useRunsStore.getState().requests.get(key)?.sent).toMatchObject({ protocol: "http" });
+  });
+
+  it("givenRequestSentEvent_whenApplied_thenItsSeqInterleavesWithConsoleLines", () => {
+    started(PING_ID);
+    apply(logged("pre-request", PING_ID));
+    apply(sent(PING_ID));
+    apply(logged("post-response", PING_ID));
+
+    const state = useRunsStore.getState();
+    // `request-sent` is the first per-request event to mint a `seq`, and it has to come from
+    // the same counter or the pre-request log would not sort above the call it belongs to.
+    expect(state.console.map((entry) => entry.seq)).toStrictEqual([0, 2]);
+    expect(state.calls.map((entry) => entry.seq)).toStrictEqual([1]);
+  });
+
+  it("givenMoreCallsThanTheCap_whenApplied_thenTheOldestAreDropped", () => {
+    const overflow = 5;
+    apply({ type: "run-start", runId: RUN_ID, total: ITERATED_TOTAL });
+    for (let index = 0; index < CONSOLE_MAX_LINES + overflow; index += 1) {
+      const nodeId = `${PING_ID}/${String(index)}`;
+      apply({ type: "request-start", runId: RUN_ID, nodeId, name: nodeId, iteration: FIRST_ITERATION });
+      apply(sent(nodeId));
+    }
+
+    // `calls` needs its own cap: a run that logs nothing would never trip the console's.
+    const calls = useRunsStore.getState().calls;
+    expect(calls).toHaveLength(CONSOLE_MAX_LINES);
+    expect(calls[0]?.nodeId).toBe(`${PING_ID}/${String(overflow)}`);
+  });
+
+  it("givenExpandedCall_whenToggled_thenItCollapses", () => {
+    started(PING_ID);
+    apply(sent(PING_ID));
+    const key = `${PING_ID}#${String(FIRST_ITERATION)}`;
+
+    // Expansion lives in the store because the virtualizer unmounts off-screen rows, so
+    // row-local state would silently collapse on scroll.
+    useRunsStore.getState().toggleCall(key);
+    expect(useRunsStore.getState().expandedCalls.has(key)).toBe(true);
+
+    useRunsStore.getState().toggleCall(key);
+    expect(useRunsStore.getState().expandedCalls.has(key)).toBe(false);
+  });
+
+  it("givenExpandedCallsAndLogs_whenConsoleCleared_thenAllThreeStreamsAreEmpty", () => {
+    started(PING_ID);
+    apply(logged("something", PING_ID));
+    apply(sent(PING_ID));
+    apply({
+      type: "side-request",
+      runId: RUN_ID,
+      nodeId: PING_ID,
+      summary: {
+        method: "POST",
+        url: "https://auth.example/token",
+        statusCode: 200,
+        statusMessage: "OK",
+        message: "",
+        ok: true,
+        durationMs: 12,
+      },
+    });
+    useRunsStore.getState().toggleCall(`${PING_ID}#${String(FIRST_ITERATION)}`);
+
+    useRunsStore.getState().clearConsole();
+
+    // Missing any one of these is how a cleared console comes back on the next repaint.
+    const state = useRunsStore.getState();
+    expect(state.console).toStrictEqual([]);
+    expect(state.sideRequests).toStrictEqual([]);
+    expect(state.calls).toStrictEqual([]);
+    expect(state.expandedCalls.size).toBe(0);
   });
 });
 

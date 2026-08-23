@@ -145,6 +145,10 @@ bun run desktop          # build the app and launch it
 bun run desktop:package  # build, then wrap it into packages/desktop/release
 ```
 
+The console drawer logs every call the app makes, not only what the scripts said: each request
+appears where it happened, with the logs and `pm.sendRequest` calls it caused indented under it, and
+expands to show what was sent and what came back.
+
 Window bounds, open tabs, and unsaved drafts live in Electron's `userData`, never in the workspace,
 so `git status` stays clean while the app is open. Packaging targets are configured for macOS in
 `packages/desktop/electron-builder.yml`.

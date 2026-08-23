@@ -23,6 +23,7 @@ import {
   testTotals,
   toneClass,
   type HeaderPairs,
+  type SentRequest,
   type TestResult,
 } from "@preman/desktop/renderer/model/response.js";
 import { formatBytes } from "@preman/desktop/renderer/model/body.js";
@@ -275,7 +276,15 @@ function Entry({ label, children }: { readonly label: string; readonly children:
   );
 }
 
-function sentText(sent: unknown): string {
-  if (sent === undefined) return NOTHING_SENT;
-  return JSON.stringify(sent, null, JSON_INDENT) ?? NOTHING_SENT;
+/**
+ * The payload, not the envelope. `protocol` is a discriminator for whoever reads the event;
+ * dumping it here would put a key in the Request tab that was never sent.
+ */
+function sentText(sent: SentRequest | null): string {
+  if (sent === null) return NOTHING_SENT;
+  const payload =
+    sent.protocol === "grpc"
+      ? sent.message
+      : { method: sent.method, url: sent.url, headers: sent.headers, body: sent.body };
+  return JSON.stringify(payload, null, JSON_INDENT) ?? NOTHING_SENT;
 }

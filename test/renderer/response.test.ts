@@ -33,6 +33,10 @@ import {
   type BodyView,
 } from "@preman/desktop/renderer/model/body.js";
 import {
+  CONSOLE_BODY_CHARS,
+  CONSOLE_BODY_LINES,
+  callStatus,
+  clampBody,
   exitLabel,
   exitTone,
   failureCopy,
@@ -41,6 +45,7 @@ import {
   parseSetCookie,
   statusTone,
   testTotals,
+  type ConsoleRow,
 } from "@preman/desktop/renderer/model/response.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 
@@ -261,18 +266,99 @@ describe("what the response pane reads off a run", () => {
     store.apply(sideRequest());
     store.apply(logged("after"));
 
-    const state = useRunsStore.getState();
-    const rows = mergeConsole(state.console, state.sideRequests);
+    const rows = merged();
 
     // A `pm.sendRequest` has to appear between the log before it and the log after it. Two
     // separate lists would put it at the end, where it explains nothing.
-    expect(rows.map((row) => (row.kind === "line" ? row.line.text : row.summary.url))).toEqual([
-      "before",
-      "https://auth.example/token",
-      "after",
-    ]);
+    expect(rows.map(labelOf)).toEqual(["before", "https://auth.example/token", "after"]);
     expect(rows.map((row) => row.seq)).toEqual([...rows].sort((left, right) => left.seq - right.seq).map((r) => r.seq));
     store.clear();
+  });
+
+  it("givenLogsAndCallsAndSideRequests_whenMerged_thenRowsAreInSeqOrder", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+
+    store.apply(logged("pre-request"));
+    store.apply(requestSent());
+    store.apply(sideRequest());
+    store.apply(logged("post-response"));
+
+    // The call takes its place at `request-sent`, so the pre-request log sorts above it and
+    // everything it caused sorts below it. That is the causal order, and the only reason a
+    // five-request run reads as five things rather than one flat stream.
+    expect(merged().map(labelOf)).toEqual([
+      "pre-request",
+      `${PING_ID}#${String(FIRST_ITERATION)}`,
+      "https://auth.example/token",
+      "post-response",
+    ]);
+    store.clear();
+  });
+
+  it("givenOnlyCalls_whenMerged_thenEveryCallIsARow", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    store.apply(requestSent());
+
+    const rows = merged();
+
+    expect(rows).toHaveLength(ONE_REQUEST);
+    expect(rows[0]?.kind).toBe("call");
+    store.clear();
+  });
+
+  it("givenTwoStreamsEmpty_whenMerged_thenTheThirdIsReturnedWhole", () => {
+    const lines = [
+      { runId: RUN_ID, nodeId: PING_ID, seq: 0, line: logLine("one") },
+      { runId: RUN_ID, nodeId: PING_ID, seq: 1, line: logLine("two") },
+    ];
+
+    // The merge exhausts two of its three fingers immediately, which is the case a naive
+    // three-way comparison drops rows in.
+    expect(mergeConsole(lines, [], []).map(labelOf)).toEqual(["one", "two"]);
+    expect(mergeConsole([], [], [])).toEqual([]);
+  });
+
+  it("givenShortBody_whenClamped_thenNothingIsTrimmed", () => {
+    const clamped = clampBody(SMALL_BODY);
+
+    expect(clamped.text).toBe(SMALL_BODY);
+    expect(clamped.clamped).toBe(false);
+    expect(clamped.totalLines).toBe(ONE_REQUEST);
+    // An empty body renders no section at all, so it reports no lines rather than one.
+    expect(clampBody("")).toMatchObject({ totalLines: 0, clamped: false });
+  });
+
+  it("givenManyLines_whenClamped_thenTheLineCapApplies", () => {
+    const total = CONSOLE_BODY_LINES * 4;
+    const clamped = clampBody(Array.from({ length: total }, (_, index) => `line ${String(index)}`).join("\n"));
+
+    expect(clamped.shownLines).toBe(CONSOLE_BODY_LINES);
+    expect(clamped.totalLines).toBe(total);
+    expect(clamped.clamped).toBe(true);
+  });
+
+  it("givenOneLongLine_whenClamped_thenTheCharacterCapApplies", () => {
+    // A minified JSON response is one line of a quarter of a megabyte, so a line cap alone
+    // would let the whole thing into a 28px row.
+    const clamped = clampBody("x".repeat(CONSOLE_BODY_CHARS * 4));
+
+    expect(clamped.text).toHaveLength(CONSOLE_BODY_CHARS);
+    expect(clamped.totalLines).toBe(ONE_REQUEST);
+    expect(clamped.shownLines).toBe(ONE_REQUEST);
+    expect(clamped.clamped).toBe(true);
+  });
+
+  it("givenNoResponse_whenCallStatus_thenNullIsReturned", () => {
+    // `0` in the status column would read as a status rather than as the absence of one.
+    expect(callStatus(null)).toBeNull();
+    expect(callStatus({ status: 200, headers: [], timings: { durationMs: 1 } })).toBe("200");
+    expect(callStatus({ status: "OK", headers: [], timings: { durationMs: 1 } })).toBe("OK");
   });
 
   it("givenResponseFailureEvent_whenApplied_thenTheItemHoldsIt", () => {
@@ -439,12 +525,39 @@ function assertion(index: number): RunEvent {
   };
 }
 
+/** The three streams as the drawer reads them: whatever is in the store, merged. */
+function merged(): ConsoleRow[] {
+  const state = useRunsStore.getState();
+  return mergeConsole(state.console, state.sideRequests, state.calls);
+}
+
+/** One string per row, whichever kind it is, so a merge assertion reads as an order. */
+function labelOf(row: ConsoleRow): string {
+  if (row.kind === "line") return row.line.text;
+  if (row.kind === "side-request") return row.summary.url;
+  return row.itemKey;
+}
+
+function logLine(text: string) {
+  return { level: "log", text, origin: { level: "request", label: "request" } } as const;
+}
+
 function logged(text: string): RunEvent {
+  return { type: "console", runId: RUN_ID, nodeId: PING_ID, line: logLine(text) };
+}
+
+function requestSent(): RunEvent {
   return {
-    type: "console",
+    type: "request-sent",
     runId: RUN_ID,
     nodeId: PING_ID,
-    line: { level: "log", text, origin: { level: "request", label: "request" } },
+    target: "grpcs://localhost:443/test.echo.EchoService.Echo",
+    sent: {
+      protocol: "grpc",
+      methodPath: "test.echo.EchoService.Echo",
+      metadata: [["x-request-id", "abc"]],
+      message: { text: "hi" },
+    },
   };
 }
 

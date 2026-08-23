@@ -17,6 +17,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { buildCatalog } from "@preman/core/api/catalog.js";
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
+import { mergeConsole } from "@preman/desktop/renderer/model/response.js";
 import { writeBigWorkspace, type GeneratedWorkspace } from "./support/big-workspace.js";
 
 /** The workspace that drove the plan: 43 requests across nine collections. */
@@ -32,6 +33,14 @@ const WARM_SWITCH_BUDGET_MS = 100;
  */
 const ATTEMPTS = 3;
 const FIRST_ID = 1;
+/** `CONSOLE_MAX_LINES` in each of the three streams: the most the drawer can ever hold. */
+const MERGE_ROWS = 5000;
+const MERGE_STREAMS = 3;
+const MERGE_BUDGET_MS = 10;
+const NODE_ID = "postman/collections/payment/Ping.request.yaml";
+const RUN_ID = "run-1";
+/** The three stream shapes, taken off the function rather than restated beside it. */
+type MergeArgs = Parameters<typeof mergeConsole>;
 
 let generated: GeneratedWorkspace | undefined;
 let hosts: EngineHost[] = [];
@@ -81,6 +90,49 @@ describe("buildCatalog budget", () => {
 
     const elapsed = await best(() => buildCatalog(root));
     expect(elapsed).toBeLessThanOrEqual(BIG_WORKSPACE_BUDGET_MS);
+  });
+});
+
+/**
+ * The drawer re-derives its rows on every console event, so this runs thousands of times in a
+ * long run. It is a three-finger merge rather than a concat and a sort for exactly that reason,
+ * and this is the case that fails if somebody replaces it with the obvious one-liner.
+ */
+describe("console merge budget", () => {
+  it("givenFiveThousandRowsInThreeStreams_whenMerged_thenItStaysWithinBudget", async () => {
+    // Round-robin seqs, so no finger is ever exhausted early and every comparison is paid for.
+    const lines: MergeArgs[0] = Array.from({ length: MERGE_ROWS }, (_, index) => ({
+      runId: RUN_ID,
+      nodeId: NODE_ID,
+      seq: index * MERGE_STREAMS,
+      line: { level: "log", text: `line ${String(index)}`, origin: { level: "request", label: "request" } },
+    }));
+    const sideRequests: MergeArgs[1] = Array.from({ length: MERGE_ROWS }, (_, index) => ({
+      runId: RUN_ID,
+      nodeId: NODE_ID,
+      seq: index * MERGE_STREAMS + 1,
+      summary: {
+        method: "POST",
+        url: "https://auth.example/token",
+        statusCode: 200,
+        statusMessage: "OK",
+        message: "",
+        ok: true,
+        durationMs: 12,
+      },
+    }));
+    const calls: MergeArgs[2] = Array.from({ length: MERGE_ROWS }, (_, index) => ({
+      runId: RUN_ID,
+      nodeId: NODE_ID,
+      seq: index * MERGE_STREAMS + 2,
+      itemKey: `${NODE_ID}#${String(index)}`,
+    }));
+
+    const rows = mergeConsole(lines, sideRequests, calls);
+    expect(rows).toHaveLength(MERGE_ROWS * MERGE_STREAMS);
+
+    const elapsed = await best(() => Promise.resolve(mergeConsole(lines, sideRequests, calls)));
+    expect(elapsed).toBeLessThanOrEqual(MERGE_BUDGET_MS);
   });
 });
 

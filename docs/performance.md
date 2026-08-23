@@ -27,6 +27,7 @@ a built `packages/desktop/dist` and, today, macOS: it finds the Electron binary 
 | `buildCatalog`, 43 requests                       | ≤ 50ms          | `test/perf.test.ts`              |
 | `buildCatalog`, 1000 requests                     | ≤ 400ms         | `test/perf.test.ts`              |
 | workspace switch, host already warm               | ≤ 100ms         | `test/perf.test.ts`              |
+| console merge, 5000 rows in each of three streams | ≤ 10ms          | `test/perf.test.ts`              |
 | sidebar scroll, 5000 nodes                        | sustained 60fps | `test/renderer/perf.app.test.ts` |
 | total idle RSS, all processes, one workspace open | ≤ 250MB\*       | `test/renderer/perf.app.test.ts` |
 | tab switch                                        | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
@@ -80,6 +81,17 @@ work actually performed — a median on a shared CI runner measures the other te
 The warm-switch case drives `createEngineHost` directly and asks for the catalog twice. The host
 holds its catalog, so the second answer should cost one message and nothing else. This is the case
 that fails the moment somebody makes `ensureCatalog` re-read the disk.
+
+### The console merge, ≤ 10ms
+
+`mergeConsole` folds script logs, `pm.sendRequest` summaries and main calls into one `seq`-ordered
+list, and the drawer re-derives it on every console event — thousands of times in a long run. The
+case builds `CONSOLE_MAX_LINES` rows in each of the three streams with round-robin `seq`s, so no
+finger is exhausted early and every comparison is paid for, and merges 15,000 rows. It measures
+around 2ms on the development machine; the budget is set at 10ms because what it is really guarding
+is the shape of the function. It is a three-finger merge over three already-sorted inputs, and the
+obvious one-liner — concat and sort — is O(n log n) per log line and would blow this by an order of
+magnitude while still looking correct.
 
 ### Sidebar scroll, "sustained 60fps"
 

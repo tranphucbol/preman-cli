@@ -90,6 +90,12 @@ The two that are not `row` are not drift: both hold more than one line, and both
 arithmetic on `row` rather than as a second constant. A new list that holds one line reads
 `row` directly.
 
+The Console is the one whose height is an estimate rather than a fact. A collapsed row is `row`,
+and an expanded call row holds the request and response it logged — many lines of it. That is why
+every row in the drawer carries `measureElement`: `estimateSize` places the row and the measurement
+corrects it, so a list of mostly-collapsed rows still scrolls off the estimate. A list whose rows
+are all one line does not need the ref and should not carry it.
+
 A virtualized list has one more obligation: `useRemeasure(virtualizer, rowHeight)` from
 `stores/appearance.ts`. TanStack caches measurements, so a changed `estimateSize` closure alone
 leaves the list at the old height until something else invalidates it.

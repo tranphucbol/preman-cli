@@ -17,6 +17,8 @@ export type ConsoleLevel = ConsoleLine["level"];
 export type TestResult = Extract<RunEvent, { type: "test" }>["result"];
 export type TestStatus = TestResult["status"];
 export type SideRequestSummary = Extract<RunEvent, { type: "side-request" }>["summary"];
+/** What the runner actually put on the wire, discriminated by protocol. */
+export type SentRequest = Extract<RunEvent, { type: "request-sent" }>["sent"];
 export type ResponseHead = Omit<Extract<RunEvent, { type: "response-head" }>, "type" | "runId" | "nodeId">;
 export type ResponseBody = Omit<Extract<RunEvent, { type: "response-body" }>, "type" | "runId" | "nodeId">;
 export type ResponseFailure = Omit<Extract<RunEvent, { type: "response-failure" }>, "type" | "runId" | "nodeId">;
@@ -413,9 +415,11 @@ function parseOneCookie(header: string): CookieRow | null {
 }
 
 /**
- * One line of the console drawer. `side-request` rows are interleaved rather than kept in
- * their own list so that a `pm.sendRequest` appears where it happened - between the log
- * before it and the log after it - which is the only ordering that explains anything.
+ * One line of the console drawer. `side-request` and `call` rows are interleaved with the
+ * logs rather than kept in their own lists so that a `pm.sendRequest` appears where it
+ * happened - between the log before it and the log after it - which is the only ordering
+ * that explains anything. A main call is the same argument applied to the thing that caused
+ * them: without it, a five-request run is one flat stream with nothing to divide it.
  */
 export type ConsoleRow =
   | {
@@ -431,6 +435,14 @@ export type ConsoleRow =
       readonly runId: string;
       readonly nodeId: string;
       readonly summary: SideRequestSummary;
+    }
+  | {
+      readonly kind: "call";
+      readonly seq: number;
+      readonly runId: string;
+      readonly nodeId: string;
+      /** Key into the store's `requests`; the row reads the live item itself. */
+      readonly itemKey: string;
     };
 
 /** Only the fields the merge needs, so this stays independent of `stores/runs.ts`. */
@@ -440,29 +452,41 @@ interface Stamped {
   readonly seq: number;
 }
 
+/** Past every real `seq`, so an exhausted stream never wins a comparison. */
+const NO_SEQ = Number.POSITIVE_INFINITY;
+
 /**
- * Both inputs are appended to in `seq` order, so this is a two-finger merge rather than a
- * concat and sort. The drawer re-derives on every console event, and a sort of 5000 rows
- * per log line is the kind of thing that makes a run feel slow.
+ * All three inputs are appended to in `seq` order, so this is a three-finger merge rather
+ * than a concat and sort. The drawer re-derives on every console event, and a sort of 5000
+ * rows per log line is the kind of thing that makes a run feel slow. A third stream does
+ * not weaken that: it is still one pass over the rows it returns.
  */
 export function mergeConsole(
   lines: readonly (Stamped & { readonly line: ConsoleLine })[],
   sideRequests: readonly (Stamped & { readonly summary: SideRequestSummary })[],
+  calls: readonly (Stamped & { readonly itemKey: string })[],
 ): ConsoleRow[] {
   const rows: ConsoleRow[] = [];
   let left = 0;
+  let middle = 0;
   let right = 0;
-  while (left < lines.length || right < sideRequests.length) {
+  while (left < lines.length || middle < sideRequests.length || right < calls.length) {
     const line = lines[left];
-    const side = sideRequests[right];
-    if (side === undefined || (line !== undefined && line.seq < side.seq)) {
-      if (line === undefined) break;
+    const side = sideRequests[middle];
+    const call = calls[right];
+    const lineSeq = line?.seq ?? NO_SEQ;
+    const sideSeq = side?.seq ?? NO_SEQ;
+    const callSeq = call?.seq ?? NO_SEQ;
+    if (line !== undefined && lineSeq <= sideSeq && lineSeq <= callSeq) {
       rows.push({ kind: "line", seq: line.seq, runId: line.runId, nodeId: line.nodeId, line: line.line });
       left += 1;
-    } else {
+    } else if (side !== undefined && sideSeq <= callSeq) {
       rows.push({ kind: "side-request", seq: side.seq, runId: side.runId, nodeId: side.nodeId, summary: side.summary });
+      middle += 1;
+    } else if (call !== undefined) {
+      rows.push({ kind: "call", seq: call.seq, runId: call.runId, nodeId: call.nodeId, itemKey: call.itemKey });
       right += 1;
-    }
+    } else break;
   }
   return rows;
 }
@@ -498,4 +522,49 @@ export const DURATION_KEY = "durationMs";
 export function durationOf(head: ResponseHead | null): number | null {
   const ms = head?.timings[DURATION_KEY];
   return ms ?? null;
+}
+
+/** Lines of a body a console row will show before it defers to the response pane. */
+export const CONSOLE_BODY_LINES = 12;
+/** And a character cap, because a minified JSON body is one line of a quarter of a megabyte. */
+export const CONSOLE_BODY_CHARS = 2000;
+const NEWLINE = "\n";
+const NO_LINES = 0;
+const TEXT_START = 0;
+const EMPTY_TEXT = "";
+
+export interface ClampedBody {
+  readonly text: string;
+  readonly shownLines: number;
+  readonly totalLines: number;
+  readonly clamped: boolean;
+}
+
+/**
+ * As much of a body as a 28px-collapsed console row is allowed to grow to show.
+ *
+ * Two caps and not one: a line cap alone lets a minified JSON response through as a single
+ * line of a quarter of a megabyte, which is the row that makes the drawer stop scrolling.
+ */
+export function clampBody(text: string): ClampedBody {
+  if (text === EMPTY_TEXT) {
+    return { text: EMPTY_TEXT, shownLines: NO_LINES, totalLines: NO_LINES, clamped: false };
+  }
+  const lines = text.split(NEWLINE);
+  const kept = lines.slice(TEXT_START, CONSOLE_BODY_LINES).join(NEWLINE);
+  const trimmed = kept.length > CONSOLE_BODY_CHARS ? kept.slice(TEXT_START, CONSOLE_BODY_CHARS) : kept;
+  return {
+    text: trimmed,
+    shownLines: trimmed.split(NEWLINE).length,
+    totalLines: lines.length,
+    clamped: trimmed.length < text.length,
+  };
+}
+
+/**
+ * What a call row's status column says. Mirrors `sideRequestStatus`: a call that never got a
+ * response has no code, and `0` there would read as one rather than as the absence of one.
+ */
+export function callStatus(head: ResponseHead | null): string | null {
+  return head === null ? null : statusText(head.status);
 }

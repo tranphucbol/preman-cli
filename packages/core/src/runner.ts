@@ -57,7 +57,13 @@ import { resolveAuth } from "./workspace/inherit.js";
 import { nodeIdFor } from "./workspace/paths.js";
 import type { Resources } from "./workspace/resources.js";
 import type { BodyStore } from "./api/bodies.js";
-import { flattenHeaders, type FailureStage, type HeaderPairs, type RunEventSink } from "./api/events.js";
+import {
+  flattenHeaders,
+  type FailureStage,
+  type HeaderPairs,
+  type RunEventSink,
+  type SentRequest,
+} from "./api/events.js";
 
 export const GRPC_KIND = "grpc-request";
 export const HTTP_KIND = "http-request";
@@ -311,7 +317,7 @@ interface BodySource {
 
 interface RequestEvents {
   start: (name: string, iteration: number) => void;
-  sent: (target: string, sent: unknown) => void;
+  sent: (target: string, sent: SentRequest) => void;
   head: (status: number | string, headers: HeaderPairs, timings: Record<string, number>) => void;
   /**
    * Lazy on purpose. Encoding a 50MB response into a `Buffer` for a CLI run that
@@ -594,7 +600,15 @@ async function runGrpcRequest(
       : resolvedTarget;
 
   // 3. Invoke.
-  events.sent(grpcTargetLabel(target, liveRequest.methodPath), sentMessage);
+  // The metadata rides along rather than surviving only in the batch outcome: a console that
+  // showed an HTTP call's headers and a gRPC call's bare message would be honest about one
+  // protocol and not the other.
+  events.sent(grpcTargetLabel(target, liveRequest.methodPath), {
+    protocol: "grpc",
+    methodPath: liveRequest.methodPath,
+    metadata: sentMetadata.map(({ key, value }): [string, string] => [key, value]),
+    message: sentMessage,
+  });
   const invoke = await invokeUnary({
     target,
     method: method.definition,
@@ -721,6 +735,7 @@ async function runHttpRequest(
   // `href`, not the `URL` itself: an event has to survive a structured clone.
   const sentUrl = built.url.href;
   events.sent(`${built.method} ${sentUrl}`, {
+    protocol: "http",
     method: built.method,
     url: sentUrl,
     headers: built.headers.map(({ key, value }): [string, string] => [key, value]),

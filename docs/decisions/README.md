@@ -31,12 +31,15 @@ These are the decisions behind the desktop app. The CLI predates the practice.
 | [021](021-density-is-a-preset-and-typescript-owns-the-token.md)     | Density is a preset, and TypeScript owns the token                   |
 | [022](022-preferences-are-global-and-synchronous-at-first-paint.md) | Preferences are global, and read synchronously at first paint        |
 | [023](023-the-parser-is-fed-a-masked-document.md)                   | The parser is fed a masked document                                  |
+| [024](024-the-console-repeats-the-response-pane.md)                 | The console repeats the response pane                                |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
 configurable appearance; 021 answers 009 rather than reversing it, and 020 shows that 014's "the
 theme is defined once" is still true word for word. 023 came straight after, from looking at what
 the newly legible syntax colours had made obvious: the grammar had been misparsing every body with
-a `{{token}}` in it all along.
+a `{{token}}` in it all along. 024 is the first that accepts duplication as the point rather than
+the cost: it widens 019's event again and then renders a response body a second way, because 013's
+"bodies stay in the engine" also means the engine forgets them.
 
 `TEMPLATE.md` is the shape of a new one.

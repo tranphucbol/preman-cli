@@ -17,6 +17,7 @@ import type {
   ResponseBody,
   ResponseFailure,
   ResponseHead,
+  SentRequest,
   SideRequestSummary,
   TestResult,
   TestTotals,
@@ -38,7 +39,7 @@ export interface RequestRun {
   readonly iteration: number;
   readonly status: RequestStatus;
   readonly target: string | null;
-  readonly sent: unknown;
+  readonly sent: SentRequest | null;
   readonly head: ResponseHead | null;
   readonly body: ResponseBody | null;
   /** Set instead of `body` when the transport produced nothing to inspect. */
@@ -92,6 +93,20 @@ export interface SideRequestEntry {
   readonly summary: SideRequestSummary;
 }
 
+/**
+ * A main call's position in the console, and nothing else.
+ *
+ * A reference rather than a copy: a call mutates three times - sent, head, body - and copying it
+ * into the console stream would replace the array on every response event, re-running the merge
+ * over every row in the run. The row reads the item itself through `useRequestItem`.
+ */
+export interface CallEntry {
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly seq: number;
+  readonly itemKey: string;
+}
+
 /** A request appears once per iteration, so the iteration has to be part of the key. */
 function itemKey(nodeId: string, iteration: number): string {
   return `${nodeId}#${String(iteration)}`;
@@ -113,6 +128,10 @@ export interface RunsState {
   openItems: Map<string, string>;
   console: ConsoleEntry[];
   sideRequests: SideRequestEntry[];
+  /** Where each main call sits in the console's arrival order. */
+  calls: CallEntry[];
+  /** The `itemKey`s of the call rows the reader has opened. */
+  expandedCalls: Set<string>;
   /** The run the response pane is showing. */
   activeRunId: string | null;
   /** The item within `activeRunId` the response pane is showing. */
@@ -125,6 +144,7 @@ export interface RunsState {
   /** The engine's terminal signal. `run-end` cannot be relied on: a bad selector never emits one. */
   finish: (runId: string, outcome: { warnings: readonly string[]; cancelled: boolean; error?: EngineError }) => void;
   focus: (runId: string, key: string) => void;
+  toggleCall: (itemKey: string) => void;
   clearConsole: () => void;
   clear: () => void;
 }
@@ -135,6 +155,8 @@ export const useRunsStore = create<RunsState>((set) => ({
   openItems: new Map(),
   console: [],
   sideRequests: [],
+  calls: [],
+  expandedCalls: new Set(),
   activeRunId: NO_ACTIVE_RUN,
   activeItemKey: null,
   nextSeq: 0,
@@ -169,7 +191,7 @@ export const useRunsStore = create<RunsState>((set) => ({
             iteration: event.iteration,
             status: "running",
             target: null,
-            sent: undefined,
+            sent: null,
             head: null,
             failure: null,
             body: null,
@@ -247,8 +269,19 @@ export const useRunsStore = create<RunsState>((set) => ({
     set({ activeRunId: runId, activeItemKey: key });
   },
 
+  toggleCall(itemKey) {
+    set((state) => {
+      const expandedCalls = new Set(state.expandedCalls);
+      if (expandedCalls.has(itemKey)) expandedCalls.delete(itemKey);
+      else expandedCalls.add(itemKey);
+      return { expandedCalls };
+    });
+  },
+
   clearConsole() {
-    set({ console: [], sideRequests: [] });
+    // All three streams, and the expansion set with them: a cleared console that kept its
+    // expanded keys would bring those rows back open on the next call with the same key.
+    set({ console: [], sideRequests: [], calls: [], expandedCalls: new Set() });
   },
 
   clear() {
@@ -258,6 +291,8 @@ export const useRunsStore = create<RunsState>((set) => ({
       openItems: new Map(),
       console: [],
       sideRequests: [],
+      calls: [],
+      expandedCalls: new Set(),
       activeRunId: NO_ACTIVE_RUN,
       activeItemKey: null,
       nextSeq: 0,
@@ -282,9 +317,16 @@ function applyToItem(state: RunsState, event: ItemEvent): Partial<RunsState> {
 
   const requests = new Map(state.requests);
   switch (event.type) {
-    case "request-sent":
+    case "request-sent": {
       requests.set(key, { ...item, target: event.target, sent: event.sent });
-      break;
+      // The one per-request event that mints a `seq`, and it is this one rather than
+      // `request-start` or `request-end`: at the start there is no target to show, and at the
+      // end the row would sort below the pre-request logs it caused.
+      const calls = [...state.calls, { runId: event.runId, nodeId: event.nodeId, seq: state.nextSeq, itemKey: key }];
+      // Capped for the same reason as `console`, and separately: a run that logs nothing would
+      // never trip the console's own cap.
+      return { requests, calls: calls.slice(-CONSOLE_MAX_LINES), nextSeq: state.nextSeq + 1 };
+    }
     case "response-head":
       requests.set(key, { ...item, head: { status: event.status, headers: event.headers, timings: event.timings } });
       break;
@@ -360,6 +402,17 @@ export function useRun(runId: string | null): Run | undefined {
  */
 export function useRequestItem(key: string): RequestRun | undefined {
   return useRunsStore((state) => state.requests.get(key));
+}
+
+/**
+ * Whether a call row is open. A separate subscription so toggling one row repaints one row.
+ *
+ * Store state rather than row-local `useState`, mirroring `catalog.collapsed` but named for the
+ * opposite default: the console's virtualizer unmounts off-screen rows, so a row that remembered
+ * its own expansion would silently collapse the moment it scrolled away.
+ */
+export function useCallExpanded(itemKey: string): boolean {
+  return useRunsStore((state) => state.expandedCalls.has(itemKey));
 }
 
 /** Whether a run's focused item is this one, so a row can highlight without reading the map. */

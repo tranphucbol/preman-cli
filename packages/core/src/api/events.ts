@@ -24,6 +24,31 @@ export type HeaderPairs = [string, string][];
 export type FailureStage = "build" | "transport";
 
 /**
+ * What was actually sent, after scripts and interpolation.
+ *
+ * Discriminated because the two protocols share nothing but the fact that something left
+ * the process, and a consumer that has to duck-type its way to `headers` will get it wrong
+ * once. Every member is a plain object, array, string or JSON value, so a `request-sent`
+ * event still survives the structured clone the desktop app puts it through.
+ */
+export type SentRequest =
+  | {
+      protocol: "http";
+      method: string;
+      url: string;
+      headers: HeaderPairs;
+      /** `undefined` for a bodyless request; a sentinel for a binary one. */
+      body: string | undefined;
+    }
+  | {
+      protocol: "grpc";
+      methodPath: string;
+      /** Keys are already lowercased, because that is how they went on the wire. */
+      metadata: HeaderPairs;
+      message: unknown;
+    };
+
+/**
  * What the engine reports while a run is in flight.
  *
  * Ordered by arrival, not by importance: a GUI paints `request-sent`, then
@@ -44,7 +69,7 @@ export type FailureStage = "build" | "transport";
 export type RunEvent =
   | { type: "run-start"; runId: string; total: number }
   | { type: "request-start"; runId: string; nodeId: string; name: string; iteration: number }
-  | { type: "request-sent"; runId: string; nodeId: string; target: string; sent: unknown }
+  | { type: "request-sent"; runId: string; nodeId: string; target: string; sent: SentRequest }
   | {
       type: "response-head";
       runId: string;

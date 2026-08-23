@@ -58,7 +58,13 @@ export {
   type MoveArgs,
   type RequestKind,
 } from "@preman/core/api/mutate.js";
-export { flattenHeaders, type HeaderPairs, type RunEvent, type RunEventSink } from "@preman/core/api/events.js";
+export {
+  flattenHeaders,
+  type HeaderPairs,
+  type RunEvent,
+  type RunEventSink,
+  type SentRequest,
+} from "@preman/core/api/events.js";
 export {
   BodyStore,
   type BodyHead,

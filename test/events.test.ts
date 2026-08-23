@@ -180,6 +180,69 @@ describe("run events, single request", () => {
   });
 });
 
+/**
+ * `sent` is a discriminated union rather than `unknown`, because the two protocols share nothing
+ * but the fact that something left the process. These cases pin the discriminator and the fields
+ * a consumer would otherwise have to duck-type its way to.
+ */
+describe("run events, what left the process", () => {
+  /** No server is listening on the fixture's LOCAL target, so the call fails after it is sent. */
+  const DEAD_GRPC = { dir: FIXTURE_WS, env: "LOCAL", timeoutMs: 1_000 } as const;
+
+  it("givenHttpRequest_whenRun_thenRequestSentCarriesTheHttpProtocolTag", async () => {
+    const { events } = await runWithSink("admin/Login");
+
+    expect(firstOf(events, "request-sent")?.sent.protocol).toBe("http");
+  });
+
+  it("givenHttpRequest_whenRun_thenRequestSentCarriesTheHeadersActuallySent", async () => {
+    const { events } = await runWithSink("admin/Login");
+    const sent = firstOf(events, "request-sent")?.sent;
+
+    // `content-type` is nowhere in the request file: the body type put it there. So these are
+    // the finalised headers rather than the declared ones.
+    expect(sent?.protocol === "http" && sent.headers.some(([key]) => key.toLowerCase() === "content-type")).toBe(true);
+  });
+
+  it("givenGrpcRequest_whenRun_thenRequestSentCarriesTheGrpcProtocolTag", async () => {
+    const sink = collectingSink();
+    await runSelection(selectionArgs("payment/Echo", { ...DEAD_GRPC, sink }));
+    const sent = firstOf(sink.events, "request-sent")?.sent;
+
+    expect(sent?.protocol).toBe("grpc");
+    expect(sent?.protocol === "grpc" && sent.methodPath).toBe("test.echo.EchoService.Echo");
+  });
+
+  it("givenGrpcRequestWithMetadata_whenRun_thenRequestSentCarriesTheMetadata", async () => {
+    const sink = collectingSink();
+    await runSelection(selectionArgs("payment/Echo", { ...DEAD_GRPC, sink }));
+    const sent = firstOf(sink.events, "request-sent")?.sent;
+    const metadata = sent?.protocol === "grpc" ? Object.fromEntries(sent.metadata) : {};
+
+    // One declared on the request, one added by its `beforeInvoke` script.
+    expect(metadata["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(metadata["x-scripted"]).toBe("beforeInvoke");
+  });
+
+  it("givenGrpcRequestWithDisabledMetadata_whenRun_thenTheDisabledEntryIsAbsent", async () => {
+    const sink = collectingSink();
+    await runSelection(selectionArgs("payment/Ping", { ...DEAD_GRPC, sink }));
+    const sent = firstOf(sink.events, "request-sent")?.sent;
+    const keys = sent?.protocol === "grpc" ? sent.metadata.map(([key]) => key) : [];
+
+    expect(keys).not.toContain("x-disabled");
+  });
+
+  it("givenRequestSent_whenStructuredCloned_thenTheSentPayloadSurvives", async () => {
+    const sink = collectingSink();
+    await runSelection(selectionArgs("payment/Echo", { ...DEAD_GRPC, sink }));
+    const sent = firstOf(sink.events, "request-sent");
+
+    // The desktop hands events across a MessagePort, so every member has to be cloneable.
+    expect(structuredClone(sent)).toEqual(sent);
+  });
+});
+
 describe("run events, failures", () => {
   /** No server is listening on the fixture's LOCAL target, so every gRPC call is UNAVAILABLE. */
   const DEAD_GRPC = { dir: FIXTURE_WS, env: "LOCAL", timeoutMs: 1_000 } as const;
