@@ -10,7 +10,7 @@
  * editable, and the engine validates it against the same schemas before it lands.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import type { FieldEdit, MethodChoice } from "@preman/desktop/engine/protocol.js";
 import {
@@ -43,6 +43,7 @@ import {
 } from "@preman/desktop/renderer/model/request.js";
 import { listMethods, messageSkeleton, type Failure } from "@preman/desktop/renderer/actions.js";
 import type { PaletteItem } from "@preman/desktop/renderer/model/palette.js";
+import { useAncestors, useNode } from "@preman/desktop/renderer/stores/catalog.js";
 import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import { type SubTab, type Tab, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 import type { Ask } from "@preman/desktop/renderer/ui/Dialog.js";
@@ -59,12 +60,16 @@ import {
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import {
   CancelIcon,
+  CaretRightIcon,
+  CollectionIcon,
   GenerateIcon,
+  GLYPH_CLASS,
   PickerIcon,
   SaveIcon,
   SendIcon,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
+import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { KeyValueGrid } from "@preman/desktop/renderer/panes/KeyValueGrid.js";
 
@@ -134,6 +139,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <Breadcrumb nodeId={tab.nodeId} />
       {tab.conflicted ? <ConflictBanner nodeId={tab.nodeId} /> : null}
       {tab.orphaned ? (
         <Banner tone="danger" message="This file is gone from disk. Saving will write it back." detail={saved.file} />
@@ -169,9 +175,12 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
               apply([edit(FIELD.method, next)]);
             }}
           >
+            {/* Coloured in the option, not on the trigger: Radix portals an `ItemText`'s children
+                into the closed control, so one span paints the list and the trigger the same
+                green the sidebar and the tab strip use. */}
             {HTTP_METHODS.map((verb) => (
               <SelectOption key={verb} value={verb}>
-                {verb}
+                <span className={methodClass(verb)}>{verb}</span>
               </SelectOption>
             ))}
           </Select>
@@ -281,6 +290,42 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
 }
 
 type Apply = (edits: readonly FieldEdit[]) => void;
+
+/**
+ * Where this request lives, above the bar that sends it.
+ *
+ * The tab strip can only afford the name, and a workspace has four requests called `Create` in
+ * four collections. This is the row that says which one is open - the same answer the sidebar
+ * gives by position, written out for the times the sidebar is scrolled somewhere else or shut.
+ *
+ * Read-only on purpose. Postman makes the crumbs links, but a click target in the row directly
+ * above Send, on a name that is also a directory on disk, buys a navigation the sidebar already
+ * does and risks a rename nobody asked for.
+ *
+ * Renders nothing once the node is gone: an orphaned tab has a banner two rows down that says so
+ * properly, and a breadcrumb pointing into a tree that no longer contains it would be a lie.
+ */
+function Breadcrumb({ nodeId }: { readonly nodeId: string }) {
+  const node = useNode(nodeId);
+  const ancestors = useAncestors(nodeId);
+  if (node === undefined) return null;
+
+  return (
+    <nav
+      aria-label="Location"
+      className="flex h-tab shrink-0 items-center gap-1.5 border-b border-line px-gutter text-sm"
+    >
+      <CollectionIcon className="shrink-0 text-ink-dim" />
+      {ancestors.map((crumb) => (
+        <Fragment key={crumb.id}>
+          <span className="min-w-0 truncate text-ink-dim">{crumb.name}</span>
+          <CaretRightIcon className={cn("shrink-0", GLYPH_CLASS)} />
+        </Fragment>
+      ))}
+      <span className="min-w-0 truncate font-medium text-ink">{node.name}</span>
+    </nav>
+  );
+}
 
 /**
  * The gRPC method picker.
@@ -529,8 +574,9 @@ function MessagePane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-line px-gutter">
+      <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
         <Button
+          tier="chrome"
           disabled={methodPath.length === 0}
           onClick={() => {
             if (message.trim().length === 0) {
@@ -572,8 +618,9 @@ function BodyPane({ data, apply }: { readonly data: unknown; readonly apply: App
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-line px-gutter">
+      <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
         <Select
+          tier="chrome"
           value={type}
           aria-label="Body type"
           onValueChange={(value) => {

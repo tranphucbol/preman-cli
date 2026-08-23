@@ -9,6 +9,7 @@
  * `refreshCatalog` in core preserves object identity for untouched nodes, which is what makes the
  * per-row subscription actually pay off: editing one request re-renders one row.
  */
+import { useMemo } from "react";
 import { create } from "zustand";
 
 import type {
@@ -182,4 +183,35 @@ export function useIsSelected(id: string): boolean {
 /** One more per-row subscription, and the same reason: a rebase must not repaint the tree twice. */
 export function useGitDecoration(id: string): GitDecoration | undefined {
   return useCatalogStore((state) => state.gitDecorations.get(id));
+}
+
+/**
+ * The chain from the collection down to `id`'s parent, outermost first.
+ *
+ * Walked from `parentId` rather than read off a path stored on the node: the walk is one map
+ * lookup per level against a tree that is three deep, while a materialised path would have to be
+ * rewritten on every descendant of a renamed folder. A node whose chain is broken - which only
+ * happens mid-refresh, between a `replace` and the render that follows it - yields the part of the
+ * chain that does resolve rather than throwing.
+ */
+function ancestorsOf(byId: ReadonlyMap<string, CatalogNode>, id: string): CatalogNode[] {
+  const chain: CatalogNode[] = [];
+  let parentId = byId.get(id)?.parentId ?? null;
+  while (parentId !== null) {
+    const parent = byId.get(parentId);
+    if (parent === undefined) break;
+    chain.unshift(parent);
+    parentId = parent.parentId;
+  }
+  return chain;
+}
+
+/**
+ * Subscribes to `byId` and not to a node, unlike the hooks above, because the chain is a function
+ * of the whole index. That is affordable here and nowhere else: this is read once per open editor,
+ * not once per row.
+ */
+export function useAncestors(id: string): readonly CatalogNode[] {
+  const byId = useCatalogStore((state) => state.byId);
+  return useMemo(() => ancestorsOf(byId, id), [byId, id]);
 }

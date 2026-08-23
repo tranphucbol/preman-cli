@@ -21,17 +21,19 @@ Everything else here is that sentence applied to a particular place.
 
 Two heights, and a control belongs to a tier by what it is for, never by where it fits.
 
-| Tier        | Token                  | Height | What is in it                                                                     |
-| ----------- | ---------------------- | ------ | --------------------------------------------------------------------------------- |
-| **content** | `--spacing-control-lg` | 30px   | `Button` primary/neutral/danger, `Field`, `Select tier="content"`                 |
-| **chrome**  | `--spacing-control`    | 26px   | `Button` quiet, `IconButton` (`size-control`), `Select tier="chrome"`, menu items |
-| **row**     | `--spacing-row`        | 28px   | `CellField`, and every virtualized list row                                       |
+| Tier        | Token                  | Height | Default for                                               |
+| ----------- | ---------------------- | ------ | --------------------------------------------------------- |
+| **content** | `--spacing-control-lg` | 30px   | `Button` primary/neutral/danger, `Field`, `Select`        |
+| **chrome**  | `--spacing-control`    | 26px   | `Button` quiet, `IconButton` (`size-control`), menu items |
+| **row**     | `--spacing-row`        | 28px   | `CellField`, and every virtualized list row               |
 
 Content tier is the thing you came to the pane to operate: the URL, the method, Send. Chrome tier
 is everything that acts on the pane rather than being it: toolbars, menus, icon affordances.
 
-`Select` is the only control that appears in both, which is why it is the only one with a `tier`
-prop. If you find yourself wanting a second, the control is probably in the wrong tier.
+Size and paint are separate axes. `Button` and `Select` both take `tier`, and the table above is
+only what they do when the caller says nothing; a `neutral` button in a pane toolbar is
+`tier="chrome"`, and it is still a `neutral` button. `Field` has no `tier`, because a text input
+is always the content it edits.
 
 **Never mix tiers in one row.** A 26px field beside a 30px button is the first bug: they read as
 one control, and one of them looks broken.
@@ -51,10 +53,15 @@ not a judgement call — it is arithmetic.
 
 Current assignment, which is the audit as much as the rule:
 
-- `h-bar` — the title bar (`App.tsx`), the message toolbar and the body toolbar (`RequestEditor`).
-- `h-tab` — the tab bar and sidebar header and status bar (`App.tsx`), `KeyValueGrid`,
-  `RunnerPane`, `VariablesPane`, `ConsoleDrawer`, both `BodyViewer` strips, and the sub-tab
-  triggers in `RequestEditor` and `ResponsePane`, which are text and take the shorter row.
+- `h-bar` — the title bar (`App.tsx`), and only that. It is the row the macOS traffic lights are
+  centred in, which is what fixes its height; `TITLE_BAR_HEIGHT_PX` mirrors the token.
+- `h-tab` — everything else: the tab bar and sidebar header and status bar (`App.tsx`), the
+  breadcrumb and the message and body toolbars (`RequestEditor`), `KeyValueGrid`, `RunnerPane`,
+  `VariablesPane`, `ConsoleDrawer`, both `BodyViewer` strips, and the sub-tab triggers in
+  `RequestEditor` and `ResponsePane`, which are text and take the shorter row.
+
+That `h-bar` has one caller is the rule working, not a token going spare: a pane toolbar that
+wanted `h-bar` was a toolbar that had not been asked which tier its buttons were in.
 
 One row is neither, on purpose: the request bar (`RequestEditor.tsx:142`) is `px-gutter py-2`
 around a 30px field, so 46px. It is the only row in the app that is the subject of its pane rather
@@ -98,6 +105,11 @@ named for that use. If you are about to put `text-glyph` on a string, you want `
 
 `--color-accent` has no dimmed variant, deliberately: the one that used to exist read at 2.5:1.
 The accent is a fill exactly once per pane — the thing you came there to press.
+
+The `--color-method-*` tokens are keyed by verb, and so is the one function that reads them:
+`methodClass()` in `ui/method.ts`. Never write `text-method-get` at a call site. The sidebar, the
+tab strip and the method picker all show the same verb within a few hundred pixels of each other,
+and three copies of the map is how one of them ends up a shade off.
 
 ## Floating surfaces
 

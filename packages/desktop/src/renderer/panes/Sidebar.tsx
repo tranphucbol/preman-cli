@@ -45,6 +45,7 @@ import {
   type CatalogState,
 } from "@preman/desktop/renderer/stores/catalog.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import {
   ContextContent,
   ContextItem,
@@ -138,15 +139,6 @@ const GIT_MARK: Record<GitDecoration, { readonly glyph: string; readonly tone: s
   untracked: { glyph: "U", tone: "text-ok", title: "Untracked" },
   conflicted: { glyph: "!", tone: "text-danger", title: "Conflicted" },
   descendant: { glyph: "•", tone: "text-ink-faint", title: "Contains changes" },
-};
-
-/** Verb to token. A row cannot invent a colour, and an unknown verb falls through to plain ink. */
-const METHOD_CLASS: Record<string, string> = {
-  GET: "text-method-get",
-  POST: "text-method-post",
-  PUT: "text-method-put",
-  PATCH: "text-method-patch",
-  DELETE: "text-method-delete",
 };
 
 const selectVisible = (state: CatalogState) => state.visibleIds;
@@ -548,9 +540,7 @@ function MethodLabel({ node }: { readonly node: CatalogNode }) {
   if (node.label === undefined) {
     return null;
   }
-  return (
-    <span className={cn("font-mono text-2xs uppercase", METHOD_CLASS[node.label] ?? "text-ink-dim")}>{node.label}</span>
-  );
+  return <span className={cn("font-mono text-2xs uppercase", methodClass(node.label))}>{node.label}</span>;
 }
 
 /**

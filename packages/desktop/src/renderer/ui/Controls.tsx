@@ -22,23 +22,60 @@ const TOOLTIP_DELAY_MS = 400;
 const BASE_CONTROL =
   "inline-flex select-none items-center justify-center gap-1.5 rounded-sm text-xs whitespace-nowrap transition-none disabled:text-ink-faint";
 
+/**
+ * The two heights a control comes in, named for the row it belongs to rather than for its size.
+ *
+ * `content` is 30px, for a control that is part of the thing being edited: the URL, the Send
+ * beside it, the method picker beside that. `chrome` is 26px, for a control in a strip that frames
+ * the thing being edited - a pane's toolbar, the tab bar - where 30px makes it the tallest object
+ * in a row it is not the subject of.
+ *
+ * Size and paint are separate axes on purpose. They used to be one, which is how the app ended up
+ * with a toolbar whose only job was to hold a button and which was therefore sized by it.
+ */
+const TIER_CLASS = {
+  content: "h-control-lg",
+  chrome: "h-control",
+} as const;
+
+export type ControlTier = keyof typeof TIER_CLASS;
+
 const VARIANT_CLASS = {
   /** The accent is a fill exactly once per pane: the thing you came here to press. */
-  primary: "h-control-lg bg-accent px-3 font-medium text-canvas hover:bg-accent/85 disabled:bg-control",
-  neutral: "h-control-lg border border-line-strong bg-control px-3 text-ink hover:bg-hover",
-  quiet: "h-control px-2 text-ink-dim hover:bg-hover hover:text-ink",
-  danger: "h-control-lg border border-danger/40 px-3 text-danger hover:bg-danger/15",
+  primary: "bg-accent px-3 font-medium text-canvas hover:bg-accent/85 disabled:bg-control",
+  neutral: "border border-line-strong bg-control px-3 text-ink hover:bg-hover",
+  quiet: "px-2 text-ink-dim hover:bg-hover hover:text-ink",
+  danger: "border border-danger/40 px-3 text-danger hover:bg-danger/15",
 } as const;
 
 export type ButtonVariant = keyof typeof VARIANT_CLASS;
 
+/**
+ * Which tier a variant lands in when the caller does not say. `quiet` is the chrome variant by
+ * construction - it has no border and no fill, so it only reads as a button in a strip of them -
+ * and the other three are the ones you press to make something happen.
+ */
+const DEFAULT_TIER: Record<ButtonVariant, ControlTier> = {
+  primary: "content",
+  neutral: "content",
+  quiet: "chrome",
+  danger: "content",
+};
+
 export interface ButtonProps extends Omit<ComponentProps<"button">, "className"> {
   readonly variant?: ButtonVariant;
+  readonly tier?: ControlTier;
   readonly ref?: Ref<HTMLButtonElement>;
 }
 
-export function Button({ variant = "neutral", type = "button", ...rest }: ButtonProps) {
-  return <button type={type} className={cn(BASE_CONTROL, VARIANT_CLASS[variant])} {...rest} />;
+export function Button({ variant = "neutral", tier, type = "button", ...rest }: ButtonProps) {
+  return (
+    <button
+      type={type}
+      className={cn(BASE_CONTROL, VARIANT_CLASS[variant], TIER_CLASS[tier ?? DEFAULT_TIER[variant]])}
+      {...rest}
+    />
+  );
 }
 
 export interface IconButtonProps extends Omit<ComponentProps<"button">, "className" | "children"> {
@@ -137,22 +174,6 @@ export function CellField({ mono = true, ...rest }: FieldProps) {
   );
 }
 
-/**
- * The two heights a select comes in, named for the row it belongs to rather than for its size.
- *
- * A select is the one control that turns up in both tiers, which is why it is the one that has to
- * say which. `content` is 30px, matching `Button` and `Field`, for a picker that is part of the
- * thing being edited: the method beside the URL and Send. `chrome` is 26px, matching `IconButton`
- * and a `quiet` button, for a picker in a strip of chrome - where 30px makes it the tallest thing
- * in a row it is not the subject of.
- */
-const SELECT_TIER = {
-  content: "h-control-lg",
-  chrome: "h-control",
-} as const;
-
-export type SelectTier = keyof typeof SELECT_TIER;
-
 const SELECT_TRIGGER_CLASS =
   "inline-flex w-fit cursor-default select-none items-center gap-1 rounded-sm border border-line-strong bg-control pr-1 pl-2 text-xs text-ink outline-none data-placeholder:text-ink-faint data-disabled:text-ink-faint";
 
@@ -180,7 +201,8 @@ export interface SelectProps {
   readonly onValueChange: (value: string) => void;
   readonly children: ReactNode;
   readonly mono?: boolean;
-  readonly tier?: SelectTier;
+  /** A select is the control that turns up in both tiers most often, so it always declares one. */
+  readonly tier?: ControlTier;
   readonly disabled?: boolean;
   /** Required, not optional, for the same reason `IconButton` requires one: there is no label. */
   readonly "aria-label": string;
@@ -210,7 +232,7 @@ export function Select({
     <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
       <SelectPrimitive.Trigger
         aria-label={label}
-        className={cn(SELECT_TRIGGER_CLASS, SELECT_TIER[tier], mono && "font-mono")}
+        className={cn(SELECT_TRIGGER_CLASS, TIER_CLASS[tier], mono && "font-mono")}
       >
         <SelectPrimitive.Value />
         <SelectPrimitive.Icon className={GLYPH_CLASS}>

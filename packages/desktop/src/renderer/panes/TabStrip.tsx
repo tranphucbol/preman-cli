@@ -11,19 +11,12 @@ import type { MouseEvent } from "react";
 
 import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
 import { useNode } from "@preman/desktop/renderer/stores/catalog.js";
 
 const MIDDLE_BUTTON = 1;
 const UNSUPPORTED_LABEL = "n/a";
-
-const METHOD_CLASS: Record<string, string> = {
-  GET: "text-method-get",
-  POST: "text-method-post",
-  PUT: "text-method-put",
-  PATCH: "text-method-patch",
-  DELETE: "text-method-delete",
-};
 
 /**
  * The tabs only, not the row they sit in. The row is `TabBar` in `App.tsx`, because the
@@ -118,11 +111,7 @@ function TabLabel({ nodeId, title }: { readonly nodeId: string; readonly title: 
   if (node.protocol === "grpc") {
     return <span className="max-w-20 shrink-0 truncate font-mono text-2xs text-method-grpc">{node.label}</span>;
   }
-  return (
-    <span className={cn("shrink-0 font-mono text-2xs uppercase", METHOD_CLASS[node.label] ?? "text-ink-dim")}>
-      {node.label}
-    </span>
-  );
+  return <span className={cn("shrink-0 font-mono text-2xs uppercase", methodClass(node.label))}>{node.label}</span>;
 }
 
 function CloseButton({
