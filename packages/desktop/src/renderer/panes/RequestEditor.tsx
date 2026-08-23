@@ -47,7 +47,15 @@ import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import { type SubTab, type Tab, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 import type { Ask } from "@preman/desktop/renderer/ui/Dialog.js";
 import { CodeEditor, type CodeLanguage } from "@preman/desktop/renderer/ui/CodeEditor.js";
-import { Button, CellField, Field, IconButton, Labelled, Select } from "@preman/desktop/renderer/ui/Controls.js";
+import {
+  Button,
+  CellField,
+  Field,
+  IconButton,
+  Labelled,
+  Select,
+  SelectOption,
+} from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import {
   CancelIcon,
@@ -157,14 +165,14 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
             mono
             value={readMethod(data)}
             aria-label="Method"
-            onChange={(event) => {
-              apply([edit(FIELD.method, event.currentTarget.value)]);
+            onValueChange={(next) => {
+              apply([edit(FIELD.method, next)]);
             }}
           >
             {HTTP_METHODS.map((verb) => (
-              <option key={verb} value={verb}>
+              <SelectOption key={verb} value={verb}>
                 {verb}
-              </option>
+              </SelectOption>
             ))}
           </Select>
         )}
@@ -521,7 +529,7 @@ function MessagePane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
+      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-line px-gutter">
         <Button
           disabled={methodPath.length === 0}
           onClick={() => {
@@ -564,19 +572,19 @@ function BodyPane({ data, apply }: { readonly data: unknown; readonly apply: App
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
+      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-line px-gutter">
         <Select
           value={type}
           aria-label="Body type"
-          onChange={(event) => {
-            const next = event.currentTarget.value as BodyType;
+          onValueChange={(value) => {
+            const next = value as BodyType;
             apply([edit(FIELD.bodyType, next === NO_BODY ? undefined : next)]);
           }}
         >
           {BODY_TYPES.map((candidate) => (
-            <option key={candidate} value={candidate}>
+            <SelectOption key={candidate} value={candidate}>
               {candidate}
-            </option>
+            </SelectOption>
           ))}
         </Select>
       </div>

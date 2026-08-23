@@ -76,14 +76,20 @@ const OVERSCAN = 8;
 /** Indent per depth level. 12px reads as a level without pushing deep names off the pane. */
 const INDENT_PX = 12;
 
-/** The chevron column, reserved on every row so names line up whether or not one is drawn. */
-const CHEVRON_PX = 16;
 /**
- * The verb column, sized for `DELETE`. It sits to the left of the name, where Postman puts it,
- * so the eye reads protocol then name in one movement instead of travelling to a ragged right edge.
- * Group icons share the width so every name in the tree starts at the same x.
+ * The leading column: a request's verb, or a group's chevron and icon. Sized for `DELETE` beside a
+ * caret, reserved on every row so every name in the tree starts at the same x, and right-aligned
+ * so that whatever it holds sits against the name.
+ *
+ * One column and not two. A fixed chevron column ahead of a verb-width one put a group's caret a
+ * whole `DELETE` away from its folder, which reads as the caret belonging to nothing: the caret and
+ * the icon are one control - press either to expand - and they have to look like it. Right-aligning
+ * the pair is what keeps that true without giving group names a different left edge to requests.
  */
-const LABEL_COLUMN_PX = 42;
+const LEAD_COLUMN_PX = 64;
+
+/** Where a between-rows drop line starts: at the destination's indent, clear of nothing else. */
+const DROP_LINE_INSET_PX = 16;
 
 const NO_TARGET = null;
 
@@ -343,7 +349,7 @@ function indicatorFor(side: DropSide, over: CatalogNode, visibleIndex: number): 
   }
   return {
     top: side === "before" ? top : top + ROW_HEIGHT,
-    indent: over.depth * INDENT_PX + CHEVRON_PX,
+    indent: over.depth * INDENT_PX + DROP_LINE_INSET_PX,
     inside: false,
   };
 }
@@ -472,19 +478,16 @@ function Row({
       )}
       style={{ top, paddingLeft: node.depth * INDENT_PX }}
     >
-      <span className="flex shrink-0 items-center justify-center" style={{ width: CHEVRON_PX }}>
+      {/* One fixed column for all three, so every name in the tree starts at the same x. */}
+      <span className="flex shrink-0 items-center justify-end gap-1 overflow-hidden" style={{ width: LEAD_COLUMN_PX }}>
         {group ? (
-          collapsed ? (
-            <CaretRightIcon className="text-glyph" />
-          ) : (
-            <CaretDownIcon className="text-glyph" />
-          )
-        ) : null}
-      </span>
-
-      {/* One fixed column for both, so every name in the tree starts at the same x. */}
-      <span className="flex shrink-0 items-center justify-end overflow-hidden" style={{ width: LABEL_COLUMN_PX }}>
-        {group ? <NodeIcon node={node} collapsed={collapsed} /> : <MethodLabel node={node} />}
+          <>
+            {collapsed ? <CaretRightIcon className="text-glyph" /> : <CaretDownIcon className="text-glyph" />}
+            <NodeIcon node={node} collapsed={collapsed} />
+          </>
+        ) : (
+          <MethodLabel node={node} />
+        )}
       </span>
 
       <span

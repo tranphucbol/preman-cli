@@ -46,9 +46,16 @@
   --spacing-row: 28px;
   --spacing-control: 26px;
   --spacing-control-lg: 30px;
-  /* Also the title bar's height, which the main process needs in TypeScript to centre the
-   * window's own controls in it: see TITLE_BAR_HEIGHT_PX. */
+
+  /* Chrome rows, and there are two of them because there are two control heights. A row is sized
+   * by the tallest control it holds plus the same breathing room either side, so `--spacing-tab`
+   * is for a row of 26px controls and `--spacing-bar` for a row of 30px ones. One token for both
+   * is how the title bar ended up with a 30px select in 32px of room: 1px of air, top and bottom.
+   *
+   * `--spacing-bar` is also the title bar's height, which the main process needs in TypeScript to
+   * centre the window's own controls in it: see TITLE_BAR_HEIGHT_PX. */
   --spacing-tab: 32px;
+  --spacing-bar: 40px;
   --spacing-gutter: 10px;
 
   /* Surfaces, darkest to lightest: window, panel, control, hover.
@@ -127,6 +134,19 @@
 
 @utility no-drag {
   -webkit-app-region: no-drag;
+}
+
+/*
+ * Scrollable, with nothing drawn to say so.
+ *
+ * For the one strip where the scrollbar is worse than useless: the tab bar is 32px tall, so a
+ * horizontal bar across the bottom of it lands on the tabs themselves, and the tabs are already
+ * their own overflow indicator - a half-clipped tab at the edge says "there are more" better than
+ * a hairline does. Everything else in the app keeps the thin bar set in the base layer, because
+ * everything else is a pane where not knowing you can scroll is a real loss.
+ */
+@utility no-scrollbar {
+  scrollbar-width: none;
 }
 
 @layer base {

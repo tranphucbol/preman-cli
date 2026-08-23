@@ -57,7 +57,7 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
   src/engine/                    the utility process: Catalog, BodyStore, watcher, proto cache
     protocol.ts                  the typed contract; the only module engine and renderer share
   src/renderer/                  the pure view: React 19, Zustand, Tailwind v4, CodeMirror 6
-    app.css                      the design system; every token is contrast-audited
+    app.css                      the tokens and their why; docs/design-system.md picks between them
     stores/                      catalog, tabs, runs, session - one file per subscription surface
     model/                       pure, no React: request fields, drop plans, body windows, responses
     ui/                          cn, icons, Menu, Controls, Dialog, CodeEditor
@@ -84,6 +84,8 @@ test/renderer/perf.app.test.ts   the budgets that need a window; gated behind PR
   weight — one with a real alternative, or one the next reader would otherwise reopen — and add the
   next-numbered file from `TEMPLATE.md`, listed in the index, stating what it cost and not only what
   was chosen. Numbers are never reused; a reversal keeps its file and changes its status.
+- `docs/design-system.md` says which token to reach for. Read it before adding a control, a
+  toolbar or a list row.
 - TypeScript strict, ESM. Import with explicit `.js` specifiers; cross a directory with
   `@preman/core/…` or `@preman/cli/…` (including inside core), stay relative within one, and use
   `import type` for types.

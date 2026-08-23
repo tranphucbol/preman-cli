@@ -13,7 +13,7 @@ import { Group, Panel, Separator, useDefaultLayout, usePanelCallbackRef } from "
 import type { CatalogNode, GrepMatch } from "@preman/desktop/engine/protocol.js";
 
 import { AskDialog, type Ask } from "@preman/desktop/renderer/ui/Dialog.js";
-import { Button, IconButton, Select, TooltipProvider } from "@preman/desktop/renderer/ui/Controls.js";
+import { Button, IconButton, Select, SelectOption, TooltipProvider } from "@preman/desktop/renderer/ui/Controls.js";
 import {
   DropdownContent,
   DropdownItem,
@@ -89,10 +89,17 @@ const CONSOLE_MIN = "12";
 const REQUEST_DEFAULT = "55";
 const REQUEST_MIN = "20";
 const RESPONSE_MIN = "15";
-/** The explicit "none" the engine now accepts, which is not the same as nobody having chosen. */
-const NO_ENVIRONMENT = "";
+/**
+ * The explicit "none" the engine now accepts, which is not the same as nobody having chosen.
+ *
+ * A NUL prefix rather than the empty string it used to be, for two reasons that agree: Radix
+ * reserves `""` for "nothing is selected", which is the very state this value has to be distinct
+ * from, and NUL is the one character a name read out of a file on disk cannot contain, so neither
+ * sentinel can ever collide with a real environment.
+ */
+const NO_ENVIRONMENT = "\u0000none";
 /** The placeholder's own value, so it can never be mistaken for the choice above. */
-const UNCHOSEN_ENVIRONMENT = "?";
+const UNCHOSEN_ENVIRONMENT = "\u0000unchosen";
 
 /**
  * What the palette can do besides jumping to a request.
@@ -366,23 +373,51 @@ function Palette({
  * The whole row drags, so the two pickers opt back out: a control inside a drag region is a
  * handle, not a control. The leading gutter is whatever the window's own controls need, which on
  * a framed platform is nothing.
+ *
+ * The environment picker is not here. It sits in the tab bar, one row down: which environment is
+ * selected is a fact about the request you are about to send, so it belongs beside the request you
+ * are looking at rather than in the window's own chrome. What is left is the workspace picker,
+ * which is a fact about the whole window and is the one thing that does belong here.
+ *
+ * `h-bar` and not `h-tab`, because the row is the one the traffic lights are centred in: its
+ * height is duplicated as `TITLE_BAR_HEIGHT_PX`.
  */
 function TitleBar(): React.JSX.Element {
   const gutter = window.preman.titleBarGutter;
   return (
     <header
-      className="flex h-tab shrink-0 items-center gap-2 border-b border-line bg-canvas px-2 drag-region"
+      className="flex h-bar shrink-0 items-center gap-2 border-b border-line bg-canvas px-2 drag-region"
       // Unset on a framed platform, so the class's own padding stands rather than being zeroed.
       style={gutter > 0 ? { paddingLeft: gutter } : undefined}
     >
       <div className="flex items-center no-drag">
         <WorkspacePicker />
       </div>
-      <div className="flex-1" />
-      <div className="flex items-center no-drag">
+    </header>
+  );
+}
+
+/**
+ * The tab strip and the environment picker, sharing one row.
+ *
+ * One row and not two because they are read together: the tab says which request, the picker says
+ * against what. Splitting them cost a whole row of height to say half a sentence each.
+ *
+ * The row is drawn here rather than inside `TabStrip` for two reasons. The strip scrolls
+ * horizontally and the picker must not scroll with it, so the strip cannot be the row. And the
+ * strip renders nothing at all when no file is open, whereas the picker is always true.
+ *
+ * `h-tab`, because everything in the row is a 26px chrome control: the picker asks for the chrome
+ * tier, and a select is the one control that has to say which tier it is in.
+ */
+function TabBar({ onClose }: { readonly onClose: (nodeId: string) => void }): React.JSX.Element {
+  return (
+    <div className="flex h-tab shrink-0 items-stretch border-b border-line bg-canvas">
+      <TabStrip onClose={onClose} />
+      <div className="ml-auto flex shrink-0 items-center gap-1 px-2">
         <EnvironmentPicker />
       </div>
-    </header>
+    </div>
   );
 }
 
@@ -432,10 +467,11 @@ function WorkspacePicker(): React.JSX.Element {
 /**
  * The environment selector, and the way into the variable manager beside it.
  *
- * Top-right, matching Postman, and a plain select rather than a menu because it is a choice
- * from a short list. The manager is a separate button rather than an entry in the list: a list
- * where one row is a command and the rest are values is the kind of control people press by
- * accident.
+ * Top-right of the tab bar, and a select rather than a menu because every row in it is a value.
+ * The two look alike on purpose and are not the same control: this one reports what is currently
+ * true and the workspace picker beside it issues commands. The manager is a separate button for
+ * exactly that reason - a list where one row is a command and the rest are values is the kind of
+ * control people press by accident.
  *
  * "No environment" is a real option, and saying so is what Phase 6 bought. Core now takes `null`
  * to mean an explicit none, distinct from an absent `env` that leaves the choice open, so the
@@ -452,10 +488,11 @@ function EnvironmentPicker(): React.JSX.Element {
     <>
       {environments.length > 0 && (
         <Select
+          tier="chrome"
           aria-label="Environment"
           value={environment === undefined ? UNCHOSEN_ENVIRONMENT : (environment ?? NO_ENVIRONMENT)}
-          onChange={(event) => {
-            setEnvironment(event.target.value === NO_ENVIRONMENT ? null : event.target.value);
+          onValueChange={(value) => {
+            setEnvironment(value === NO_ENVIRONMENT ? null : value);
           }}
         >
           {/*
@@ -464,15 +501,15 @@ function EnvironmentPicker(): React.JSX.Element {
             more environments, since one is adopted the moment the catalog arrives.
           */}
           {environment === undefined && (
-            <option value={UNCHOSEN_ENVIRONMENT} disabled>
+            <SelectOption value={UNCHOSEN_ENVIRONMENT} disabled>
               Select environment
-            </option>
+            </SelectOption>
           )}
-          <option value={NO_ENVIRONMENT}>No environment</option>
+          <SelectOption value={NO_ENVIRONMENT}>No environment</SelectOption>
           {environments.map((candidate) => (
-            <option key={candidate.file} value={candidate.name}>
+            <SelectOption key={candidate.file} value={candidate.name}>
               {candidate.name}
-            </option>
+            </SelectOption>
           ))}
         </Select>
       )}
@@ -673,7 +710,7 @@ function EditorPane({
   if (overlay !== null) {
     return (
       <>
-        <TabStrip onClose={closeTabOrAsk(onAsk)} />
+        <TabBar onClose={closeTabOrAsk(onAsk)} />
         {overlay.kind === "variables" ? (
           <VariablesPane onDismiss={dismiss} />
         ) : (
@@ -685,7 +722,7 @@ function EditorPane({
 
   return (
     <>
-      <TabStrip onClose={closeTabOrAsk(onAsk)} />
+      <TabBar onClose={closeTabOrAsk(onAsk)} />
       {tab === undefined ? (
         <EmptyEditor />
       ) : (

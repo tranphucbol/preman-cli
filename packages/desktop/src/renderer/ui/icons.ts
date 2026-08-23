@@ -17,6 +17,7 @@ export {
   CaretDown as CaretDownIcon,
   CaretRight as CaretRightIcon,
   CaretUpDown as PickerIcon,
+  Check as CheckIcon,
   CheckCircle as PassIcon,
   Circle as UnknownIcon,
   Code as ScriptIcon,

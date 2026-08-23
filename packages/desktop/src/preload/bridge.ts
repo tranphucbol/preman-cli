@@ -33,8 +33,8 @@ export type WindowControl = "minimise" | "maximise" | "close";
  * keeps the three buttons every other Mac window has. Elsewhere the window keeps its native
  * frame, because a hand-drawn close button that cannot be tested is worse than a title bar.
  */
-export const TITLE_BAR_HEIGHT_PX = 32;
-/** Must equal `--spacing-tab`, the same way `ROW_HEIGHT` must equal `--spacing-row`. */
+/** Must equal `--spacing-bar`, the same way `ROW_HEIGHT` must equal `--spacing-row`. */
+export const TITLE_BAR_HEIGHT_PX = 40;
 export const TRAFFIC_LIGHT_INSET_PX = 12;
 /** Three 12px buttons, two 8px gaps, plus the inset again as breathing room before the first control. */
 export const TITLE_BAR_GUTTER_PX = 76;

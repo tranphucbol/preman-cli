@@ -5,15 +5,17 @@
  * calls for, and it is why no component library ships this: 26px is uncomfortably small for a
  * marketing page and exactly right for a pane you keep open all day.
  *
- * `Field` and `Select` are native elements on purpose. A styled `<div role="combobox">` has to
- * re-earn keyboard behaviour, form association and the OS focus ring that `<select>` gets free,
- * and decision 10 refuses shadcn `Form` for the same reason: uncontrolled inputs that commit on
- * blur are what keeps keystroke-to-paint under 8ms with forty header rows.
+ * `Field` is a native element on purpose, and decision 10 refuses shadcn `Form` for the same
+ * reason: uncontrolled inputs that commit on blur are what keeps keystroke-to-paint under 8ms
+ * with forty header rows. `Select` used to be native for the same reason and is not any more -
+ * see its own note. The line between them is whether the OS draws anything the user looks at.
  */
+import * as SelectPrimitive from "@radix-ui/react-select";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import type { ComponentProps, ReactNode, Ref } from "react";
 
 import { cn } from "./cn.js";
+import { CheckIcon, GLYPH_CLASS, PickerIcon } from "./icons.js";
 
 const TOOLTIP_DELAY_MS = 400;
 
@@ -99,8 +101,14 @@ export function Tooltip({
   );
 }
 
+/**
+ * `h-control-lg`, matching `Button`, and that is the whole reason it is not `h-control`. A field
+ * and the button that acts on it are one control in the user's head - the URL bar and Send, the
+ * search box and its toggle - and 26px beside 30px reads as one of them being broken. 26px stays
+ * the height of the chrome tier: icon buttons, quiet buttons, menu items.
+ */
 const INPUT_CLASS =
-  "h-control w-full min-w-0 rounded-sm border border-line-strong bg-control px-2 text-xs text-ink placeholder:text-ink-faint disabled:text-ink-faint";
+  "h-control-lg w-full min-w-0 rounded-sm border border-line-strong bg-control px-2 text-xs text-ink placeholder:text-ink-faint disabled:text-ink-faint";
 
 export interface FieldProps extends Omit<ComponentProps<"input">, "className"> {
   readonly mono?: boolean;
@@ -129,25 +137,124 @@ export function CellField({ mono = true, ...rest }: FieldProps) {
   );
 }
 
-export interface SelectProps extends Omit<ComponentProps<"select">, "className"> {
+/**
+ * The two heights a select comes in, named for the row it belongs to rather than for its size.
+ *
+ * A select is the one control that turns up in both tiers, which is why it is the one that has to
+ * say which. `content` is 30px, matching `Button` and `Field`, for a picker that is part of the
+ * thing being edited: the method beside the URL and Send. `chrome` is 26px, matching `IconButton`
+ * and a `quiet` button, for a picker in a strip of chrome - where 30px makes it the tallest thing
+ * in a row it is not the subject of.
+ */
+const SELECT_TIER = {
+  content: "h-control-lg",
+  chrome: "h-control",
+} as const;
+
+export type SelectTier = keyof typeof SELECT_TIER;
+
+const SELECT_TRIGGER_CLASS =
+  "inline-flex w-fit cursor-default select-none items-center gap-1 rounded-sm border border-line-strong bg-control pr-1 pl-2 text-xs text-ink outline-none data-placeholder:text-ink-faint data-disabled:text-ink-faint";
+
+/**
+ * The popup is a menu, because to the user it is one.
+ *
+ * Same surface, same radius, same hairline and same shadow as `Menu`'s `CONTENT_CLASS`, and the
+ * items are `Menu`'s `ITEM_CLASS` with the icon column moved to the right of the label. A select
+ * popup that looked like its own kind of surface would teach the user there are two kinds of
+ * floating list in this app, and there are not.
+ *
+ * `--radix-select-trigger-width` as a floor rather than a width: the trigger holding `GET` must
+ * not clip `DELETE`, but a wide trigger should not be re-flowed by a narrow list either.
+ */
+const SELECT_CONTENT_CLASS =
+  "z-menu min-w-[var(--radix-select-trigger-width)] rounded-md border border-line-strong bg-panel p-1 shadow-lg shadow-black/40";
+
+const SELECT_VIEWPORT_CLASS = "max-h-[var(--radix-select-content-available-height)]";
+
+const SELECT_ITEM_CLASS =
+  "flex h-control cursor-default select-none items-center gap-4 rounded-sm px-2 text-xs text-ink outline-none data-highlighted:bg-hover data-disabled:text-ink-faint";
+
+export interface SelectProps {
+  readonly value: string;
+  readonly onValueChange: (value: string) => void;
+  readonly children: ReactNode;
   readonly mono?: boolean;
-  readonly ref?: Ref<HTMLSelectElement>;
+  readonly tier?: SelectTier;
+  readonly disabled?: boolean;
+  /** Required, not optional, for the same reason `IconButton` requires one: there is no label. */
+  readonly "aria-label": string;
 }
 
 /**
+ * On Radix, which decision 9 sanctions, because a native `<select>` cannot be styled where it
+ * matters. The closed control took the app's tokens; the open list was drawn by the OS, so the
+ * one moment the control is doing its job was the one moment it stopped looking like this app.
+ * That is the trade decision 9 anticipated: the popup is worth re-earning keyboard behaviour for,
+ * `Field` is not - a text input's "popup" is the caret, and the OS draws that fine.
+ *
  * Sizes to its content rather than filling its parent: a picker holding the word `GET` has
  * no business being as wide as the URL beside it. Callers that need a different width wrap
  * it, which is also why `className` is not accepted here.
  */
-export function Select({ mono = false, ...rest }: SelectProps) {
+export function Select({
+  value,
+  onValueChange,
+  children,
+  mono = false,
+  tier = "content",
+  disabled = false,
+  "aria-label": label,
+}: SelectProps) {
   return (
-    <select
-      className={cn(
-        "h-control cursor-default rounded-sm border border-line-strong bg-control px-1.5 text-xs text-ink",
-        mono && "font-mono",
-      )}
-      {...rest}
-    />
+    <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
+      <SelectPrimitive.Trigger
+        aria-label={label}
+        className={cn(SELECT_TRIGGER_CLASS, SELECT_TIER[tier], mono && "font-mono")}
+      >
+        <SelectPrimitive.Value />
+        <SelectPrimitive.Icon className={GLYPH_CLASS}>
+          <PickerIcon />
+        </SelectPrimitive.Icon>
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.Portal>
+        {/* `popper`, not the default `item-aligned`: item-aligned overlays the trigger the way a
+            macOS select does, and every other floating list here drops below its trigger. */}
+        <SelectPrimitive.Content
+          position="popper"
+          side="bottom"
+          sideOffset={4}
+          className={cn(SELECT_CONTENT_CLASS, mono && "font-mono")}
+        >
+          <SelectPrimitive.Viewport className={SELECT_VIEWPORT_CLASS}>{children}</SelectPrimitive.Viewport>
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
+  );
+}
+
+export interface SelectOptionProps {
+  readonly value: string;
+  readonly children: ReactNode;
+  readonly disabled?: boolean;
+}
+
+/**
+ * The tick is on the right and the label is not indented for it.
+ *
+ * A reserved left column would align these labels with `DropdownItem`'s icons, but the icon in a
+ * menu names the action and the tick here only marks the row you are already on - and the list is
+ * short enough to see at a glance. Indenting `GET` by an icon width to make room for a mark that
+ * is present once costs more than it says.
+ */
+export function SelectOption({ value, children, disabled = false }: SelectOptionProps) {
+  return (
+    <SelectPrimitive.Item value={value} disabled={disabled} className={SELECT_ITEM_CLASS}>
+      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      <SelectPrimitive.ItemIndicator className="ml-auto text-accent">
+        <CheckIcon />
+      </SelectPrimitive.ItemIndicator>
+    </SelectPrimitive.Item>
   );
 }
 

@@ -25,14 +25,21 @@ const METHOD_CLASS: Record<string, string> = {
   DELETE: "text-method-delete",
 };
 
-/** The strip is chrome: it stays put while the pane below it scrolls. */
-const STRIP_CLASS = "flex h-tab shrink-0 items-stretch overflow-x-auto border-b border-line bg-canvas";
+/**
+ * The tabs only, not the row they sit in. The row is `TabBar` in `App.tsx`, because the
+ * environment picker shares it and the picker must not scroll away with the fortieth tab: the
+ * scroll container has to be the tabs alone.
+ */
+const STRIP_CLASS = "flex min-w-0 flex-1 items-stretch overflow-x-auto no-scrollbar";
 
 const TAB_CLASS = "group flex h-full min-w-32 max-w-56 shrink-0 items-center gap-1.5 border-r border-line px-2 text-xs";
 
 /**
  * `onClose` rather than the store's own `close`: an unsaved tab has to be asked about, and the
  * strip is the wrong place to own a dialog. It reports the intent; the app decides.
+ *
+ * Nothing when there are no tabs, which is not the same as the row being gone: `TabBar` still
+ * draws the row, because the environment picker in it is true whether or not a file is open.
  */
 export function TabStrip({ onClose }: { readonly onClose: (nodeId: string) => void }): React.JSX.Element | null {
   const order = useTabsStore((state) => state.order);
