@@ -36,6 +36,7 @@ import type { CatalogNode, MutateOp, RequestKind } from "@preman/desktop/engine/
 
 import type { GitDecoration } from "@preman/desktop/renderer/model/git.js";
 import { resolveDrop, type DropSide } from "@preman/desktop/renderer/model/order.js";
+import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import {
   useCatalogStore,
   useGitDecoration,
@@ -67,9 +68,6 @@ import {
   RunnerIcon,
   SendIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
-
-/** Must equal `--spacing-row` in app.css. Fixed, so the virtualizer needs no measurement pass. */
-const ROW_HEIGHT = 28;
 
 /** Rows rendered above and below the viewport. Three is enough to hide a fast flick at 28px. */
 const OVERSCAN = 8;
@@ -196,13 +194,15 @@ export function Sidebar(props: SidebarProps) {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: DRAG_THRESHOLD_PX } }));
 
+  const rowHeight = useDensityTokens().row;
   const virtualizer = useVirtualizer({
     count: visibleIds.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
     getItemKey: (index) => visibleIds[index] ?? index,
   });
+  useRemeasure(virtualizer, rowHeight);
 
   const captureTarget = useCallback((event: React.MouseEvent<HTMLElement>) => {
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-node-id]");
@@ -250,9 +250,11 @@ export function Sidebar(props: SidebarProps) {
 
       const plan = resolveDrop(catalog.nodes, draggedId, { overId, side });
       planRef.current = plan.ops;
-      setIndicator(plan.ops.length === 0 ? null : indicatorFor(plan.side, overNode, visibleIds.indexOf(overId)));
+      setIndicator(
+        plan.ops.length === 0 ? null : indicatorFor(plan.side, overNode, visibleIds.indexOf(overId), rowHeight),
+      );
     },
-    [visibleIds],
+    [visibleIds, rowHeight],
   );
 
   const onDragEnd = useCallback(
@@ -334,13 +336,13 @@ function sideFor(rect: { readonly top: number; readonly height: number }, pointe
   return "inside";
 }
 
-function indicatorFor(side: DropSide, over: CatalogNode, visibleIndex: number): DropIndicator {
-  const top = visibleIndex * ROW_HEIGHT;
+function indicatorFor(side: DropSide, over: CatalogNode, visibleIndex: number, rowHeight: number): DropIndicator {
+  const top = visibleIndex * rowHeight;
   if (side === "inside") {
     return { top, indent: 0, inside: true };
   }
   return {
-    top: side === "before" ? top : top + ROW_HEIGHT,
+    top: side === "before" ? top : top + rowHeight,
     indent: over.depth * INDENT_PX + DROP_LINE_INSET_PX,
     inside: false,
   };

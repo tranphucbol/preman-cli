@@ -48,6 +48,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron, type ElectronApplication, type Page } from "playwright-core";
 import { afterEach, describe, expect, it } from "vitest";
+import { DEFAULT_PREFERENCES } from "@preman/desktop/preload/bridge.js";
 import type { AppState } from "@preman/desktop/main/store.js";
 import { FIXTURE_WS } from "../helpers.js";
 import { writeBigWorkspace, type GeneratedWorkspace } from "../support/big-workspace.js";
@@ -114,6 +115,11 @@ const TAB_SWITCH_BUDGET_MS = 16;
 const KEYSTROKE_BUDGET_MS = 8;
 const LONG_TASK_BUDGET_MS = 50;
 /**
+ * Changing the theme writes about sixty custom properties onto `:root` and repaints. It moves no
+ * layout, so it is held to the same 16ms as a tab switch.
+ */
+const THEME_SWITCH_BUDGET_MS = 16;
+/**
  * The two interaction budgets are read against the *typical* interaction, not the worst one.
  *
  * Left alone, with nobody touching it, this app still blocks its own main thread for between
@@ -143,6 +149,36 @@ const INTERACTION_SETTLE_MS = 1_000;
 const TYPED_TEXT = "preman keystroke budget sample";
 const KEYSTROKE_DELAY_MS = 40;
 const MIXED_SCROLL_FRAMES = 60;
+/**
+ * Opening a request tab is the one interaction that mounts a CodeMirror instance. Ten of them is
+ * enough for a median without the tab strip growing past what anybody keeps open.
+ */
+const TAB_OPENS = 10;
+/** `writeBigWorkspace` alternates gRPC and HTTP, so every other row is a message editor. */
+const GRPC_ROW_STRIDE = 2;
+/**
+ * Longer than {@link INTERACTION_IDLE_MS}, because a tab open is not finished when the click
+ * returns: the engine answers over a port and the editor mounts after that. A 50ms window would
+ * charge half of each open to the next one.
+ */
+const TAB_OPEN_IDLE_MS = 250;
+/**
+ * Mounting an editor is held to what typing one character into it costs. Measured p50 is 3.7ms, so
+ * this is not a tight fit — the point of the row is the shape, not the margin. The *first* open of a
+ * session costs 32ms, because it pays once for CodeMirror's module graph and the engine's first
+ * reply, and that one is caught by {@link LONG_TASK_BUDGET_MS} instead. If the first mount ever
+ * crosses fifty, this case is where it shows.
+ */
+const TAB_OPEN_BUDGET_MS = 8;
+
+/** The title bar's own button, and the two radio groups the settings pane puts on screen. */
+const SETTINGS_BUTTON_SELECTOR = '[aria-label="Settings"]';
+const THEME_OPTION_SELECTOR = '[role="radiogroup"][aria-label="Theme"] input[type="radio"]';
+const DENSITY_OPTION_SELECTOR = '[role="radiogroup"][aria-label="Density"] input[type="radio"]';
+/** Enough themes to have a median, and few enough that the case is not a minute of repainting. */
+const THEME_SWITCHES = 10;
+/** Every preset, twice round, so the last one leaves the app on `default` again. */
+const DENSITY_SWITCHES = 6;
 
 const LAUNCH_TIMEOUT_MS = 120_000;
 const CASE_TIMEOUT_MS = 300_000;
@@ -183,6 +219,7 @@ function seedUserData(root: string): string {
   const state: AppState = {
     version: STATE_VERSION,
     window: { x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_HEIGHT },
+    preferences: { ...DEFAULT_PREFERENCES },
     activeRoot: root,
     workspaces: [],
   };
@@ -472,6 +509,80 @@ function switchTabs(page: Page, times: number, idleMs: number): Promise<number> 
   );
 }
 
+/**
+ * Open `times` request rows one at a time, idling long enough after each that the engine has
+ * answered and the editor has mounted inside that sample's own window, and report how many tabs
+ * ended up open. Shaped like {@link switchTabs}; the difference is the idle, which has to outlast a
+ * round trip rather than a re-render.
+ *
+ * Every other row, because the generated workspace alternates gRPC and HTTP and only the gRPC rows
+ * open on a message editor. Ten of the same heavy editor is a budget; five of it and five of a body
+ * section with no editor in it is an average of two different things.
+ */
+function openTabs(page: Page, times: number, idleMs: number): Promise<number> {
+  return page.evaluate(
+    async ({ rowSelector, tabSelector, count, stride, idle, key }) => {
+      const rows = Array.from(document.querySelectorAll<HTMLElement>(rowSelector)).filter(
+        (_unused, index) => index % stride === 0,
+      );
+      if (rows.length < count) throw new Error(`only ${String(rows.length)} gRPC request rows are visible`);
+      const probe = (window as unknown as ProbeHolder)[key];
+      for (const row of rows.slice(0, count)) {
+        probe?.marks.push(performance.now());
+        row.click();
+        await new Promise((resolve) => {
+          setTimeout(resolve, idle);
+        });
+      }
+      return document.querySelectorAll(tabSelector).length;
+    },
+    {
+      rowSelector: REQUEST_ROW_SELECTOR,
+      tabSelector: OPEN_TAB_SELECTOR,
+      count: times,
+      stride: GRPC_ROW_STRIDE,
+      idle: idleMs,
+      key: RENDERER_PROBE_KEY,
+    },
+  );
+}
+
+/** Open the settings pane and wait for the theme grid to be on screen. */
+async function openSettings(page: Page): Promise<void> {
+  await page.evaluate((selector) => {
+    const button = document.querySelector<HTMLElement>(selector);
+    if (button === null) throw new Error(`no ${selector} in the title bar`);
+    button.click();
+  }, SETTINGS_BUTTON_SELECTOR);
+  await page.waitForSelector(THEME_OPTION_SELECTOR, { timeout: LAUNCH_TIMEOUT_MS });
+}
+
+/**
+ * Click through the first `times` options of a radio group, idling between clicks so each choice
+ * is its own sample, and report how many ended up checked. Shaped like {@link switchTabs} and
+ * driven from inside the page for the same reason.
+ */
+function chooseOptions(page: Page, selector: string, times: number, idleMs: number): Promise<number> {
+  return page.evaluate(
+    async ({ optionSelector, count, idle, key }) => {
+      const optionsNow = (): HTMLElement[] => Array.from(document.querySelectorAll<HTMLElement>(optionSelector));
+      if (optionsNow().length === 0) throw new Error(`no ${optionSelector} to choose from`);
+      const probe = (window as unknown as ProbeHolder)[key];
+      for (let index = 0; index < count; index += 1) {
+        const options = optionsNow();
+        // A click is not an input event, so unlike a keystroke it has to mark itself.
+        probe?.marks.push(performance.now());
+        options[index % options.length]?.click();
+        await new Promise((resolve) => {
+          setTimeout(resolve, idle);
+        });
+      }
+      return optionsNow().filter((option) => (option as HTMLInputElement).checked).length;
+    },
+    { optionSelector: selector, count: times, idle: idleMs, key: RENDERER_PROBE_KEY },
+  );
+}
+
 interface ScrollTrace {
   /** Milliseconds between consecutive animation frames, steady state only. */
   gaps: number[];
@@ -644,8 +755,8 @@ describe.skipIf(!PERF_ENABLED)("the app's budget", () => {
       generated = writeBigWorkspace(INTERACTION_REQUESTS);
       const app = await launch(generated.root);
 
-      // Deliberately unsettled and deliberately broader than the two cases above: this one is
-      // meant to catch opening a tab, which pays for the engine's reply and a first editor mount.
+      // Deliberately unsettled and deliberately broader than the attributed cases: this one is the
+      // only place a cost nobody thought to attribute still has to fit inside fifty milliseconds.
       const blocking = await measureBlocking(app, async () => {
         await openRequestTabs(app.page, OPEN_TABS);
         await switchTabs(app.page, OPEN_TABS, INTERACTION_IDLE_MS);
@@ -654,6 +765,82 @@ describe.skipIf(!PERF_ENABLED)("the app's budget", () => {
 
       expect(longest(blocking.renderer, "renderer")).toBeLessThanOrEqual(LONG_TASK_BUDGET_MS);
       expect(longest(blocking.main, "main")).toBeLessThanOrEqual(LONG_TASK_BUDGET_MS);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "givenARequestRow_whenOpenedAsATab_thenTheEditorMountsInsideItsBudget",
+    async () => {
+      requireBuild();
+      generated = writeBigWorkspace(INTERACTION_REQUESTS);
+      const app = await launch(generated.root);
+      await app.page.waitForTimeout(INTERACTION_SETTLE_MS);
+
+      let opened = NO_SELECTION;
+      const blocking = await measureBlocking(app, async () => {
+        opened = await openTabs(app.page, TAB_OPENS, TAB_OPEN_IDLE_MS);
+      });
+
+      // An editor on screen is what makes this a mount measurement and not a click measurement.
+      expect(opened).toBe(TAB_OPENS);
+      expect(await app.page.locator(EDITOR_SELECTOR).count()).toBeGreaterThan(0);
+      const costs = interactionCosts(blocking.renderer);
+      expect(costs).toHaveLength(TAB_OPENS);
+      expect(at(costs, TYPICAL_PERCENTILE)).toBeLessThanOrEqual(TAB_OPEN_BUDGET_MS);
+      expect(at(costs, WORST)).toBeLessThanOrEqual(LONG_TASK_BUDGET_MS);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "givenTheSettingsPane_whenSwitchingThemes_thenNothingBlocksLongerThanSixteenMs",
+    async () => {
+      requireBuild();
+      generated = writeBigWorkspace(INTERACTION_REQUESTS);
+      const app = await launch(generated.root);
+      await openSettings(app.page);
+      await app.page.waitForTimeout(INTERACTION_SETTLE_MS);
+
+      let checked = NO_SELECTION;
+      const blocking = await measureBlocking(app, async () => {
+        checked = await chooseOptions(app.page, THEME_OPTION_SELECTOR, THEME_SWITCHES, INTERACTION_IDLE_MS);
+      });
+
+      // A radio group with nothing checked would mean the clicks never reached the store.
+      expect(checked).toBe(1);
+      const costs = interactionCosts(blocking.renderer);
+      expect(costs).toHaveLength(THEME_SWITCHES);
+      expect(at(costs, TYPICAL_PERCENTILE)).toBeLessThanOrEqual(THEME_SWITCH_BUDGET_MS);
+      expect(at(costs, WORST)).toBeLessThanOrEqual(LONG_TASK_BUDGET_MS);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "givenTheSettingsPane_whenSwitchingDensity_thenNoSwitchRunsATaskOverFiftyMs",
+    async () => {
+      requireBuild();
+      generated = writeBigWorkspace(INTERACTION_REQUESTS);
+      const app = await launch(generated.root);
+      await openSettings(app.page);
+      await app.page.waitForTimeout(INTERACTION_SETTLE_MS);
+
+      let checked = NO_SELECTION;
+      const blocking = await measureBlocking(app, async () => {
+        checked = await chooseOptions(app.page, DENSITY_OPTION_SELECTOR, DENSITY_SWITCHES, INTERACTION_IDLE_MS);
+      });
+
+      /*
+       * Only the long-task budget, deliberately. A density change relays out every pane and
+       * re-measures six virtualizers, and it is not an interaction anybody performs mid-task —
+       * holding it to a tab switch's 16ms would be pretending it is the same kind of event. What
+       * it must not do is drop a frame's worth of frames.
+       */
+      expect(checked).toBe(1);
+      const costs = interactionCosts(blocking.renderer);
+      expect(costs).toHaveLength(DENSITY_SWITCHES);
+      expect(at(costs, WORST)).toBeLessThanOrEqual(LONG_TASK_BUDGET_MS);
     },
     CASE_TIMEOUT_MS,
   );

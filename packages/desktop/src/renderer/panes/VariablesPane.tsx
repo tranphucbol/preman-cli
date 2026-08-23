@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scope, VariableBinding, VariableLayer, VariableView } from "@preman/desktop/engine/protocol.js";
 
 import { readVariables, writeVariable, type Failure } from "@preman/desktop/renderer/actions.js";
+import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
@@ -28,8 +29,6 @@ import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { AddIcon, CloseIcon, RefreshIcon } from "@preman/desktop/renderer/ui/icons.js";
 
-/** Must equal `--spacing-row` in app.css, so the virtualizer needs no measurement pass. */
-const ROW_HEIGHT = 28;
 const OVERSCAN = 12;
 
 const KEY_COLUMN = "minmax(10rem, 1fr)";
@@ -126,13 +125,15 @@ function Table({ view, onCommit }: { readonly view: VariableView; readonly onCom
   const { layers, bindings } = view;
   const template = `${KEY_COLUMN} ${layers.map(() => LAYER_COLUMN).join(" ")}`;
 
+  const rowHeight = useDensityTokens().row;
   const virtualizer = useVirtualizer({
     count: bindings.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
     getItemKey: (index) => bindings[index]?.key ?? index,
   });
+  useRemeasure(virtualizer, rowHeight);
 
   const writable = layers.find((layer) => layer.writable);
 

@@ -14,12 +14,14 @@ import * as Primitive from "@radix-ui/react-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { paletteRowHeight } from "@preman/desktop/renderer/appearance/density.js";
 import {
   rankPalette,
   type PaletteItem,
   type PaletteKind,
   type PaletteRow,
 } from "@preman/desktop/renderer/model/palette.js";
+import { useDensity, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import {
   CollectionIcon,
@@ -33,7 +35,6 @@ const OVERLAY_CLASS = "fixed inset-0 z-menu bg-black/50";
 const CONTENT_CLASS =
   "fixed left-1/2 top-24 z-menu w-[36rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-lg border border-line-strong bg-panel shadow-2xl shadow-black/60";
 
-const ROW_HEIGHT = 34;
 const OVERSCAN = 6;
 /** The list's own height. Ten rows: enough to choose from, short enough to read at a glance. */
 const VISIBLE_ROWS = 10;
@@ -102,12 +103,14 @@ function Body({
 
   const rows = useMemo(() => rankPalette(items, query), [items, query]);
 
+  const rowHeight = paletteRowHeight(useDensity());
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
   });
+  useRemeasure(virtualizer, rowHeight);
 
   // The highlight has to be inside the viewport for the arrow keys to be navigation rather than
   // a game of guessing which invisible row is selected.
@@ -160,7 +163,7 @@ function Body({
         <div
           ref={scrollRef}
           className="overflow-y-auto overscroll-contain"
-          style={{ height: Math.min(rows.length, VISIBLE_ROWS) * ROW_HEIGHT }}
+          style={{ height: Math.min(rows.length, VISIBLE_ROWS) * rowHeight }}
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((item) => {
@@ -171,6 +174,7 @@ function Body({
                   key={`${row.item.kind}:${row.item.id}`}
                   row={row}
                   top={item.start}
+                  height={rowHeight}
                   active={item.index === active}
                   onChoose={() => {
                     choose(item.index);
@@ -188,11 +192,13 @@ function Body({
 function PaletteRowView({
   row,
   top,
+  height,
   active,
   onChoose,
 }: {
   readonly row: PaletteRow;
   readonly top: number;
+  readonly height: number;
   readonly active: boolean;
   readonly onChoose: () => void;
 }): React.JSX.Element {
@@ -204,7 +210,7 @@ function PaletteRowView({
         "absolute inset-x-0 flex items-center gap-2 px-3 text-left",
         active ? "bg-selected" : "hover:bg-hover",
       )}
-      style={{ top, height: ROW_HEIGHT }}
+      style={{ top, height }}
       // `onMouseDown` rather than `onClick`: the input holds focus, and a click would blur it
       // first, which on some platforms closes the dialog before the choice lands.
       onMouseDown={(event) => {

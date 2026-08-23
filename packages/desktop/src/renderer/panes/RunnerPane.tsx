@@ -38,6 +38,7 @@ import {
   testTotals,
   toneClass,
 } from "@preman/desktop/renderer/model/response.js";
+import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import { useNode } from "@preman/desktop/renderer/stores/catalog.js";
 import {
   useFocusedRequest,
@@ -55,8 +56,6 @@ import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
 
 import { ResponseView } from "./ResponsePane.js";
 
-/** Must equal `--spacing-row` in app.css, so the virtualizer needs no measurement pass. */
-const ROW_HEIGHT = 28;
 const OVERSCAN = 12;
 
 const LIST_ID = "runner-list";
@@ -366,13 +365,15 @@ function Exchange({ run }: { readonly run: Run }) {
 
 function ItemList({ run }: { readonly run: Run }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rowHeight = useDensityTokens().row;
   const virtualizer = useVirtualizer({
     count: run.items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
     getItemKey: (index) => run.items[index] ?? index,
   });
+  useRemeasure(virtualizer, rowHeight);
 
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">

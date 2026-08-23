@@ -20,6 +20,17 @@ export const CHANNELS = {
   windowControl: "preman:window-control",
   readSession: "preman:read-session",
   saveSession: "preman:save-session",
+  /**
+   * Synchronous, and the only channel that is. The renderer needs the theme before its first
+   * paint, and a promise cannot be awaited before `createRoot().render()` without showing a frame
+   * of something. See `docs/decisions/022`.
+   */
+  readPreferences: "preman:read-preferences",
+  savePreferences: "preman:save-preferences",
+  /** Renderer to main, after a theme or density change moved the window's own chrome. */
+  setWindowChrome: "preman:set-window-chrome",
+  /** Main to renderer, from the app menu's Settings item. */
+  openSettings: "preman:open-settings",
 } as const;
 
 export type WindowControl = "minimise" | "maximise" | "close";
@@ -33,13 +44,73 @@ export type WindowControl = "minimise" | "maximise" | "close";
  * keeps the three buttons every other Mac window has. Elsewhere the window keeps its native
  * frame, because a hand-drawn close button that cannot be tested is worse than a title bar.
  */
-/** Must equal `--spacing-bar`, the same way `ROW_HEIGHT` must equal `--spacing-row`. */
+/** The `default` density's `--spacing-bar`. The stored preference overrides it; this is the floor. */
 export const TITLE_BAR_HEIGHT_PX = 40;
 export const TRAFFIC_LIGHT_INSET_PX = 12;
-/** Three 12px buttons, two 8px gaps, plus the inset again as breathing room before the first control. */
+/**
+ * Three 12px buttons, two 8px gaps, plus the inset again as breathing room before the first
+ * control. Unlike the bar's height this does not move with density: the traffic lights are the
+ * system's, drawn at the system's size, so the space they need is the system's too.
+ */
 export const TITLE_BAR_GUTTER_PX = 76;
 /** The cluster is 12px tall; centring it is arithmetic, not a guess. */
 export const TRAFFIC_LIGHT_HEIGHT_PX = 12;
+/** `preman-dark`'s `--color-canvas`. What the window is painted before the renderer has loaded. */
+export const DEFAULT_CANVAS = "#111214";
+
+/**
+ * How tightly the interface is packed. Three presets rather than a scale slider: every row height,
+ * every control height and every type size has to stay in proportion, and a free multiplier makes
+ * that a rounding problem at every step. See `docs/decisions/021`.
+ */
+export type Density = "compact" | "default" | "comfortable";
+
+/**
+ * What the user chose about how the app looks. Global, not per-workspace — a theme is a property
+ * of the person, and two windows onto two workspaces that disagreed about their colours would be
+ * two apps.
+ *
+ * `canvas` and `barHeightPx` are denormalised copies of two values the theme and the density
+ * already determine. They are here so the main process can paint the window and place the traffic
+ * lights without knowing what a theme is; that keeps `main/` ignorant of `renderer/appearance/`,
+ * at the cost of one launch of staleness if the two ever drift. The renderer corrects them on
+ * every save, so they cannot drift twice.
+ */
+export interface Preferences {
+  themeId: string;
+  density: Density;
+  /** Pixels, and the editor's alone. The rest of the type scale moves with `density`. */
+  editorFontSize: number;
+  /** A family name to put in front of the default stack, or `null` for the stack as shipped. */
+  fontMono: string | null;
+  fontSans: string | null;
+  canvas: string;
+  barHeightPx: number;
+}
+
+/** The editor's size in `app.css` today, so a fresh install renders exactly as it does now. */
+export const DEFAULT_EDITOR_FONT_SIZE_PX = 12;
+
+/**
+ * What a fresh install looks like, and what a state file from another version falls back to.
+ * `preman-dark` is the theme every contrast number in `docs/design-system.md` was measured
+ * against, so the default is also the reference.
+ */
+export const DEFAULT_PREFERENCES: Preferences = {
+  themeId: "preman-dark",
+  density: "default",
+  editorFontSize: DEFAULT_EDITOR_FONT_SIZE_PX,
+  fontMono: null,
+  fontSans: null,
+  canvas: DEFAULT_CANVAS,
+  barHeightPx: TITLE_BAR_HEIGHT_PX,
+};
+
+/** The two things about the window itself that a preference change moves. */
+export interface WindowChrome {
+  canvas: string;
+  barHeightPx: number;
+}
 
 export interface WorkspaceHandle {
   root: string;
@@ -127,6 +198,11 @@ export interface PremanBridge {
    * Zero when the window has a native frame, so the renderer never asks which platform it is on.
    */
   readonly titleBarGutter: number;
+  /**
+   * A value, not a call: read synchronously in the preload so the renderer can paint the right
+   * colours in its first frame rather than flashing the defaults and correcting itself.
+   */
+  readonly preferences: Preferences;
   /** Returns an unsubscribe function, so a re-render cannot stack listeners. */
   onHostFailure(listener: (failure: HostFailure) => void): () => void;
   listWorkspaces(): Promise<WorkspaceHandle[]>;
@@ -152,4 +228,13 @@ export interface PremanBridge {
   /** What was open in `root` last time. An unknown root reads as an empty session, not an error. */
   readSession(root: string): Promise<SessionSnapshot>;
   saveSession(root: string, snapshot: SessionSnapshot): Promise<void>;
+  /** Persist the whole preference record. There is no partial update; the record is small. */
+  savePreferences(next: Preferences): Promise<void>;
+  /**
+   * Repaint the native window to match. Separate from `savePreferences` because it is the half
+   * that has to happen now, before the next frame, while persistence can take its time.
+   */
+  setWindowChrome(chrome: WindowChrome): void;
+  /** The app menu's Settings item. Returns an unsubscribe function. */
+  onOpenSettings(listener: () => void): () => void;
 }

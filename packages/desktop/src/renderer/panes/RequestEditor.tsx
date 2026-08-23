@@ -623,7 +623,7 @@ function MessagePane({
       </div>
       <CodeEditor
         value={message}
-        language="json"
+        language="json-template"
         placeholder={MESSAGE_HINT}
         onCommit={(next) => {
           if (next !== message) apply([edit(FIELD.message, next)]);
@@ -633,7 +633,7 @@ function MessagePane({
   );
 }
 
-const RAW_LANGUAGE: CodeLanguage = "json";
+const RAW_LANGUAGE: CodeLanguage = "json-template";
 
 function BodyPane({ data, apply }: { readonly data: unknown; readonly apply: Apply }) {
   const type = readBodyType(data);
@@ -712,7 +712,7 @@ function BodyContent({
         <SectionLabel>Variables</SectionLabel>
         <CodeEditor
           value={readText(data, FIELD.graphqlVariables)}
-          language="json"
+          language="json-template"
           onCommit={(next) => {
             if (next !== readText(data, FIELD.graphqlVariables)) apply([edit(FIELD.graphqlVariables, next)]);
           }}

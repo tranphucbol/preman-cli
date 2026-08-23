@@ -23,13 +23,12 @@ import {
   toneClass,
   type ConsoleRow,
 } from "@preman/desktop/renderer/model/response.js";
+import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { ClearIcon, CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
 
-/** One line of mono text at 28px, which is what the row is if it does not wrap. */
-const ROW_HEIGHT = 28;
 const OVERSCAN = 12;
 /** Within this of the bottom, the drawer follows new output instead of holding position. */
 const FOLLOW_THRESHOLD_PX = 40;
@@ -46,13 +45,16 @@ export function ConsoleDrawer({ onClose }: { readonly onClose: () => void }) {
   // renders differently because of it.
   const pinned = useRef(true);
 
+  /** One line of mono text, which is what the row is if it does not wrap. */
+  const rowHeight = useDensityTokens().row;
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
     getItemKey: (index) => rows[index]?.seq ?? index,
   });
+  useRemeasure(virtualizer, rowHeight);
 
   const last = rows.length - 1;
   useEffect(() => {

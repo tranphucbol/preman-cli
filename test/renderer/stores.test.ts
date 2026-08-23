@@ -25,7 +25,7 @@ import type {
   RunEvent,
 } from "@preman/desktop/engine/protocol.js";
 import { EXIT_CODES, ORDER_STEP } from "@preman/desktop/engine/protocol.js";
-import { TITLE_BAR_GUTTER_PX } from "@preman/desktop/preload/bridge.js";
+import { DEFAULT_PREFERENCES, TITLE_BAR_GUTTER_PX } from "@preman/desktop/preload/bridge.js";
 import type { PremanBridge, SessionSnapshot, WindowControl } from "@preman/desktop/preload/bridge.js";
 import { EngineRequestError, type EngineClient } from "@preman/desktop/renderer/client.js";
 import type { TestResult } from "@preman/desktop/renderer/model/response.js";
@@ -95,6 +95,10 @@ function fakeBridge(): FakeBridge {
 
   const bridge: PremanBridge = {
     titleBarGutter: TITLE_BAR_GUTTER_PX,
+    preferences: { ...DEFAULT_PREFERENCES },
+    savePreferences: () => Promise.resolve(),
+    setWindowChrome: () => undefined,
+    onOpenSettings: () => () => undefined,
     onHostFailure: () => () => undefined,
     listWorkspaces: () => Promise.resolve([]),
     pickWorkspaceDirectory: () => Promise.resolve(null),
@@ -675,6 +679,9 @@ describe("the overlay over the editor", () => {
 
     overlay.showVariables();
     expect(useOverlayStore.getState().overlay).toStrictEqual({ kind: "variables" });
+
+    overlay.showSettings();
+    expect(useOverlayStore.getState().overlay).toStrictEqual({ kind: "settings" });
 
     overlay.dismiss();
     expect(useOverlayStore.getState().overlay).toBeNull();

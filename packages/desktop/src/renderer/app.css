@@ -8,12 +8,21 @@
  * header rows and a 5,000-node tree on screen. Retuning here rather than per component is the
  * whole point: a later Radix or shadcn control inherits it without being patched.
  *
- * v1 is dark only. Not "dark by default": there is no light theme and no OS following, because a
- * request tool that repaints itself at sunset is a tool that changed under the user's hands
- * mid-debug. A second palette is a real feature with a real cost and it is not in this phase.
+ * What this file declares is a default, not the only answer. The colour and height tokens are
+ * configurable at run time: `renderer/appearance/` holds forty-three themes and three density
+ * presets in TypeScript, and `appearance/apply.ts` writes the chosen pair onto `:root` before React
+ * exists. The literals below are what `preman-dark` and `default` resolve to, kept here so the
+ * stylesheet is readable on its own and so an unstyled document is still the shipped design.
+ * Decisions 20 and 21.
+ *
+ * Light themes are in; following the OS is not. There is no `nativeTheme` and no
+ * `prefers-color-scheme`, because a request tool that repaints itself at sunset is a tool that
+ * changed under the user's hands mid-debug. Which theme is in use is a choice, made once.
  *
  * Every foreground token below states its worst-case contrast against the five surfaces. Those
- * numbers are computed, not chosen: the ratios are the reason the values look the way they do.
+ * numbers are computed, not chosen: the ratios are the reason the values look the way they do, and
+ * the same arithmetic is a gate every other theme has to pass — `packages/desktop/scripts/audit.ts`
+ * states it, `test/renderer/themes.test.ts` runs it over all forty-three.
  */
 @import "tailwindcss";
 
@@ -31,8 +40,21 @@
   --text-sm: 0.84375rem; /* 13.5px — the body size */
   --text-sm--line-height: 1.25rem;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* The shipped stacks, with a slot in front of each for a family the user named.
+   *
+   * `--font-user-*` is unset until someone chooses one, and an unset `var()` resolves to its
+   * fallback — which here is the first entry of the stack that shipped. So the default is not
+   * reconstructed in TypeScript and then written back; it is simply what these declarations
+   * already say. `renderer/appearance/fonts.ts` writes the slot and nothing else. */
+  --font-sans:
+    var(--font-user-sans, ui-sans-serif), system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: var(--font-user-mono, ui-monospace), "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* The editor's size, and the editor's alone. CodeMirror is the one surface where the type size
+   * is a reading preference rather than a consequence of how tightly the chrome is packed, so it
+   * is a token the settings pane writes directly instead of a step on the density scale. */
+  --editor-font-size: 12px;
 
   /* Radii. One scale, and every step stays well under half of the control it rounds, so nothing
    * reads as pill-shaped: 8px on a 30px control is a rounded rect, 15px would be a pill. */
@@ -41,19 +63,25 @@
   --radius-md: 6px;
   --radius-lg: 8px;
 
-  /* Control heights. `--spacing-row` is the sidebar's fixed row height, and it is a token
-   * because TanStack Virtual needs the same number in TypeScript: see ROW_HEIGHT. */
+  /* Control heights, and the five values below them, are the `default` density preset.
+   *
+   * TypeScript owns these now: `renderer/appearance/density.ts` holds all three presets and
+   * `apply.ts` writes the chosen one onto `:root` at startup, before React exists. What is written
+   * here is what `default` says, so an unstyled first frame and the applied one are the same
+   * pixels. Six virtualizers need `--spacing-row` as a number and the main process needs
+   * `--spacing-bar` as one, and a token that CSS owns and TypeScript copies is a token that gets
+   * copied wrong. See docs/decisions/021.
+   *
+   * This is also why the block is `@theme` and not `@theme inline`: `inline` substitutes the
+   * literal into every utility at build time, and there would be nothing left on `:root` for a
+   * preset to override.
+   *
+   * A row is sized by the tallest control it holds plus the same breathing room either side, so
+   * `--spacing-tab` is for a row of 26px controls and `--spacing-bar` for a row of 30px ones. One
+   * token for both is how the title bar ended up with a 30px select in 32px of room. */
   --spacing-row: 28px;
   --spacing-control: 26px;
   --spacing-control-lg: 30px;
-
-  /* Chrome rows, and there are two of them because there are two control heights. A row is sized
-   * by the tallest control it holds plus the same breathing room either side, so `--spacing-tab`
-   * is for a row of 26px controls and `--spacing-bar` for a row of 30px ones. One token for both
-   * is how the title bar ended up with a 30px select in 32px of room: 1px of air, top and bottom.
-   *
-   * `--spacing-bar` is also the title bar's height, which the main process needs in TypeScript to
-   * centre the window's own controls in it: see TITLE_BAR_HEIGHT_PX. */
   --spacing-tab: 32px;
   --spacing-bar: 40px;
   --spacing-gutter: 10px;

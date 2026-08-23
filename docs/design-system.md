@@ -1,9 +1,11 @@
 # preman design system
 
-`packages/desktop/src/renderer/app.css` is the design system. It holds every token and, in its
-comments, the reason each value is what it is. This file does not repeat it. This file answers the
-question a token list cannot: **which token do I reach for, and what breaks if I reach for the
-wrong one.**
+`packages/desktop/src/renderer/app.css` is the design system. It names every token and, in its
+comments, the reason each value is what it is. What a token _resolves to_ is another matter: colours
+come from `renderer/appearance/themes/` and heights from `renderer/appearance/density.ts`, and
+`appearance/apply.ts` is the one module that writes either onto the document. This file does not
+repeat any of it. It answers the question a token list cannot: **which token do I reach for, and
+what breaks if I reach for the wrong one.**
 
 It exists because four bugs shipped in one screen from the same cause — one token doing five jobs,
 with nothing written down to say it should not. Every rule below is one of those bugs, generalised.
@@ -27,6 +29,10 @@ Two heights, and a control belongs to a tier by what it is for, never by where i
 | **chrome**  | `--spacing-control`    | 26px   | `Button` quiet, `IconButton` (`size-control`), menu items |
 | **row**     | `--spacing-row`        | 28px   | `CellField`, every virtualized list row, the phase rail   |
 
+Every height in this file is the `default` density. Two other presets exist, and the tiers hold in
+all three — that is what makes them presets rather than three designs. `appearance/density.ts` has
+the numbers; decision 21 has the reason.
+
 Content tier is the thing you came to the pane to operate: the URL, the method, Send. Chrome tier
 is everything that acts on the pane rather than being it: toolbars, menus, icon affordances.
 
@@ -49,12 +55,13 @@ use is decided entirely by the tier of the tallest control inside it.
 | `--spacing-bar` | 40px   | 30px controls          | 5px          |
 
 Putting a 30px control in `h-tab` leaves 1px top and bottom. That is bugs two and three, and it is
-not a judgement call — it is arithmetic.
+not a judgement call — it is arithmetic. The air is what the presets preserve: `tab` is always
+`control + 6` and `bar` is always `control-lg + 10`, in every density.
 
 Current assignment, which is the audit as much as the rule:
 
 - `h-bar` — the title bar (`App.tsx`), and only that. It is the row the macOS traffic lights are
-  centred in, which is what fixes its height; `TITLE_BAR_HEIGHT_PX` mirrors the token.
+  centred in, which is why a density change has to reach the main process at all; see decision 21.
 - `h-tab` — everything else: the tab bar and sidebar header and status bar (`App.tsx`), the
   breadcrumb and the message and body toolbars (`RequestEditor`), `KeyValueGrid`, `RunnerPane`,
   `VariablesPane`, `ConsoleDrawer`, both `BodyViewer` strips, and the sub-tab triggers in
@@ -70,17 +77,22 @@ second exception without deciding it is one.
 
 ## Virtualized rows
 
-A list that can be long is virtualized, per decision 9, and its row height is a TypeScript constant
-because TanStack Virtual needs the number, not the class.
+A list that can be long is virtualized, per decision 9, and its row height is read as a number
+rather than a class, because TanStack Virtual needs the number.
 
-| List                                | Height | Why not 28                   |
-| ----------------------------------- | ------ | ---------------------------- |
-| Sidebar, Variables, Console, Runner | 28px   | `--spacing-row`              |
-| `CommandPalette`                    | 34px   | two lines of text in one row |
-| `SearchPane`                        | 44px   | a match plus its file path   |
+| List                                | Height | Derivation                                  |
+| ----------------------------------- | ------ | ------------------------------------------- |
+| Sidebar, Variables, Console, Runner | 28px   | `useDensityTokens().row`                    |
+| `CommandPalette`                    | 34px   | `paletteRowHeight()` — `row + 6`, two lines |
+| `SearchPane`                        | 44px   | `searchRowHeight()` — `row + 16`, plus path |
 
-The two that are not 28 are not drift: both hold more than one line. A new list that holds one line
-uses 28 and mirrors `--spacing-row`.
+The two that are not `row` are not drift: both hold more than one line, and both say so as
+arithmetic on `row` rather than as a second constant. A new list that holds one line reads
+`row` directly.
+
+A virtualized list has one more obligation: `useRemeasure(virtualizer, rowHeight)` from
+`stores/appearance.ts`. TanStack caches measurements, so a changed `estimateSize` closure alone
+leaves the list at the old height until something else invalidates it.
 
 ## Vertical selection lists
 
@@ -107,6 +119,19 @@ Three ink tiers, all of which clear 4.5:1 on all five surfaces. `text-ink` is co
 `text-ink-dim` is a label, `text-ink-faint` is metadata you still have to read: durations, byte
 counts, paths.
 
+Those five surfaces and three tiers are now the same five and three in forty-three themes, which
+means the sentence above stopped being a description of one palette and became a constraint on all
+of them. `packages/desktop/scripts/audit.ts` states it as arithmetic — the ink tiers against the
+worst of the five surfaces, the surfaces monotonically stepping away from the ink, the six verbs
+pairwise distinct in OKLab, every syntax colour readable on canvas and panel, `--syntax-template`
+far enough from `string`, `number` and `property` that a `{{token}}` never reads as one of them — and
+`test/renderer/themes.test.ts` runs it over every committed theme. A theme is not a set of
+preferences; it is a set of numbers that pass. Decision 20 is why.
+
+What that buys the rules below: they still hold. `text-glyph` clears 3:1 in every theme because the
+generator solves for it rather than reading it, and the method colours stay six recognisably
+different things because the generator repairs them until they are.
+
 **`text-glyph` is never text.** It clears 3:1, which is WCAG 1.4.11 for a non-text control and is
 below AA for anything with words in it. It is for carets, drag handles, the select's own caret, and
 a border that is a control's only affordance. `GLYPH_CLASS` in `ui/icons.ts` is the same value
@@ -119,6 +144,13 @@ The `--color-method-*` tokens are keyed by verb, and so is the one function that
 `methodClass()` in `ui/method.ts`. Never write `text-method-get` at a call site. The sidebar, the
 tab strip and the method picker all show the same verb within a few hundred pixels of each other,
 and three copies of the map is how one of them ends up a shade off.
+
+The 36 `--syntax-*` tokens belong to the editor, and 35 of them are a Lezer tag: `ui/highlight.ts`
+is the whole map, and `test/renderer/appearance.test.ts` asserts it is exhaustive. The thirty-sixth,
+`--syntax-template`, has no tag because `{{token}}` is not a language construct — `ui/template.ts`
+paints it with a decoration, and the audit holds it further from `string`, `number` and `property`
+than any two verbs have to be from each other, because it sits on the same line as all three.
+Decision 23 is why.
 
 ## Floating surfaces
 
@@ -211,25 +243,47 @@ The lead column is **one** column, right-aligned. It was two — a caret column 
 and that is bug four: a group's caret sat a full `DELETE` width from its own folder icon. Anything
 that adds a per-row affordance goes inside the existing column or the invariant is gone.
 
-## Tokens mirrored in TypeScript
+## TypeScript is the source
 
-A token that a layout engine or the main process needs cannot live only in CSS. These are the
-duplicates. **Changing one side without the other is a silent bug**, because nothing type-checks
-across the boundary.
+This section used to list tokens that CSS owned and TypeScript copied, with a warning that changing
+one side silently broke the other. That mirror is gone. For anything configurable, TypeScript holds
+the value and CSS receives it.
 
-| CSS token        | TypeScript                                                                | Read by                                            |
-| ---------------- | ------------------------------------------------------------------------- | -------------------------------------------------- |
-| `--spacing-row`  | `ROW_HEIGHT` in `Sidebar`, `VariablesPane`, `RunnerPane`, `ConsoleDrawer` | TanStack Virtual's `estimateSize`                  |
-| `--spacing-bar`  | `TITLE_BAR_HEIGHT_PX` in `preload/bridge.ts`                              | `main/main.ts`, to centre the macOS traffic lights |
-| `--z-index-drag` | `DRAG_Z_INDEX` in `Sidebar.tsx`                                           | the drag preview's inline style                    |
+| Value                     | Owned by                          | Written to CSS by                          |
+| ------------------------- | --------------------------------- | ------------------------------------------ |
+| the eight density tokens  | `appearance/density.ts`           | `appearance/apply.ts`, before React exists |
+| 21 colours, 36 syntax     | `appearance/themes/*.ts`          | `appearance/apply.ts`                      |
+| `--editor-font-size`      | `Preferences` in `preload/bridge` | `appearance/apply.ts`                      |
+| `--font-user-{mono,sans}` | `Preferences`                     | `appearance/apply.ts`                      |
 
-`TITLE_BAR_GUTTER_PX = 76` in `bridge.ts` is not mirrored — it is the horizontal room the traffic
-lights need, and only the title bar's padding depends on it.
+`app.css` still declares all of them, and what it declares is what `default` and `preman-dark` say.
+It is a fallback and a reading aid, not a second source. `test/renderer/appearance.test.ts` asserts
+the two agree.
+
+Two things are still literals on both sides, because neither is configurable:
+
+| CSS token        | TypeScript                                | Read by                         |
+| ---------------- | ----------------------------------------- | ------------------------------- |
+| `--z-index-drag` | `DRAG_Z_INDEX` in `Sidebar.tsx`           | the drag preview's inline style |
+| —                | `TITLE_BAR_GUTTER_PX = 76` in `bridge.ts` | the title bar's left padding    |
+
+`TITLE_BAR_GUTTER_PX` has no CSS token at all: it is the horizontal room the traffic lights need,
+which does not change with density, and only one element depends on it.
+
+One consequence is worth stating plainly, because it is the rule the block in `app.css` depends on:
+that block is `@theme` and **not** `@theme inline`. `inline` substitutes the literal at build time
+and leaves nothing on `:root` for `apply.ts` to override, which would silently disable every
+preference at once.
 
 ## What this system does not have
 
-- **A light theme.** Not "dark by default": there is no second palette and no OS following. A
-  request tool that repaints itself at sunset changed under the user's hands mid-debug.
+- **OS following.** There is no `nativeTheme`, no `prefers-color-scheme`, and no "System" entry in
+  the picker. Light themes exist and are chosen; a request tool that repaints itself at sunset is a
+  tool that changed under the user's hands mid-debug. This is the surviving half of the original
+  dark-only rule, and decision 20 is where the other half was reversed.
+- **A free UI scale.** Density is three presets, not a slider. Decision 21.
+- **Themes read from disk.** The forty-three are bundled and static. Decision 20 says what a
+  loadable theme would cost.
 - **A spacing scale of its own.** Tailwind's default 4px scale is used as-is for padding and gaps.
   Only the named `--spacing-*` tokens above are ours, and they are heights, not spacing.
 - **Motion.** Hover and press transitions, and nothing else moves. `prefers-reduced-motion` is

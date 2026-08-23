@@ -58,11 +58,19 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
     protocol.ts                  the typed contract; the only module engine and renderer share
   src/renderer/                  the pure view: React 19, Zustand, Tailwind v4, CodeMirror 6
     app.css                      the tokens and their why; docs/design-system.md picks between them
-    stores/                      catalog, tabs, runs, session - one file per subscription surface
+    appearance/                  what the tokens resolve to: theme.ts, density.ts, fonts.ts,
+                                 themes/ (43, all but one generated), and apply.ts - the one
+                                 module allowed to touch documentElement.style
+    stores/                      catalog, tabs, runs, session, appearance - one per subscription
     model/                       pure, no React: request fields, drop plans, body windows, responses
-    ui/                          cn, icons, Menu, Controls, Banner, Dialog, CodeEditor
+    ui/                          cn, icons, Menu, Controls, Banner, Dialog, CodeEditor, highlight,
+                                 template (the {{token}}-aware JSON language)
     panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid, ResponsePane,
-                                 BodyViewer, ResponseFailure, ConsoleDrawer
+                                 BodyViewer, ResponseFailure, ConsoleDrawer, SettingsPane
+  scripts/                       run by hand, never at build time
+    audit.ts                     the contrast arithmetic; also asserted by test/renderer/themes
+    generate-themes.ts           palettes/*.json -> src/renderer/appearance/themes/
+    palettes/                    vendored upstream palettes; see NOTICE, prettier-ignored
   resources/                     the app icon; macOS masks nothing, so the rounding is in the art
     generate.swift               icon.source.png -> icon.png on Apple's grid; regenerate by hand
   electron-builder.yml           packs the built dist/ into release/; compiles nothing
@@ -85,7 +93,10 @@ test/renderer/perf.app.test.ts   the budgets that need a window; gated behind PR
   next-numbered file from `TEMPLATE.md`, listed in the index, stating what it cost and not only what
   was chosen. Numbers are never reused; a reversal keeps its file and changes its status.
 - `docs/design-system.md` says which token to reach for. Read it before adding a control, a
-  toolbar or a list row.
+  toolbar or a list row. Tokens are configurable: TypeScript owns the value and `appearance/apply.ts`
+  writes it, so a height a virtualizer needs is read from `useDensityTokens()` and never hardcoded,
+  and a colour is a token and never a hex. Regenerate the themes with
+  `bun run packages/desktop/scripts/generate-themes.ts`; never hand-edit a generated file.
 - TypeScript strict, ESM. Import with explicit `.js` specifiers; cross a directory with
   `@preman/core/…` or `@preman/cli/…` (including inside core), stay relative within one, and use
   `import type` for types.
@@ -117,7 +128,7 @@ test/renderer/perf.app.test.ts   the budgets that need a window; gated behind PR
 - Performance budgets live in `docs/performance.md`. `test/perf.test.ts` holds the ones that
   are a function call, and takes the best of three runs rather than the first. The ones that need a
   real window are `test/renderer/perf.app.test.ts`, gated behind `PREMAN_PERF=1` because it launches
-  Electron eight times against a built `dist/`; run it with
+  Electron twelve times against a built `dist/`; run it with
   `bun run build && PREMAN_PERF=1 bunx vitest run test/renderer/perf.app.test.ts`.
 - The interaction budgets there are blocking time, attributed to the interaction that caused it,
   and asserted against the median rather than the worst: the idle app blocks its own main thread

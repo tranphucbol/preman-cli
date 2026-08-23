@@ -22,10 +22,11 @@ import { createHostRegistry, type HostRegistry } from "@preman/desktop/main/host
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
 import {
   CHANNELS,
-  TITLE_BAR_HEIGHT_PX,
   TRAFFIC_LIGHT_HEIGHT_PX,
   TRAFFIC_LIGHT_INSET_PX,
+  type Preferences,
   type SessionSnapshot,
+  type WindowChrome,
   type WindowControl,
   type WorkspaceHandle,
 } from "@preman/desktop/preload/bridge.js";
@@ -38,7 +39,6 @@ import {
 const APP_NAME = "preman";
 const MIN_WIDTH = 900;
 const MIN_HEIGHT = 560;
-const BACKGROUND_COLOUR = "#111214";
 const DEV_SERVER_ENV_VAR = "PREMAN_DEV_SERVER";
 const PRELOAD_FILE = "../preload/preload.cjs";
 const RENDERER_FILE = "../renderer/index.html";
@@ -102,19 +102,35 @@ function looksLikeWorkspace(root: string): boolean {
  * platform keeps its frame until someone can test a frameless build on it. The renderer learns how
  * much room the lights need through `titleBarGutter`, not by asking what platform it is on.
  */
-function framelessOptions(): Electron.BrowserWindowConstructorOptions {
+function framelessOptions(barHeightPx: number): Electron.BrowserWindowConstructorOptions {
   if (process.platform !== FRAMELESS_PLATFORM) return {};
   return {
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: {
-      x: TRAFFIC_LIGHT_INSET_PX,
-      y: (TITLE_BAR_HEIGHT_PX - TRAFFIC_LIGHT_HEIGHT_PX) / HALF,
-    },
+    trafficLightPosition: trafficLightPosition(barHeightPx),
   };
 }
 
+/** Centred in the bar, whatever height the density made the bar. */
+function trafficLightPosition(barHeightPx: number): Electron.Point {
+  return { x: TRAFFIC_LIGHT_INSET_PX, y: Math.round((barHeightPx - TRAFFIC_LIGHT_HEIGHT_PX) / HALF) };
+}
+
+/**
+ * Repaint the window itself, which no stylesheet can reach.
+ *
+ * `backgroundColor` is what Chromium shows before and around the document — behind an overscroll,
+ * and for the frame between the window appearing and the first paint. Left at the dark default
+ * under a light theme it is a white app in a black frame, which is exactly the flash the
+ * synchronous preference read exists to avoid.
+ */
+function applyWindowChrome(chrome: WindowChrome): void {
+  if (window === undefined) return;
+  window.setBackgroundColor(chrome.canvas);
+  if (process.platform === FRAMELESS_PLATFORM) window.setWindowButtonPosition(trafficLightPosition(chrome.barHeightPx));
+}
+
 function createWindow(): BrowserWindow {
-  const saved = requireStore().read().window;
+  const { window: saved, preferences } = requireStore().read();
   const icon = appIcon();
   const created = new BrowserWindow({
     width: saved.width,
@@ -125,9 +141,11 @@ function createWindow(): BrowserWindow {
     ...(icon === undefined ? {} : { icon }),
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
-    backgroundColor: BACKGROUND_COLOUR,
+    // The stored copy of the theme's canvas, not a constant: this is decided before any script
+    // runs, so it is the one appearance value the main process has to be told rather than shown.
+    backgroundColor: preferences.canvas,
     show: false,
-    ...framelessOptions(),
+    ...framelessOptions(preferences.barHeightPx),
     webPreferences: {
       preload: distPath(PRELOAD_FILE),
       contextIsolation: true,
@@ -166,9 +184,45 @@ function createWindow(): BrowserWindow {
   return created;
 }
 
+/**
+ * Settings, in the place each platform keeps it. macOS puts it in the app menu under About, which
+ * means spelling that submenu out instead of taking the `appMenu` role wholesale; everywhere else
+ * it belongs in File. The accelerator is the same on both, and the renderer binds it too — a menu
+ * item is a discoverability affordance, not the only way in.
+ */
+const SETTINGS_ITEM: MenuItemConstructorOptions = {
+  label: "Settings…",
+  accelerator: "CmdOrCtrl+,",
+  click: () => {
+    window?.webContents.send(CHANNELS.openSettings);
+  },
+};
+
+function appMenu(): MenuItemConstructorOptions[] {
+  if (process.platform !== "darwin") return [];
+  return [
+    {
+      role: "appMenu",
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        SETTINGS_ITEM,
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+  ];
+}
+
 function buildMenu(): void {
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    ...appMenu(),
     {
       label: "File",
       submenu: [
@@ -179,6 +233,7 @@ function buildMenu(): void {
             void openWorkspaceDialog();
           },
         },
+        ...(process.platform === "darwin" ? [] : [{ type: "separator" as const }, SETTINGS_ITEM]),
         { type: "separator" },
         { role: process.platform === "darwin" ? "close" : "quit" },
       ],
@@ -291,6 +346,23 @@ function registerIpc(): void {
 
   ipcMain.handle(CHANNELS.saveSession, (_event: IpcMainInvokeEvent, root: string, snapshot: SessionSnapshot) => {
     requireStore().saveSession(root, snapshot);
+  });
+
+  // `on` with `returnValue`, not `handle`: this is the one blocking call in the app, and it is
+  // blocking on purpose. The renderer reads it in the preload, before the document has a script,
+  // so that the first frame it paints is already the right colour. See `docs/decisions/022`.
+  ipcMain.on(CHANNELS.readPreferences, (event) => {
+    event.returnValue = requireStore().read().preferences;
+  });
+
+  ipcMain.handle(CHANNELS.savePreferences, (_event: IpcMainInvokeEvent, next: Preferences) => {
+    requireStore().update((state) => {
+      state.preferences = next;
+    });
+  });
+
+  ipcMain.on(CHANNELS.setWindowChrome, (_event, chrome: WindowChrome) => {
+    applyWindowChrome(chrome);
   });
 
   ipcMain.on(CHANNELS.windowControl, (_event, action: WindowControl) => {

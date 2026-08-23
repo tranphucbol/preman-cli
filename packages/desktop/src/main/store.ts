@@ -6,7 +6,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { writeFileAtomic } from "@preman/core/workspace/atomic.js";
-import type { SessionSnapshot, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
+import {
+  DEFAULT_PREFERENCES,
+  type Preferences,
+  type SessionSnapshot,
+  type WorkspaceHandle,
+} from "@preman/desktop/preload/bridge.js";
 
 const STATE_FILE = "state.json";
 const STATE_VERSION = 1;
@@ -37,6 +42,11 @@ export interface WindowBounds {
 export interface AppState {
   version: number;
   window: WindowBounds;
+  /**
+   * Global, and beside `window` rather than inside a workspace for the same reason the window's
+   * size is: it is a property of how this person uses the app, not of what they are looking at.
+   */
+  preferences: Preferences;
   activeRoot: string | null;
   workspaces: WorkspaceState[];
 }
@@ -65,6 +75,7 @@ function emptyState(): AppState {
   return {
     version: STATE_VERSION,
     window: { x: null, y: null, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT },
+    preferences: { ...DEFAULT_PREFERENCES },
     activeRoot: null,
     workspaces: [],
   };
@@ -83,6 +94,11 @@ function reconcile(raw: unknown): AppState {
   return {
     version: STATE_VERSION,
     window: { ...base.window, ...(candidate.window ?? {}) },
+    // Filled in rather than versioned. Adding a field with a default is not a breaking change to
+    // the file, and bumping `STATE_VERSION` would trade every registered workspace for a colour.
+    // An unknown `themeId` or `density` survives to the renderer, which falls back to the default
+    // rather than trusting a hand-edited file to name something that exists.
+    preferences: { ...base.preferences, ...(candidate.preferences ?? {}) },
     activeRoot: typeof candidate.activeRoot === "string" ? candidate.activeRoot : null,
     workspaces: Array.isArray(candidate.workspaces) ? candidate.workspaces : [],
   };

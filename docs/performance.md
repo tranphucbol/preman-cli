@@ -13,7 +13,7 @@ bun run test                                        # the half that needs no win
 bun run build && PREMAN_PERF=1 bunx vitest run test/renderer/perf.app.test.ts
 ```
 
-`test/perf.test.ts` runs with the normal suite. The gated half launches Electron eight times and
+`test/perf.test.ts` runs with the normal suite. The gated half launches Electron twelve times and
 writes five thousand request files, so it is a minute rather than a second and is skipped unless
 `PREMAN_PERF=1` — a perf test that makes `bun run test` slow gets deleted within a month. It needs
 a built `packages/desktop/dist` and, today, macOS: it finds the Electron binary at
@@ -31,6 +31,9 @@ a built `packages/desktop/dist` and, today, macOS: it finds the Electron binary 
 | total idle RSS, all processes, one workspace open | ≤ 250MB\*       | `test/renderer/perf.app.test.ts` |
 | tab switch                                        | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
 | keystroke to paint, any editor or grid            | ≤ 8ms           | `test/renderer/perf.app.test.ts` |
+| open a request tab, editor mounted                | ≤ 8ms           | `test/renderer/perf.app.test.ts` |
+| theme switch                                      | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
+| density switch                                    | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
 | longest task on main or renderer                  | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
 | send to first response paint, above network time  | ≤ 30ms          | not asserted\*\*                 |
 
@@ -87,9 +90,9 @@ one refresh period whether the renderer did work or slept, so that phrasing can 
 fail. The dropped frame is the measurable failure, and it is what the row means. The same case also
 asserts that no more than 200 rows are mounted, which is the virtualizer proving it is still there.
 
-### Tab switch, keystroke, and the longest task
+### Tab switch, keystroke, editor mount, and the longest task
 
-All three come off one measurement: **how long the main thread was blocked**, by anything, while
+All four come off one measurement: **how long the main thread was blocked**, by anything, while
 the interaction happened. A task that reposts itself runs continuously in the renderer — and in
 the main process, where `setImmediate` is the equivalent — and the interval between two of its
 runs is how long something else held the thread.
@@ -105,15 +108,16 @@ an engine reply being deserialized — whoever scheduled it.
 It misses compositing, which is off-thread, and it cannot cover start-up, since the page has to
 exist before the probe can be installed. The start-up row covers that window as a whole.
 
-**The two tight rows are asserted against the median interaction, not the worst one.** Left alone,
+**The tight rows are asserted against the median interaction, not the worst one.** Left alone,
 with nobody touching it, the app blocks its own main thread for somewhere between 7ms and 16ms
-every so often — a collection, presumably. That noise floor sits on top of both budgets, so a
+every so often — a collection, presumably. That noise floor sits on top of each budget, so a
 maximum would be gating on whether a GC landed in one of thirty windows. Measured here:
 
 | Interaction              | p50   | p90   | worst  |
 | ------------------------ | ----- | ----- | ------ |
-| tab switch, 10 switches  | 2.7ms | 6.9ms | 20.7ms |
-| keystroke, 30 characters | 5.8ms | 8.2ms | 9.0ms  |
+| tab switch, 10 switches  | 3.4ms | 5.2ms | 7.6ms  |
+| keystroke, 30 characters | 6.1ms | 7.4ms | 10.9ms |
+| tab open, 10 opens       | 3.7ms | 8.6ms | 32.4ms |
 
 The median is what a real regression moves and an occasional ambient block cannot. The tail is not
 unwatched: every individual interaction is still held to the 50ms long-task ceiling, so nothing
@@ -126,14 +130,61 @@ it. Without attribution the number is just "the worst thing that happened while 
 
 The keystroke row is measured on the gRPC message editor, which is CodeMirror and the heaviest
 input in the app. Worth knowing for when it moves: `onCommit` fires on blur and on unmount, not
-per keystroke, so those 5.8ms are CodeMirror's own — bracket matching, selection-match
-highlighting, syntax highlighting and line wrapping — and not a round trip through React.
+per keystroke, so those 6.1ms are CodeMirror's own — bracket matching, selection-match
+highlighting, syntax highlighting, the masked parse from [decision
+023](decisions/023-the-parser-is-fed-a-masked-document.md), and line wrapping — and not a round trip
+through React.
+
+**The editor-mount row is the same editor, opened rather than typed into.** Opening a request tab is
+the only interaction in the app that constructs a CodeMirror instance, and it is also the one that
+waits on the engine, so it was worth attributing rather than leaving inside the long-task row. Ten
+gRPC rows are clicked in turn, 250ms apart — longer than the 50ms the other interaction cases idle,
+because a tab open is not finished when the click returns and a shorter window would charge half of
+each open to the next one.
+
+The interesting number is the shape, not the median. The first open of a session costs 32ms and every
+one after it costs about 3.5ms: the first pays once, for CodeMirror's module graph, the JSON grammar,
+and the engine's first reply on a cold port. So the row is held to 8ms at the median — what one
+keystroke in the same editor costs — and the first mount is caught by the 50ms ceiling instead. It
+has 18ms of headroom there, and it is the number to watch, because everything that gets added to an
+editor is paid for once in that first mount.
+
+Masking for `{{token}}` does not move either row. Measured directly: the regex pass is 1–4% of the
+parse it wraps — 5µs on a 2KB body, 0.2ms on a 118KB one — against 0.13ms and 5.5ms for the parse
+itself. There is no row for it, because a row that measures 4% of another row's work only tells you
+the other row moved.
 
 The long-task row is asserted over a mixed session — opening two tabs, switching between them,
-scrolling — deliberately unsettled, because the thing it is there to catch is opening a tab, which
-pays for the engine's reply and a first editor mount. It is the one row checked on both threads.
-Main is worth watching rather than assumed idle: it is the process that writes `state.json`
-synchronously.
+scrolling — deliberately unsettled, because it is the one place a cost nobody thought to attribute
+still has to fit inside fifty milliseconds. It is also the one row checked on both threads. Main is
+worth watching rather than assumed idle: it is the process that writes `state.json` synchronously.
+
+### Theme switch, ≤ 16ms — and density switch, ≤ 50ms
+
+Both are measured the same way as a tab switch: blocking time on the renderer's main thread,
+attributed to the click that caused it, driven from the settings pane. Ten themes and six densities
+are chosen in turn, with the probe marking each click.
+
+They are two rows and not one because they are two different amounts of work, and pretending
+otherwise would hide a regression in the cheap one.
+
+A theme switch writes 58 custom properties onto `:root` and nothing else. No component re-renders
+for the colours — CodeMirror is not reconfigured, no editor remounts — so what is being paid for is
+one style recalculation and a repaint. That is a tab switch's budget, 16ms at the median with the
+same 50ms ceiling on every individual switch, for the same reason: the ambient 7–16ms noise floor
+described above sits on top of it.
+
+A density switch writes eight and then invalidates the layout of six virtualized lists, each of
+which re-measures. It is held only to the 50ms long-task ceiling, on the worst switch rather than
+the median. Holding it to 16 would be asserting that reflowing every list in the app costs what
+swapping a colour costs, which is not true and not worth making true: density is changed once and
+then lived with, unlike a tab, which is switched all day.
+
+**There is no cold-start row for this.** Themes are bundled statically into the renderer's chunk and
+the preferences read is a `sendSync` before first paint, so the feature adds bytes to a bundle that
+is already measured and no new I/O to a start-up path that is already gated at 800ms. If either
+assumption changes — a theme loaded from disk, an async preferences read — this is the row that
+would have to appear.
 
 ### Idle RSS, gated at 450MB
 

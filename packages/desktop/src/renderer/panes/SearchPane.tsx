@@ -15,14 +15,14 @@ import { useCallback, useRef } from "react";
 import type { GrepMatch } from "@preman/desktop/engine/protocol.js";
 
 import { searchWorkspace } from "@preman/desktop/renderer/actions.js";
+import { searchRowHeight } from "@preman/desktop/renderer/appearance/density.js";
 import { describeFieldPath } from "@preman/desktop/renderer/model/search.js";
+import { useDensity, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import { useNode } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSearchStore, type SearchState } from "@preman/desktop/renderer/stores/search.js";
 import { Field } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 
-/** Two lines: what matched, and where. A one-line row would have to drop one of them. */
-const RESULT_HEIGHT = 44;
 const OVERSCAN = 6;
 
 const selectMatches = (state: SearchState) => state.matches;
@@ -116,12 +116,15 @@ function Results({ onOpen }: SearchPaneProps): React.JSX.Element {
   const matches = useSearchStore(selectMatches);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  /** Two lines: what matched, and where. A one-line row would have to drop one of them. */
+  const rowHeight = searchRowHeight(useDensity());
   const virtualizer = useVirtualizer({
     count: matches.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => RESULT_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
   });
+  useRemeasure(virtualizer, rowHeight);
 
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
@@ -134,6 +137,7 @@ function Results({ onOpen }: SearchPaneProps): React.JSX.Element {
               key={`${match.nodeId}:${String(match.line)}:${describeFieldPath(match.fieldPath)}:${String(match.offset)}`}
               match={match}
               top={item.start}
+              height={rowHeight}
               onOpen={onOpen}
             />
           );
@@ -146,10 +150,12 @@ function Results({ onOpen }: SearchPaneProps): React.JSX.Element {
 function ResultRow({
   match,
   top,
+  height,
   onOpen,
 }: {
   readonly match: GrepMatch;
   readonly top: number;
+  readonly height: number;
   readonly onOpen: (match: GrepMatch) => void;
 }): React.JSX.Element {
   // Subscribed rather than read once: the file can be renamed while the results are on screen,
@@ -160,7 +166,7 @@ function ResultRow({
     <button
       type="button"
       className="absolute inset-x-0 flex flex-col justify-center gap-0.5 px-2 text-left hover:bg-hover"
-      style={{ top, height: RESULT_HEIGHT }}
+      style={{ top, height }}
       onClick={() => {
         onOpen(match);
       }}

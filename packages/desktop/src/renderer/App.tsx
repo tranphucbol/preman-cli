@@ -32,6 +32,7 @@ import {
   NewFolderIcon,
   PickerIcon,
   SearchIcon,
+  SettingsIcon,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
@@ -40,6 +41,7 @@ import { RequestEditor } from "@preman/desktop/renderer/panes/RequestEditor.js";
 import { ResponsePane } from "@preman/desktop/renderer/panes/ResponsePane.js";
 import { RunnerPane } from "@preman/desktop/renderer/panes/RunnerPane.js";
 import { SearchPane } from "@preman/desktop/renderer/panes/SearchPane.js";
+import { SettingsPane } from "@preman/desktop/renderer/panes/SettingsPane.js";
 import { Sidebar } from "@preman/desktop/renderer/panes/Sidebar.js";
 import { TabStrip } from "@preman/desktop/renderer/panes/TabStrip.js";
 import { VariablesPane } from "@preman/desktop/renderer/panes/VariablesPane.js";
@@ -65,7 +67,7 @@ import {
 } from "@preman/desktop/renderer/stores/session.js";
 import { useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
-import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
+import { useOverlayStore, type Overlay } from "@preman/desktop/renderer/stores/overlay.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { useSearchStore } from "@preman/desktop/renderer/stores/search.js";
 
@@ -115,6 +117,7 @@ const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "save", label: "Save", detail: "⌘S" },
   { kind: "command", id: "send", label: "Send", detail: "⌘↵" },
   { kind: "command", id: "open-workspace", label: "Open workspace…", detail: "⌘⇧O" },
+  { kind: "command", id: "settings", label: "Settings", detail: "⌘," },
 ];
 
 export function App(): React.JSX.Element {
@@ -122,6 +125,9 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void refreshWorkspaces();
   }, []);
+  // The app menu's own Settings item. It cannot open the pane itself — the menu lives in the main
+  // process and the pane is a piece of renderer state — so it sends, and this is where it lands.
+  useEffect(() => window.preman.onOpenSettings(useOverlayStore.getState().showSettings), []);
 
   const [ask, setAsk] = useState<Ask | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -175,6 +181,9 @@ export function App(): React.JSX.Element {
           return;
         case "open-workspace":
           void openWorkspaceDialog();
+          return;
+        case "settings":
+          useOverlayStore.getState().showSettings();
           return;
       }
     },
@@ -285,6 +294,14 @@ function useShortcuts(onFail: (failure: Failure | null) => void, onPalette: (ope
         useSearchStore.getState().show();
         return;
       }
+      // The platform shortcut for preferences on both platforms this ships to. Bound here as well
+      // as in the app menu because the menu item only fires when the menu bar has the key, and on
+      // Windows and Linux there is no application menu holding it.
+      if (key === ",") {
+        event.preventDefault();
+        useOverlayStore.getState().showSettings();
+        return;
+      }
 
       const activeId = useTabsStore.getState().activeId;
       if (activeId === null) return;
@@ -392,6 +409,19 @@ function TitleBar(): React.JSX.Element {
     >
       <div className="flex items-center no-drag">
         <WorkspacePicker />
+      </div>
+      <div className="flex-1" />
+      {/* `no-drag` is not decoration here: the whole header is a drag region, and a button inside
+          one is a place the window moves from rather than a button. */}
+      <div className="flex items-center no-drag">
+        <IconButton
+          label="Settings"
+          onClick={() => {
+            useOverlayStore.getState().showSettings();
+          }}
+        >
+          <SettingsIcon />
+        </IconButton>
       </div>
     </header>
   );
@@ -703,19 +733,15 @@ function EditorPane({
   });
 
   /*
-   * The runner and the variable manager replace the editor rather than joining the tab strip.
-   * Neither is a file: no unsaved bytes, no dirty dot, nothing to persist as a draft. The strip
+   * The runner, the variable manager and settings replace the editor rather than joining the tab
+   * strip. None is a file: no unsaved bytes, no dirty dot, nothing to persist as a draft. The strip
    * stays visible above them so returning to what you were editing is one click and no closing.
    */
   if (overlay !== null) {
     return (
       <>
         <TabBar onClose={closeTabOrAsk(onAsk)} />
-        {overlay.kind === "variables" ? (
-          <VariablesPane onDismiss={dismiss} />
-        ) : (
-          <RunnerPane nodeId={overlay.nodeId} onDismiss={dismiss} />
-        )}
+        <OverlayPane overlay={overlay} onDismiss={dismiss} />
       </>
     );
   }
@@ -762,6 +788,27 @@ function EditorPane({
       )}
     </>
   );
+}
+
+/**
+ * Which of the three non-file panes is up. Exhaustive on `kind`, so a fourth one is a type error
+ * here rather than a blank editor area at runtime.
+ */
+function OverlayPane({
+  overlay,
+  onDismiss,
+}: {
+  readonly overlay: Overlay;
+  readonly onDismiss: () => void;
+}): React.JSX.Element {
+  switch (overlay.kind) {
+    case "variables":
+      return <VariablesPane onDismiss={onDismiss} />;
+    case "runner":
+      return <RunnerPane nodeId={overlay.nodeId} onDismiss={onDismiss} />;
+    case "settings":
+      return <SettingsPane onDismiss={onDismiss} />;
+  }
 }
 
 /**

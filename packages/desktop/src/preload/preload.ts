@@ -8,12 +8,15 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import {
   CHANNELS,
+  DEFAULT_PREFERENCES,
   ENGINE_PORT_WINDOW_MESSAGE,
   TITLE_BAR_GUTTER_PX,
   type EnginePortDelivery,
   type HostFailure,
+  type Preferences,
   type PremanBridge,
   type SessionSnapshot,
+  type WindowChrome,
   type WindowControl,
   type WorkspaceHandle,
 } from "@preman/desktop/preload/bridge.js";
@@ -23,6 +26,25 @@ const ANY_ORIGIN = "*";
 const FIRST_PORT = 0;
 const FRAMELESS_PLATFORM = "darwin";
 const NO_GUTTER = 0;
+
+/**
+ * The preferences, read once and synchronously, before the document has run a line of its own.
+ *
+ * `sendSync` blocks this process on the main one, which is normally the wrong trade. Here it buys
+ * the thing an async read cannot: the renderer already has the theme when it writes its custom
+ * properties, so its first frame is the right colour rather than the default one corrected a tick
+ * later. It is one small object, once per window. A malformed reply is not worth failing to start
+ * over, so it falls back to the defaults — the same thing a fresh install gets.
+ */
+function readPreferences(): Preferences {
+  try {
+    const raw: unknown = ipcRenderer.sendSync(CHANNELS.readPreferences);
+    if (typeof raw !== "object" || raw === null) return { ...DEFAULT_PREFERENCES };
+    return { ...DEFAULT_PREFERENCES, ...(raw as Partial<Preferences>) };
+  } catch {
+    return { ...DEFAULT_PREFERENCES };
+  }
+}
 
 /**
  * The one DOM capability a preload needs. Declared rather than pulling `lib.dom` into
@@ -44,6 +66,7 @@ const bridge: PremanBridge = {
   // Read here rather than over a channel: it cannot change while the window is open, and a
   // title bar that lays itself out one paint late would shift under the pointer.
   titleBarGutter: process.platform === FRAMELESS_PLATFORM ? TITLE_BAR_GUTTER_PX : NO_GUTTER,
+  preferences: readPreferences(),
   onHostFailure(listener) {
     const handler = (_event: IpcRendererEvent, failure: HostFailure): void => {
       listener(failure);
@@ -67,6 +90,19 @@ const bridge: PremanBridge = {
   readSession: (root: string) => ipcRenderer.invoke(CHANNELS.readSession, root) as Promise<SessionSnapshot>,
   saveSession: (root: string, snapshot: SessionSnapshot) =>
     ipcRenderer.invoke(CHANNELS.saveSession, root, snapshot) as Promise<void>,
+  savePreferences: (next: Preferences) => ipcRenderer.invoke(CHANNELS.savePreferences, next) as Promise<void>,
+  setWindowChrome: (chrome: WindowChrome) => {
+    ipcRenderer.send(CHANNELS.setWindowChrome, chrome);
+  },
+  onOpenSettings(listener) {
+    const handler = (): void => {
+      listener();
+    };
+    ipcRenderer.on(CHANNELS.openSettings, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.openSettings, handler);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);
