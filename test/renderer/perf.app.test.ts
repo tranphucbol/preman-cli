@@ -117,6 +117,12 @@ const LONG_TASK_BUDGET_MS = 50;
 /**
  * Changing the theme writes about sixty custom properties onto `:root` and repaints. It moves no
  * layout, so it is held to the same 16ms as a tab switch.
+ *
+ * It writes them behind a one-frame transition guard — `data-retheme` in `appearance/apply.ts`,
+ * decision 26 — and this budget assumes that guard is there. Without it, every mounted control's
+ * colour transition starts inside the frame being measured, which for a sidebar showing forty to a
+ * hundred rows is forty to a hundred transitions. The guard's cost is one forced style flush, which
+ * is a recalculation the sixty writes already pay for.
  */
 const THEME_SWITCH_BUDGET_MS = 16;
 /**

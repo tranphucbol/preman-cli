@@ -11,6 +11,7 @@ import type { ReactElement } from "react";
 
 import { WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { m } from "@preman/desktop/renderer/ui/motion.js";
 
 /** Only the two tones that mean "read me". `ok` and `neutral` do not warrant a bar. */
 export type BannerTone = "danger" | "warn";
@@ -27,6 +28,29 @@ const ICON_CLASS: Record<BannerTone, string> = {
 
 const NO_DETAILS: readonly string[] = [];
 
+/**
+ * The banner's arrival and departure. It is a conditional render at every call site, so there is
+ * no element left to transition on the way out and CSS cannot do this one.
+ *
+ * Both numbers are duplicated from `app.css`: these are `--duration-panel` and `--ease-out`'s
+ * control points, because a custom property is not readable from a Motion transition. Change the
+ * token and change this. It is the only duplicated curve in the app.
+ *
+ * `translateY(0px)` and not `translateY(0)`, and not the absence of the key: Motion interpolates a
+ * `transform` string only when both ends carry the same unit. A composed string rather than `y`
+ * because the shorthands are off the compositor path.
+ */
+const ENTER = { opacity: 1, transform: "translateY(0px)" } as const;
+const LEAVE = { opacity: 0, transform: "translateY(-4px)" } as const;
+const TIMING = { duration: 0.18, ease: [0.23, 1, 0.32, 1] } as const;
+
+/**
+ * Exported because `App.tsx` still carries its own banner - a tone-coloured variant with an action
+ * slot that predates this one - and two banners that arrive differently is the noise this component
+ * was written to remove. Spread it; do not restate the numbers.
+ */
+export const BANNER_MOTION = { initial: LEAVE, animate: ENTER, exit: LEAVE, transition: TIMING } as const;
+
 export function Banner({
   tone,
   message,
@@ -41,7 +65,15 @@ export function Banner({
   readonly details?: readonly string[];
 }): ReactElement {
   return (
-    <div role="alert" className={cn("flex shrink-0 items-start gap-2 border-b px-gutter py-1.5", SURFACE_CLASS[tone])}>
+    /* `role="alert"` stays on the animated element. On a wrapper it would change what the screen
+     * reader announces, and the height is deliberately not animated: the banner's own height is
+     * unknown, so animating it would be a layout animation. 4px and opacity read as arrival
+     * without measuring anything. */
+    <m.div
+      role="alert"
+      {...BANNER_MOTION}
+      className={cn("flex shrink-0 items-start gap-2 border-b px-gutter py-1.5", SURFACE_CLASS[tone])}
+    >
       <WarningIcon className={cn("mt-px shrink-0", ICON_CLASS[tone])} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-2">
@@ -54,6 +86,6 @@ export function Banner({
           </span>
         ))}
       </div>
-    </div>
+    </m.div>
   );
 }

@@ -19,6 +19,7 @@ import { previewText, type Failure } from "@preman/desktop/renderer/actions.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
+import { AnimatePresence } from "@preman/desktop/renderer/ui/motion.js";
 import { CodeEditor } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import type { UnresolvedNames } from "@preman/desktop/renderer/ui/template.js";
 
@@ -100,8 +101,15 @@ export function BodyPreview({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
-      {details.length > 0 && <Banner tone="warn" message={UNRESOLVED_MESSAGE} details={details} />}
+      {/* One presence per banner rather than one around both: AnimatePresence needs a key per
+          child to tell two siblings apart, and two wrappers say the same thing without inventing
+          one. */}
+      <AnimatePresence>
+        {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {details.length > 0 && <Banner tone="warn" message={UNRESOLVED_MESSAGE} details={details} />}
+      </AnimatePresence>
       <CodeEditor value={preview?.text ?? EMPTY} language="json" readOnly placeholder={RESOLVING_HINT} />
       <div className="shrink-0 border-t border-line px-gutter py-1.5">
         <p className="text-2xs text-ink-faint">{DYNAMIC_NOTE}</p>

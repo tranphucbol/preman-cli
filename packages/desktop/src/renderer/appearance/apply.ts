@@ -44,6 +44,9 @@ const EDITOR_FONT_SIZE_VARIABLE = "--editor-font-size";
  */
 const COLOR_SCHEME = "color-scheme";
 
+/** The attribute `app.css` hangs `transition: none !important` on, for exactly one frame. */
+const RETHEME_ATTRIBUTE = "data-retheme";
+
 export function applyTheme(theme: Theme, root: HTMLElement = document.documentElement): void {
   const style = root.style;
   for (const token of COLOR_TOKENS) style.setProperty(`--color-${token}`, theme.colors[token]);
@@ -68,12 +71,30 @@ export function applyFonts(preferences: Preferences, root: HTMLElement = documen
  * Everything, in one call. Used at startup, before the first render, and again whenever a
  * preference changes — there is no partial path, because writing sixty-odd properties is cheaper
  * than working out which of them moved.
+ *
+ * Which is also why it is fenced by `data-retheme`: sixty writes with a colour transition on every
+ * mounted control is forty to a hundred transitions starting in the frame the 16ms theme-switch
+ * budget measures. Decision 26. The guard is here and not inside `applyTheme`/`applyDensity`/
+ * `applyFonts`, because those three are called directly by tests that would then be exercising it
+ * without meaning to.
  */
 export function applyPreferences(theme: Theme, preferences: Preferences, root?: HTMLElement): void {
   const target = root ?? document.documentElement;
-  applyTheme(theme, target);
-  applyDensity(densityTokens(preferences.density), target);
-  applyFonts(preferences, target);
+  target.setAttribute(RETHEME_ATTRIBUTE, "");
+  try {
+    applyTheme(theme, target);
+    applyDensity(densityTokens(preferences.density), target);
+    applyFonts(preferences, target);
+  } finally {
+    // Measuring is what forces the recalculation, so the new colours are committed while
+    // transitions are still off — it is a recalculation this call already pays for, and what it
+    // buys is that taking the attribute off cannot retroactively animate the sixty properties just
+    // written. `finally`, because a throw between the two attribute calls would leave the whole app
+    // with transitions permanently disabled. `getBoundingClientRect()` and not `offsetHeight`: a
+    // bare member-expression statement is a lint smell and reads like dead code.
+    target.getBoundingClientRect();
+    target.removeAttribute(RETHEME_ATTRIBUTE);
+  }
 }
 
 /** Removing the property, rather than writing an empty one, is what restores the `var()` fallback. */

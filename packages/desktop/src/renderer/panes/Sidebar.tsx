@@ -56,7 +56,6 @@ import {
   ContextTrigger,
 } from "@preman/desktop/renderer/ui/Menu.js";
 import {
-  CaretDownIcon,
   CaretRightIcon,
   CollectionIcon,
   DeleteIcon,
@@ -108,6 +107,14 @@ const HALF = 2;
 
 /** Must equal `--z-index-drag` in app.css: `DragOverlay` writes its own inline z-index. */
 const DRAG_Z_INDEX = 25;
+
+/*
+ * dnd-kit's own tween rather than a Motion spring: the pill's job is to travel to the row it landed
+ * on, dnd-kit already knows both rectangles, and a spring would need the drag velocity that
+ * `dropAnimation` does not expose. The curve is `--ease-out` spelled out because this option is
+ * read by dnd-kit and not by CSS, so a custom property would not resolve. Decision 26.
+ */
+const DROP_ANIMATION = { duration: 200, easing: "cubic-bezier(0.23, 1, 0.32, 1)" } as const;
 
 /**
  * Replaces dnd-kit's default, which offers the space bar. There is no `KeyboardSensor` here because
@@ -307,9 +314,23 @@ export function Sidebar(props: SidebarProps) {
             onContextMenu={captureTarget}
             className="h-full overflow-x-hidden overflow-y-auto overscroll-contain"
           >
-            <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+            {/*
+              Keyed by the row height so a density change remounts the list instead of sliding it.
+              A row animates to a new offset, and every offset moves at once when the token does;
+              a remounted element has no previous transform to animate from. The key is why the
+              offset below is arithmetic rather than `item.start`: the virtualizer's cache is
+              thrown away in an effect, so its offsets would land one render after this key, and
+              the list would slide anyway.
+            */}
+            <div key={rowHeight} className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((item) => (
-                <Row key={item.key} nodeId={visibleIds[item.index] ?? ""} top={item.start} onOpen={props.onOpen} />
+                // Uniform rows, the same assumption `indicatorFor` already makes.
+                <Row
+                  key={item.key}
+                  nodeId={visibleIds[item.index] ?? ""}
+                  offset={item.index * rowHeight}
+                  onOpen={props.onOpen}
+                />
               ))}
               {indicator !== null && <DropLine indicator={indicator} />}
             </div>
@@ -317,7 +338,15 @@ export function Sidebar(props: SidebarProps) {
         </ContextTrigger>
         <SidebarContextMenu targetId={targetId} {...props} />
       </ContextMenu>
-      <DragOverlay dropAnimation={null} zIndex={DRAG_Z_INDEX}>
+      {/*
+        Unconditional, including a refused drop. dnd-kit animates the pill to the *dragged* node's
+        own final rect, never to the row it was denied: an accepted drop travels to where the row
+        landed, a refused one travels back to where it started, and a source row the virtualizer has
+        since unmounted has no rect to measure, so the pill simply disappears. Gating this on
+        `indicator` would disable it for every drop, not only refused ones - `clearDrag` nulls the
+        indicator and the pill in the same update, so by the render dnd-kit animates, both are gone.
+      */}
+      <DragOverlay dropAnimation={DROP_ANIMATION} zIndex={DRAG_Z_INDEX}>
         {dragId !== null && <DragPill nodeId={dragId} refused={indicator === null} />}
       </DragOverlay>
     </DndContext>
@@ -409,15 +438,16 @@ function DragPill({ nodeId, refused }: { readonly nodeId: string; readonly refus
 /**
  * One row. Subscribed by id, so a selection change repaints the row that lost it and the row that
  * gained it. Absolutely positioned by the virtualizer's offset rather than laid out in flow,
- * because a transform per row is one composite and a reflow per row is not.
+ * because a transform per row is one composite and a reflow per row is not - and it is a transform
+ * rather than `top`, which is what makes the offset animatable at all. Decision 26.
  */
 function Row({
   nodeId,
-  top,
+  offset,
   onOpen,
 }: {
   readonly nodeId: string;
-  readonly top: number;
+  readonly offset: number;
   readonly onOpen: (node: CatalogNode) => void;
 }) {
   const node = useNode(nodeId);
@@ -471,19 +501,36 @@ function Row({
       onClick={activate}
       {...listeners}
       className={cn(
-        "absolute inset-x-0 flex h-row items-center gap-1.5 pr-gutter",
+        "absolute inset-x-0 top-0 flex h-row items-center gap-1.5 pr-gutter",
+        // Only a toggle moves a row. The offset is an absolute position in the list, so scrolling
+        // does not change it - the scroll container moves and the offsets do not - and a row
+        // scrolled into view is a fresh element with nothing to animate from. That leaves expand
+        // and collapse as the only thing this transition can ever run on.
+        "transition-transform duration-(--duration-panel) ease-out",
         selected ? "bg-selected" : "hover:bg-hover",
         // The row stays in place and fades: the pill under the cursor is the thing being moved, and
         // a row that vanished would collapse the list under the pointer mid-drag.
         isDragging && "opacity-40",
       )}
-      style={{ top, paddingLeft: node.depth * INDENT_PX }}
+      style={{ transform: `translateY(${offset}px)`, paddingLeft: node.depth * INDENT_PX }}
     >
       {/* One fixed column for all three, so every name in the tree starts at the same x. */}
       <span className="flex shrink-0 items-center justify-end gap-1 overflow-hidden" style={{ width: LEAD_COLUMN_PX }}>
         {group ? (
           <>
-            {collapsed ? <CaretRightIcon className="text-glyph" /> : <CaretDownIcon className="text-glyph" />}
+            {/*
+              One element that turns rather than two that swap. Inside a row rendered up to 200
+              times this is strictly less reconciliation work than the conditional element type it
+              replaces, and `transform` on an `<svg>` is compositor work. The list below it still
+              appears and disappears instantly: rows are absolutely positioned off a JS number and
+              the collapse is a store-level filter, so there is no height here to interpolate.
+            */}
+            <CaretRightIcon
+              className={cn(
+                "text-glyph transition-transform duration-(--duration-glyph) ease-out",
+                !collapsed && "rotate-90",
+              )}
+            />
             <NodeIcon node={node} collapsed={collapsed} />
           </>
         ) : (

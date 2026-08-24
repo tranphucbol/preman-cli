@@ -324,6 +324,56 @@ that block is `@theme` and **not** `@theme inline`. `inline` substitutes the lit
 and leaves nothing on `:root` for `apply.ts` to override, which would silently disable every
 preference at once.
 
+## Motion
+
+The app moves, and the "nothing else moves" bullet that used to sit in the next section is gone.
+Decision 26 is the reversal and the why; this is which token to reach for.
+
+| Token           | Value                             | For                                                         |
+| --------------- | --------------------------------- | ----------------------------------------------------------- |
+| `--ease-out`    | `cubic-bezier(0.23, 1, 0.32, 1)`  | anything entering or leaving — which is nearly everything   |
+| `--ease-in-out` | `cubic-bezier(0.77, 0, 0.175, 1)` | something moving while it stays on screen                   |
+| `--ease-drawer` | `cubic-bezier(0.32, 0.72, 0, 1)`  | a panel                                                     |
+| `--ease-in`     | Tailwind's default                | **never.** It starts slow, delaying the frame being watched |
+
+`--ease-out` and `--ease-in-out` are retunes of Tailwind's own keys, for the same reason density is
+retuned in place: a later Radix or shadcn control inherits them without being patched. `--ease-in`
+is left alone precisely so that a stray `ease-in` in a diff is visibly not one of ours.
+
+Durations are named for the surface, not the number, and none exceeds 200ms: `--duration-press`
+120ms, `--duration-tooltip` 125ms, `--duration-menu` 150ms, `--duration-glyph` 120ms,
+`--duration-panel` 180ms, `--duration-modal` 200ms. Reach for the name; a `duration-150` at the
+point of pain is how one answer becomes three.
+
+What actually animates:
+
+- **Floating surfaces, on enter only.** `.surface-enter`, `.modal-enter` and `.scrim-enter` in
+  `app.css`'s `@layer components` fade and scale from the origin Radix publishes, with
+  `@starting-style` and no JS. There is no exit animation on a Radix surface — see decision 26 for
+  why `Presence` makes one worse than none.
+- **Controls, on hover and press.** Colour transitions everywhere, plus `active:scale-[0.97]` on
+  buttons and icon buttons. Never on a text field, and never on a disabled control.
+- **The in-flight request.** `.inflight-bar` sweeps the top of the response pane; `.body-enter`
+  fades a response body in once.
+- **Two surfaces with real presence**, via Motion through `ui/motion.tsx`: the banner and the
+  overlay-pane swap.
+- **The disclosure caret**, in the sidebar and the console drawer, and dnd-kit's drop animation.
+- **The active tab's underline**, which travels rather than blinking. `ui/Tabs.tsx` owns the trigger
+  and the underline for all three tab groups; reach for `TabTrigger`, never for a bottom border on a
+  trigger, or the underline will look right and not move.
+- **The console's call detail**, opening and shutting by height. The one height animation in the app,
+  and the one exit animation outside a banner.
+- **Sidebar rows, on a folder toggle.** Each row is placed by `translateY` at `index * rowHeight`, so
+  opening or closing a folder slides everything below it. The offset is absolute, which is why this
+  never runs on a scroll. Position a row with `top` and the slide silently stops happening.
+
+Everything on that list but the last animates `opacity`, `transform` or colour, because decision 17's
+budgets are blocking-time medians and motion is mostly only affordable as compositor work. The
+console detail is the exception and is allowed to be one: it is inside a drawer that carries no
+budget, and a disclosure that opens by fading reads as a different gesture than one that opens.
+`width`, `top` and `all` still animate nowhere — and `top` is now load-bearing rather than a
+preference, since it is the one property that would turn the sidebar's slide back off.
+
 ## What this system does not have
 
 - **OS following.** There is no `nativeTheme`, no `prefers-color-scheme`, and no "System" entry in
@@ -335,11 +385,12 @@ preference at once.
   loadable theme would cost.
 - **A spacing scale of its own.** Tailwind's default 4px scale is used as-is for padding and gaps.
   Only the named `--spacing-*` tokens above are ours, and they are heights, not spacing.
-- **Motion.** Hover and press transitions, and nothing else moves. `prefers-reduced-motion` is
-  honoured once in the base layer rather than per component, which is affordable precisely because
-  there is so little to honour.
 - **A component library boundary.** shadcn components are vendored and retuned, per decision 9.
   There is no `@preman/ui` package and there should not be one for a single consumer.
+- **Motion on the command palette, or on the open-request strip.** The palette is a 100+/day keyboard
+  action and animates never, permanently. The strip needs `layout` rather than `layoutId`, on the
+  interaction the 16ms budget is named after. Decision 26, as amended by plan 019, says what each
+  costs; the tab _underline_ moves, and that is a different control from the strip.
 
 ## Changing this system
 

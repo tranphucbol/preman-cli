@@ -136,6 +136,29 @@
   --z-index-menu: 30;
   --z-index-tooltip: 40;
 
+  /* Motion. Three curves, and the two that matter are retunes rather than additions: Tailwind's
+   * built-ins are correct in shape and too weak in degree to read as deliberate, and overriding
+   * them in place is what keeps `ease-out` meaning the app's ease-out in a control nobody has
+   * patched yet. Decision 26.
+   *
+   * `--ease-in` is deliberately left at Tailwind's default and never used. It starts slow, which
+   * delays the one frame the user is actually watching, so a stray `ease-in` in a diff should look
+   * like it came from somewhere else — because it did. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* The duration scale, named for the surface rather than the number, because "how long should a
+   * menu take" is a question with one answer in this app and `duration-150` sprinkled at the point
+   * of pain is how it ends up with three. Nothing here exceeds 200ms: a tool's motion is over
+   * before you have finished deciding to look at it. */
+  --duration-press: 120ms;
+  --duration-tooltip: 125ms;
+  --duration-menu: 150ms;
+  --duration-glyph: 120ms;
+  --duration-panel: 180ms;
+  --duration-modal: 200ms;
+
   /* The one elevation in the app, used by the one thing that genuinely floats: the drag preview.
    * Tinted to the canvas hue rather than pure black, because a black shadow on a near-black
    * surface reads as a smudge. Everything else groups with a hairline or with space. */
@@ -203,9 +226,11 @@
     @apply outline-2 outline-offset-1 outline-accent;
   }
 
-  /* Reduced motion is the whole app's behaviour, not a per-component afterthought. MOTION is
-   * dialled to 2: hover and press transitions exist, nothing else moves, so honouring the
-   * preference costs one rule instead of a wrapper around every component. */
+  /* Reduced motion is the whole app's behaviour, not a per-component afterthought: one rule here
+   * instead of a wrapper around every component. Note `animation-iteration-count: 1`, which is what
+   * makes the in-flight sweep pass once and stop rather than disappear — the indicator still says
+   * "something is happening", it just does not loop. The two JS-driven surfaces are out of this
+   * rule's reach and are covered by `MotionConfig reducedMotion="user"` instead. Decision 26. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -217,9 +242,112 @@
     }
   }
 
+  /* The frame in which a preference is applied is not a frame anything should animate through.
+   * `appearance/apply.ts` rewrites about sixty custom properties in one go, and every control with
+   * a colour transition would start one — forty to a hundred of them at once, in the frame the
+   * 16ms theme-switch budget is measuring. Decision 26. */
+  :root[data-retheme] *,
+  :root[data-retheme] *::before,
+  :root[data-retheme] *::after {
+    transition: none !important;
+  }
+
   input,
   textarea,
   [contenteditable] {
     @apply select-text;
+  }
+}
+
+/*
+ * Floating surfaces arrive from their trigger and leave instantly. Decision 26.
+ *
+ * `@starting-style` rather than `@keyframes`, and enter-only rather than symmetric, for two reasons
+ * that point the same way: keyframes restart from zero when a menu is reopened before it finished
+ * closing, and Radix's `Presence` only holds an exiting element for an animation it can observe —
+ * so an exit here would make dismissal slower than no animation at all.
+ *
+ * `--radix-*-content-transform-origin` is what makes the surface scale out of the thing that opened
+ * it instead of out of its own middle. Radix writes it on the content element; the fallback is for
+ * the one surface that is centred by definition.
+ *
+ * This is a `@layer components` block and not a set of `@utility`s because Tailwind cannot express
+ * `@starting-style`, and four surfaces sharing one name is the same argument `Menu.tsx` makes for
+ * sharing one `CONTENT_CLASS`.
+ */
+@layer components {
+  .surface-enter {
+    transform-origin: var(
+      --radix-dropdown-menu-content-transform-origin,
+      var(
+        --radix-context-menu-content-transform-origin,
+        var(--radix-select-content-transform-origin, var(--radix-tooltip-content-transform-origin, center))
+      )
+    );
+    transition:
+      opacity var(--duration-menu) var(--ease-out),
+      transform var(--duration-menu) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+
+  /* The modal is the one surface that is not anchored to anything, so it is the one that may scale
+   * from its own centre — and it already carries a centring transform, which is why the scale is
+   * composed into that string instead of declared beside it. Getting this wrong launches the dialog
+   * from the middle of the screen and slides it into place. */
+  .modal-enter {
+    transition:
+      opacity var(--duration-modal) var(--ease-out),
+      transform var(--duration-modal) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.98);
+    }
+  }
+
+  .scrim-enter {
+    transition: opacity var(--duration-modal) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  /* The one indeterminate indicator in the app: a 2px hairline sweeping the top edge of the
+   * response pane while a request is open. `transform` on a compositor layer, so it costs nothing
+   * on the main thread while the engine is busy — and it is the only keyframe animation here,
+   * because a loop is the one thing a transition cannot express. */
+  @keyframes inflight-sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+
+  .inflight-bar::after {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    block-size: 2px;
+    inline-size: 33%;
+    background: var(--color-accent);
+    animation: inflight-sweep 1.1s var(--ease-in-out) infinite;
+  }
+
+  /* A response body that replaced a hint should not appear to have been there all along. Opacity
+   * only: the body is the thing being read, and reading starts before the fade ends. */
+  .body-enter {
+    transition: opacity var(--duration-panel) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+    }
   }
 }

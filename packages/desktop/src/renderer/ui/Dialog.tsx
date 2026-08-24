@@ -10,10 +10,15 @@ import { useCallback, useState, type FormEvent } from "react";
 
 import { Button, Field } from "@preman/desktop/renderer/ui/Controls.js";
 
-const OVERLAY_CLASS = "fixed inset-0 z-menu bg-black/50";
+const OVERLAY_CLASS = "scrim-enter fixed inset-0 z-menu bg-black/50";
 
+/**
+ * The `-translate-*` utilities stay, and `.modal-enter`'s `@starting-style` restates them inside its
+ * own `transform` on purpose: a `transform` in `@starting-style` replaces the whole property, so a
+ * bare `scale(0.98)` there would launch the dialog from the centre of the screen.
+ */
 const CONTENT_CLASS =
-  "fixed left-1/2 top-1/3 z-menu w-96 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line-strong bg-panel p-4 shadow-2xl shadow-black/60";
+  "modal-enter fixed left-1/2 top-1/3 z-menu w-96 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line-strong bg-panel p-4 shadow-2xl shadow-black/60";
 
 /** A rejected promise is not a sentence, so say the one thing that is always true instead. */
 const UNEXPECTED_FAILURE = "That did not work.";

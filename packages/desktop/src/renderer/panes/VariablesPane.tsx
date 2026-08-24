@@ -26,6 +26,7 @@ import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
+import { AnimatePresence } from "@preman/desktop/renderer/ui/motion.js";
 import { CellField, IconButton, toneClass, type FieldTone } from "@preman/desktop/renderer/ui/Controls.js";
 import { AddIcon, CloseIcon, RefreshIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { GLOBALS_READ_ONLY_HINT, TokenBox, useTokenBox } from "@preman/desktop/renderer/ui/TokenBox.js";
@@ -113,7 +114,9 @@ export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void })
         </IconButton>
       </div>
 
-      {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
+      <AnimatePresence>
+        {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
+      </AnimatePresence>
 
       {view === null ? <Hint>{LOADING_HINT}</Hint> : <Table view={view} onCommit={commit} />}
     </div>

@@ -14,7 +14,6 @@ export {
   ArrowSquareOut as RevealIcon,
   BracketsCurly as FormatIcon,
   Broom as ClearIcon,
-  CaretDown as CaretDownIcon,
   CaretRight as CaretRightIcon,
   CaretUpDown as PickerIcon,
   Check as CheckIcon,

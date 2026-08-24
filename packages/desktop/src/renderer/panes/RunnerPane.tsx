@@ -50,6 +50,7 @@ import {
 } from "@preman/desktop/renderer/stores/runs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
+import { AnimatePresence } from "@preman/desktop/renderer/ui/motion.js";
 import { Button, Field, IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { CancelIcon, CloseIcon, ExportIcon, RunnerIcon, SendIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
@@ -157,7 +158,9 @@ export function RunnerPane({
         }}
       />
 
-      {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
+      <AnimatePresence>
+        {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
+      </AnimatePresence>
 
       {run === undefined ? (
         <p className="p-gutter text-xs text-ink-faint">

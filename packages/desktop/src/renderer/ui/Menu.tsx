@@ -16,7 +16,9 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "./cn.js";
 
-const CONTENT_CLASS = "z-menu min-w-44 rounded-md border border-line-strong bg-panel p-1 shadow-lg shadow-black/40";
+/** `surface-enter` is in `app.css`; it is one class for every floating surface, enter only. */
+const CONTENT_CLASS =
+  "surface-enter z-menu min-w-44 rounded-md border border-line-strong bg-panel p-1 shadow-lg shadow-black/40";
 
 const ITEM_CLASS =
   "flex h-control cursor-default select-none items-center gap-2 rounded-sm px-2 text-xs text-ink outline-none data-highlighted:bg-hover data-disabled:text-ink-faint";

@@ -127,9 +127,17 @@ maximum would be gating on whether a GC landed in one of thirty windows. Measure
 
 | Interaction              | p50   | p90   | worst  |
 | ------------------------ | ----- | ----- | ------ |
-| tab switch, 10 switches  | 3.4ms | 5.2ms | 7.6ms  |
+| tab switch, 10 switches  | 4.7ms | 6.9ms | 13.8ms |
 | keystroke, 30 characters | 6.1ms | 7.4ms | 10.9ms |
 | tab open, 10 opens       | 3.7ms | 8.6ms | 32.4ms |
+
+The tab-switch row was 3.4/5.2/7.6ms before the active section tab's underline became a projected
+element. Switching open requests remounts the section tabs, so each switch now measures two
+`getBoundingClientRect` calls and a `transform` animation that did not exist. The median moved
+1.3ms and the worst 6.2ms — and the worst is the _first_ switch of the ten, 13.8ms against 3.4ms for
+the last, which is what paying for a projection tree once looks like. Still inside 16ms, and worth
+knowing which end of the distribution it landed on: a second `layoutId` on this interaction is the
+one that would push it over.
 
 The median is what a real regression moves and an occasional ambient block cannot. The tail is not
 unwatched: every individual interaction is still held to the 50ms long-task ceiling, so nothing
@@ -182,7 +190,8 @@ otherwise would hide a regression in the cheap one.
 
 A theme switch writes 58 custom properties onto `:root` and nothing else. No component re-renders
 for the colours — CodeMirror is not reconfigured, no editor remounts — so what is being paid for is
-one style recalculation and a repaint. That is a tab switch's budget, 16ms at the median with the
+one style recalculation, a repaint, and one forced flush, which is what stops the 58 writes from
+starting a colour transition on every mounted control at once (decision 26). That is a tab switch's budget, 16ms at the median with the
 same 50ms ceiling on every individual switch, for the same reason: the ambient 7–16ms noise floor
 described above sits on top of it.
 
@@ -197,6 +206,39 @@ the preferences read is a `sendSync` before first paint, so the feature adds byt
 is already measured and no new I/O to a start-up path that is already gated at 800ms. If either
 assumption changes — a theme loaded from disk, an async preferences read — this is the row that
 would have to appear.
+
+### The motion library, +126kB of renderer chunk
+
+Not a budget row — a recorded number, because [decision
+026](decisions/026-the-app-is-allowed-to-move.md) spends bytes on a start-up path that is already
+gated, and the only thing worse than paying that would be paying it without writing down what it
+was.
+
+`motion` behind `LazyMotion features={domAnimation} strict` took the renderer chunk from 1,190,365
+to 1,258,614 raw bytes at the gate — **+68,249, or +5.7%** — and to 1,269,059 once the banner and
+overlay surfaces were actually wired to it, so **+78,694 all in, +6.6%**. That was the
+`domAnimation` feature bundle.
+
+The projection engine was then bought too, for the tab underline that travels between triggers.
+`domMax` in place of `domAnimation`, same source otherwise, is 1,315,874 — **+46,815 bytes** — and
+the underline and the console's height animation add 482 on top, for a chunk of **1,316,356: +125,991
+over the pre-Motion baseline, +10.6%**. Decision 026 estimated the projection engine at "another
+10kB" and refused it partly on that basis. That estimate was gzipped and from an older major, and
+nothing in the real path gzips — Electron loads this chunk over `file://` — so the honest figure is
+4.7x the one the ADR was written against. It is recorded here rather than fixed there, because the
+estimate being wrong is the interesting part.
+
+Warm cold start did not move. Measured three times each, in isolation rather than after the other
+eight cases in that file: 914/724/771ms without the library and 841/733/691ms with it. The gated
+case, which takes the best of its own repeats, reads 835ms without and 875ms with — so it fails on
+this machine either way, and it failed before any of this landed.
+
+That is the reason the comparison here is a delta and not an absolute. This machine does not reach
+the 518–582ms quoted above, and a row that cannot pass on the machine in front of you can still
+answer the only question a byte delta raises: whether the library is what pushed it over. It is not
+— 40ms of a 220ms spread — and the 800ms gate is what will catch it if that stops being true. The
+eight interaction budgets in the same file, including the theme switch the `data-retheme` guard was
+added for, pass with the animations in.
 
 ### Idle RSS, gated at 450MB
 

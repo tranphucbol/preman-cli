@@ -30,6 +30,7 @@ import { formatBytes } from "@preman/desktop/renderer/model/body.js";
 import { useLatestRunFor, type RequestRun } from "@preman/desktop/renderer/stores/runs.js";
 import { CodeEditor } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
 
 import { BodyViewer } from "./BodyViewer.js";
@@ -46,9 +47,6 @@ const TAB_LABEL: Record<ResponseTab, string> = {
   tests: "Tests",
   timeline: "Timeline",
 };
-
-const TRIGGER_CLASS =
-  "h-tab shrink-0 border-b-2 border-transparent px-2.5 text-xs text-ink-dim hover:text-ink data-[state=active]:border-accent data-[state=active]:text-ink";
 
 const JSON_INDENT = 2;
 const NOTHING_SENT = "";
@@ -76,6 +74,9 @@ export function ResponsePane({ nodeId }: { readonly nodeId: string }) {
  */
 export function ResponseView({ run }: { readonly run: RequestRun | undefined }) {
   const [tab, setTab] = useState<ResponseTab>(DEFAULT_TAB);
+  /* Per instance, above the early return: this view is mounted twice whenever the collection
+   * runner is open, and one shared `layoutId` would slide the underline between the two panes. */
+  const underline = useTabUnderline();
 
   if (run === undefined) return <Hint>{IDLE_HINT}</Hint>;
 
@@ -85,17 +86,19 @@ export function ResponseView({ run }: { readonly run: RequestRun | undefined }) 
       onValueChange={(next) => {
         setTab(next as ResponseTab);
       }}
-      className="flex min-h-0 flex-1 flex-col"
+      // `relative` is for `inflight-bar`'s `::after`, which is the app's one indeterminate
+      // indicator: a hairline sweeping the top edge while the request is open. Decision 26.
+      className={cn("relative flex min-h-0 flex-1 flex-col", run.status === "running" && "inflight-bar")}
     >
       <div className="flex shrink-0 items-center border-b border-line pr-2">
         <Tabs.List className="flex min-w-0 flex-1 items-center overflow-x-auto px-1">
           {TABS.map((each) => (
-            <Tabs.Trigger key={each} value={each} className={TRIGGER_CLASS}>
+            <TabTrigger key={each} value={each} active={each === tab} underline={underline}>
               {TAB_LABEL[each]}
               {each === "tests" && run.tests.length > EMPTY_ROWS && (
                 <span className="ml-1 text-ink-faint">{String(run.tests.length)}</span>
               )}
-            </Tabs.Trigger>
+            </TabTrigger>
           ))}
         </Tabs.List>
         <Summary run={run} />
@@ -109,8 +112,11 @@ export function ResponseView({ run }: { readonly run: RequestRun | undefined }) 
           <Hint>{run.status === "running" ? RUNNING_HINT : NO_BODY_HINT}</Hint>
         ) : (
           // Keyed on the handle so a new response gets a new viewer rather than a reset one.
-          // A viewer that reset itself in an effect would paint the old body for one frame.
-          <BodyViewer key={run.body.handle} body={run.body} />
+          // A viewer that reset itself in an effect would paint the old body for one frame. The
+          // wrapper is what `body-enter` has to fade, since the editor inside it is remounted.
+          <div key={run.body.handle} className="body-enter flex min-h-0 flex-1 flex-col">
+            <BodyViewer body={run.body} />
+          </div>
         )}
       </Pane>
 

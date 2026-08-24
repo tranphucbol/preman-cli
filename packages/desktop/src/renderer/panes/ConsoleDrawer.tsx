@@ -41,7 +41,8 @@ import {
 } from "@preman/desktop/renderer/stores/runs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
-import { CaretDownIcon, CaretRightIcon, ClearIcon, CloseIcon, GLYPH_CLASS } from "@preman/desktop/renderer/ui/icons.js";
+import { CaretRightIcon, ClearIcon, CloseIcon, GLYPH_CLASS } from "@preman/desktop/renderer/ui/icons.js";
+import { AnimatePresence, m } from "@preman/desktop/renderer/ui/motion.js";
 
 const OVERSCAN = 12;
 /** Within this of the bottom, the drawer follows new output instead of holding position. */
@@ -55,6 +56,25 @@ const CALL_INDENT = "px-2";
 const CAUSED_INDENT = "py-1 pr-2 pl-8";
 /** The caret is a non-text control, so it takes `text-glyph` at 3:1 rather than an ink tier. */
 const CARET_SIZE = 12;
+/**
+ * The call detail opens and shuts by height, in both directions - a disclosure that opens smoothly
+ * and closes instantly reads as a bug rather than as speed, and this is the app's first exit
+ * animation outside a banner.
+ *
+ * `height: "auto"` is a measured animation, which means the row's own `ResizeObserver` (the
+ * `virtualizer.measureElement` ref below) fires once per frame while it runs, and every row under
+ * it gets a new `start`. Those are transform writes, the cheap kind, but the observer callback is
+ * main-thread work at ~60Hz for 150ms. That is the price of this one, paid knowingly: the console
+ * carries no perf budget, and if a full drawer stutters the fix is to drop the height and keep the
+ * opacity, not to work around the virtualizer. Decision 26, as amended by plan 019.
+ *
+ * Nothing asks Motion for `layout` on the row itself, so the absolute `translateY` the virtualizer
+ * owns stays the virtualizer's.
+ */
+const DETAIL_SHUT = { height: 0, opacity: 0 } as const;
+const DETAIL_OPEN = { height: "auto", opacity: 1 } as const;
+const DETAIL_TIMING = { duration: 0.15, ease: [0.23, 1, 0.32, 1] } as const;
+
 const JSON_INDENT = 2;
 const NO_TEXT = "";
 const NO_PAIRS = 0;
@@ -191,7 +211,15 @@ function CallRow({ row }: { readonly row: Extract<ConsoleRow, { kind: "call" }> 
           }}
           className={cn("shrink-0 self-center", GLYPH_CLASS)}
         >
-          {expanded ? <CaretDownIcon size={CARET_SIZE} /> : <CaretRightIcon size={CARET_SIZE} />}
+          {/*
+            The same turning caret as the sidebar's, for the same reason `Menu.tsx` shares one
+            `CONTENT_CLASS`: two disclosure carets that behave differently teach the reader there
+            are two kinds of disclosure.
+          */}
+          <CaretRightIcon
+            size={CARET_SIZE}
+            className={cn("transition-transform duration-(--duration-glyph) ease-out", expanded && "rotate-90")}
+          />
         </button>
         <button
           type="button"
@@ -209,7 +237,22 @@ function CallRow({ row }: { readonly row: Extract<ConsoleRow, { kind: "call" }> 
           {ms !== null && <span className="shrink-0 text-2xs text-ink-faint">{formatDuration(ms)}</span>}
         </button>
       </div>
-      {expanded && <CallDetail item={item} row={row} />}
+      <AnimatePresence>
+        {expanded && (
+          /* The wrapper animates, not `CallDetail`'s own root: that root is a padded flex column,
+           * and a box whose padding is part of its height is the version that jumps on the last
+           * frame. `overflow-hidden` has nothing to fight. */
+          <m.div
+            className="overflow-hidden"
+            initial={DETAIL_SHUT}
+            animate={DETAIL_OPEN}
+            exit={DETAIL_SHUT}
+            transition={DETAIL_TIMING}
+          >
+            <CallDetail item={item} row={row} />
+          </m.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

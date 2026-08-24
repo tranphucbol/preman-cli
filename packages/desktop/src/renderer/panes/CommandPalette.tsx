@@ -31,6 +31,11 @@ import {
   type Icon,
 } from "@preman/desktop/renderer/ui/icons.js";
 
+/**
+ * No `scrim-enter`, no `modal-enter`, and this is not an oversight to be finished later. Cmd+K is a
+ * 100+/day keyboard action, and 200ms in front of one is 200ms the user spends every time. Decision
+ * 26 makes the palette permanently exempt from the app's motion.
+ */
 const OVERLAY_CLASS = "fixed inset-0 z-menu bg-black/50";
 const CONTENT_CLASS =
   "fixed left-1/2 top-24 z-menu w-[36rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-lg border border-line-strong bg-panel shadow-2xl shadow-black/60";

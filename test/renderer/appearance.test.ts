@@ -44,9 +44,18 @@ const THEME_PROPERTY_COUNT = COLOR_TOKENS.length + SYNTAX_TOKENS.length + 2;
  * Only the surface `apply.ts` uses. Removal is recorded as an absence rather than a null so a test
  * can tell "never written" from "written and then cleared" — which is the whole point of the
  * `var()` fallback path.
+ *
+ * The attribute and layout halves are here because `applyPreferences` fences its writes behind
+ * `data-retheme` and one forced flush (decision 26); a stub with only `style` on it would fail the
+ * combined case for a reason that has nothing to do with what that case asserts.
  */
-function recordingRoot(): { readonly written: Map<string, string>; readonly element: HTMLElement } {
+function recordingRoot(): {
+  readonly written: Map<string, string>;
+  readonly attributes: Set<string>;
+  readonly element: HTMLElement;
+} {
   const written = new Map<string, string>();
+  const attributes = new Set<string>();
   const style = {
     setProperty(name: string, value: string): void {
       written.set(name, value);
@@ -55,7 +64,19 @@ function recordingRoot(): { readonly written: Map<string, string>; readonly elem
       written.delete(name);
     },
   };
-  return { written, element: { style } as unknown as HTMLElement };
+  const element = {
+    style,
+    setAttribute(name: string): void {
+      attributes.add(name);
+    },
+    removeAttribute(name: string): void {
+      attributes.delete(name);
+    },
+    getBoundingClientRect(): DOMRect {
+      return {} as DOMRect;
+    },
+  };
+  return { written, attributes, element: element as unknown as HTMLElement };
 }
 
 function preferences(overrides: Partial<Preferences> = {}): Preferences {

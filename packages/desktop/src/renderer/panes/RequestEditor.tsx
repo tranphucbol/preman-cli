@@ -68,6 +68,7 @@ import {
   SelectOption,
 } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import {
   CancelIcon,
   CaretRightIcon,
@@ -80,7 +81,8 @@ import {
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
-import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
+import { BANNER_MOTION, Banner } from "@preman/desktop/renderer/ui/Banner.js";
+import { AnimatePresence, m } from "@preman/desktop/renderer/ui/motion.js";
 import { BodyPreview } from "@preman/desktop/renderer/panes/BodyPreview.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { KeyValueGrid } from "@preman/desktop/renderer/panes/KeyValueGrid.js";
@@ -100,9 +102,6 @@ const SUB_TABS: readonly { readonly id: SubTab; readonly label: string }[] = [
   { id: "settings", label: "Settings" },
   { id: "yaml", label: "YAML" },
 ];
-
-const TRIGGER_CLASS =
-  "h-tab shrink-0 border-b-2 border-transparent px-2.5 text-xs text-ink-dim hover:text-ink data-[state=active]:border-accent data-[state=active]:text-ink";
 
 /**
  * The Edit/Preview switch's labels. Read out loud rather than stored: `BODY_VIEWS` is the
@@ -166,6 +165,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
   const data = useMemo(() => project(saved?.data, tab.edits), [saved, tab.edits]);
   const grpc = isGrpc(data);
   const dirty = isDirty(tab);
+  const sectionUnderline = useTabUnderline();
 
   const apply = useCallback(
     (edits: readonly FieldEdit[]) => {
@@ -201,10 +201,12 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Breadcrumb nodeId={tab.nodeId} />
-      {tab.conflicted ? <ConflictBanner nodeId={tab.nodeId} /> : null}
-      {tab.orphaned ? (
-        <Banner tone="danger" message="This file is gone from disk. Saving will write it back." detail={saved.file} />
-      ) : null}
+      <AnimatePresence>{tab.conflicted ? <ConflictBanner nodeId={tab.nodeId} /> : null}</AnimatePresence>
+      <AnimatePresence>
+        {tab.orphaned ? (
+          <Banner tone="danger" message="This file is gone from disk. Saving will write it back." detail={saved.file} />
+        ) : null}
+      </AnimatePresence>
 
       <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-gutter py-2">
         {grpc ? (
@@ -287,9 +289,9 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
       >
         <Tabs.List className="flex shrink-0 items-center border-b border-line px-gutter" aria-label="Request sections">
           {SUB_TABS.map((entry) => (
-            <Tabs.Trigger key={entry.id} value={entry.id} className={TRIGGER_CLASS}>
+            <TabTrigger key={entry.id} value={entry.id} active={entry.id === tab.subTab} underline={sectionUnderline}>
               {entry.label}
-            </Tabs.Trigger>
+            </TabTrigger>
           ))}
         </Tabs.List>
 
@@ -628,6 +630,9 @@ function FieldRows({
  * No new row: a bar sized by a two-item switch is a tier `docs/design-system.md` does not have.
  */
 function ViewSwitch({ nodeId, view }: { readonly nodeId: string; readonly view: BodyView }) {
+  /* Its own identity, not the section tabs': one `layoutId` across both lists would send the
+   * underline flying between the two rows every time either one changed. */
+  const underline = useTabUnderline();
   return (
     <Tabs.Root
       className="ml-auto"
@@ -638,9 +643,9 @@ function ViewSwitch({ nodeId, view }: { readonly nodeId: string; readonly view: 
     >
       <Tabs.List className="flex items-center" aria-label="Body view">
         {BODY_VIEWS.map((candidate) => (
-          <Tabs.Trigger key={candidate} value={candidate} className={TRIGGER_CLASS}>
+          <TabTrigger key={candidate} value={candidate} active={candidate === view} underline={underline}>
             {BODY_VIEW_LABELS[candidate]}
-          </Tabs.Trigger>
+          </TabTrigger>
         ))}
       </Tabs.List>
     </Tabs.Root>
@@ -1149,7 +1154,12 @@ function SectionLabel({ children }: { readonly children: React.ReactNode }) {
 
 function ConflictBanner({ nodeId }: { readonly nodeId: string }) {
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-warn/40 bg-warn/10 px-gutter py-1.5">
+    // Its own bar rather than a `Banner`, because it carries two actions and no icon column - but
+    // it arrives the same way, or the two bars stacked here would disagree about what a notice is.
+    <m.div
+      {...BANNER_MOTION}
+      className="flex shrink-0 items-center gap-2 border-b border-warn/40 bg-warn/10 px-gutter py-1.5"
+    >
       <WarningIcon className="shrink-0 text-warn" />
       <span className="text-xs text-ink">This file changed on disk while you were editing it.</span>
       <div className="ml-auto flex gap-1.5">
@@ -1170,7 +1180,7 @@ function ConflictBanner({ nodeId }: { readonly nodeId: string }) {
           Keep mine
         </Button>
       </div>
-    </div>
+    </m.div>
   );
 }
 

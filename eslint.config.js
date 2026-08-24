@@ -48,6 +48,15 @@ const RENDERER_FENCE_GLOBALS = ["process", "Buffer", "require", "__dirname", "__
 const RENDERER_FENCE_RULE =
   "The renderer is a pure view. Reach the engine over the port; import types from @preman/desktop/engine/protocol.js.";
 /**
+ * Motion is one module's dependency, not the renderer's. `ui/motion.tsx` owns the `LazyMotion`
+ * boundary and re-exports `m`; anything else importing the library directly is how a 20 kB feature
+ * bundle quietly becomes the 34 kB one. Decision 26.
+ */
+const MOTION_FENCE_IMPORTS = ["motion", "motion/**"];
+const MOTION_FENCE_RULE =
+  "Import `m` and `AnimatePresence` from @preman/desktop/renderer/ui/motion.js. Only that module may import motion directly.";
+const MOTION_DOOR_FILES = ["packages/desktop/src/renderer/ui/motion.tsx"];
+/**
  * DOM globals that read like props. `onClose={close}` type-checks, because `close` is
  * `window.close`, and then the button silently does nothing: this shipped once already. A local
  * binding of the same name shadows the global and is not reported, so callbacks and destructured
@@ -201,6 +210,10 @@ export default tseslint.config(
               group: RENDERER_FENCE_IMPORTS,
               message: RENDERER_FENCE_RULE,
             },
+            {
+              group: MOTION_FENCE_IMPORTS,
+              message: MOTION_FENCE_RULE,
+            },
           ],
         },
       ],
@@ -208,6 +221,30 @@ export default tseslint.config(
         "error",
         ...RENDERER_FENCE_GLOBALS.map((name) => ({ name, message: RENDERER_FENCE_RULE })),
         ...RENDERER_SHADOWED_GLOBALS.map((name) => ({ name, message: RENDERER_SHADOW_RULE })),
+      ],
+    },
+  },
+  {
+    // The one exemption from the Motion fence. It re-declares the other two groups on purpose:
+    // `no-restricted-imports` is replaced wholesale by a later config object rather than merged
+    // into, so omitting them would exempt this file from the engine and `node:*` fences as well -
+    // the fence decision 2 calls the whole architecture.
+    files: MOTION_DOOR_FILES,
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: SOURCE_IMPORT_PATTERNS,
+              message: TYPE_IMPORT_RULE,
+            },
+            {
+              group: RENDERER_FENCE_IMPORTS,
+              message: RENDERER_FENCE_RULE,
+            },
+          ],
+        },
       ],
     },
   },

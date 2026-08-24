@@ -23,8 +23,19 @@ import type { TokenReporter } from "./template.js";
 
 const TOOLTIP_DELAY_MS = 400;
 
+/** How long "already explaining things" lasts. Within it, the next tooltip skips the delay. */
+const TOOLTIP_SKIP_DELAY_MS = 300;
+
+/**
+ * The transition list is spelled out rather than `transition-colors` plus `transition-transform`,
+ * because a second `transition-*` utility replaces the first rather than adding to it — which is
+ * how a button ends up depressing instantly and fading its colour, or the other way round.
+ *
+ * `active:scale-[0.97]` is the whole point of this class, and `disabled:active:scale-100` is what
+ * stops a disabled button from claiming it heard you. Decision 26.
+ */
 const BASE_CONTROL =
-  "inline-flex select-none items-center justify-center gap-1.5 rounded-sm text-xs whitespace-nowrap transition-none disabled:text-ink-faint";
+  "inline-flex select-none items-center justify-center gap-1.5 rounded-sm text-xs whitespace-nowrap transition-[color,background-color,border-color,transform] duration-(--duration-press) ease-out active:scale-[0.97] disabled:text-ink-faint disabled:active:scale-100";
 
 /**
  * The two heights a control comes in, named for the row it belongs to rather than for its size.
@@ -98,7 +109,7 @@ export function IconButton({ label, children, active = false, type = "button", .
         aria-label={label}
         aria-pressed={active}
         className={cn(
-          "inline-flex size-control shrink-0 items-center justify-center rounded-sm hover:bg-hover disabled:text-ink-faint disabled:hover:bg-transparent",
+          "inline-flex size-control shrink-0 items-center justify-center rounded-sm transition-[color,background-color,transform] duration-(--duration-press) ease-out hover:bg-hover active:scale-[0.97] disabled:text-ink-faint disabled:hover:bg-transparent disabled:active:scale-100",
           active ? "bg-selected text-accent" : "text-ink-dim hover:text-ink",
         )}
         {...rest}
@@ -114,7 +125,11 @@ export function IconButton({ label, children, active = false, type = "button", .
  * and mounting one per row is the mistake that makes a tree janky.
  */
 export function TooltipProvider({ children }: { readonly children: ReactNode }) {
-  return <TooltipPrimitive.Provider delayDuration={TOOLTIP_DELAY_MS}>{children}</TooltipPrimitive.Provider>;
+  return (
+    <TooltipPrimitive.Provider delayDuration={TOOLTIP_DELAY_MS} skipDelayDuration={TOOLTIP_SKIP_DELAY_MS}>
+      {children}
+    </TooltipPrimitive.Provider>
+  );
 }
 
 export function Tooltip({
@@ -133,7 +148,7 @@ export function Tooltip({
         <TooltipPrimitive.Content
           side={side}
           sideOffset={6}
-          className="z-tooltip max-w-72 rounded-sm border border-line-strong bg-panel px-2 py-1 text-2xs text-ink shadow-lg shadow-black/40"
+          className="surface-enter z-tooltip max-w-72 rounded-sm border border-line-strong bg-panel px-2 py-1 text-2xs text-ink shadow-lg shadow-black/40 [transition-duration:var(--duration-tooltip)]"
         >
           {content}
         </TooltipPrimitive.Content>
@@ -155,10 +170,16 @@ export function Tooltip({
  */
 const FIELD_METRICS = "h-control-lg w-full min-w-0 border px-2 text-xs";
 const FIELD_FILL = "rounded-sm bg-control";
-const FIELD_INK = "rounded-sm border-line-strong placeholder:text-ink-faint disabled:text-ink-faint";
+/**
+ * Colour only, and deliberately no `active:scale-*` like `BASE_CONTROL` has: a text field that
+ * flinches when you click into it is a text field that moved your caret. Decision 26.
+ */
+const FIELD_INK =
+  "rounded-sm border-line-strong transition-[color,background-color,border-color] duration-(--duration-press) ease-out placeholder:text-ink-faint disabled:text-ink-faint";
 
 const CELL_METRICS = "h-row w-full min-w-0 truncate px-2 text-xs";
-const CELL_INK = "bg-transparent placeholder:text-ink-faint focus:outline-none";
+const CELL_INK =
+  "bg-transparent transition-[color,background-color] duration-(--duration-press) ease-out placeholder:text-ink-faint focus:outline-none";
 
 /**
  * A field's ink, as a closed set rather than a class the caller writes.
@@ -301,8 +322,9 @@ export function CellField({ mono = true, tone = "normal", onToken, ...rest }: Fi
   );
 }
 
+/** Colour only, for the same reason as `FIELD_INK`: this is a field-shaped control, not a button. */
 const SELECT_TRIGGER_CLASS =
-  "inline-flex w-fit cursor-default select-none items-center gap-1 rounded-sm border border-line-strong bg-control pr-1 pl-2 text-xs text-ink outline-none data-placeholder:text-ink-faint data-disabled:text-ink-faint";
+  "inline-flex w-fit cursor-default select-none items-center gap-1 rounded-sm border border-line-strong bg-control pr-1 pl-2 text-xs text-ink outline-none transition-[color,background-color,border-color] duration-(--duration-press) ease-out data-placeholder:text-ink-faint data-disabled:text-ink-faint";
 
 /**
  * The popup is a menu, because to the user it is one.
@@ -316,10 +338,15 @@ const SELECT_TRIGGER_CLASS =
  * not clip `DELETE`, but a wide trigger should not be re-flowed by a narrow list either.
  */
 const SELECT_CONTENT_CLASS =
-  "z-menu min-w-[var(--radix-select-trigger-width)] rounded-md border border-line-strong bg-panel p-1 shadow-lg shadow-black/40";
+  "surface-enter z-menu min-w-[var(--radix-select-trigger-width)] rounded-md border border-line-strong bg-panel p-1 shadow-lg shadow-black/40";
 
 const SELECT_VIEWPORT_CLASS = "max-h-[var(--radix-select-content-available-height)]";
 
+/**
+ * No transition here, and none on `Menu`'s `ITEM_CLASS` either. `data-highlighted` follows the
+ * pointer down a list at whatever speed the pointer moves, and 120ms of lag on it reads as the list
+ * failing to keep up rather than as polish. Decision 26.
+ */
 const SELECT_ITEM_CLASS =
   "flex h-control cursor-default select-none items-center gap-4 rounded-sm px-2 text-xs text-ink outline-none data-highlighted:bg-hover data-disabled:text-ink-faint";
 

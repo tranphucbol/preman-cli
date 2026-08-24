@@ -35,6 +35,8 @@ import {
   SettingsIcon,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
+import { BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
+import { AnimatePresence, MotionRoot, m } from "@preman/desktop/renderer/ui/motion.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { ConsoleDrawer } from "@preman/desktop/renderer/panes/ConsoleDrawer.js";
 import { RequestEditor } from "@preman/desktop/renderer/panes/RequestEditor.js";
@@ -221,72 +223,77 @@ export function App(): React.JSX.Element {
   return (
     <IconContext.Provider value={ICON_DEFAULTS}>
       <TooltipProvider>
-        <div className="flex h-full flex-col">
-          <TitleBar onCreateWorkspace={showCreateWorkspace} />
-          <HostBanner />
-          <DegradedBanner />
-          <FailureBanner failure={failure} onDismiss={dismissFailure} />
-          <Group
-            orientation="vertical"
-            className="min-h-0 flex-1"
-            defaultLayout={shell.defaultLayout}
-            onLayoutChanged={shell.onLayoutChanged}
-          >
-            <Panel id={WORKSPACE_ID} className="flex min-h-0 flex-col">
-              <Group
-                orientation="horizontal"
-                className="min-h-0 flex-1"
-                defaultLayout={layout.defaultLayout}
-                onLayoutChanged={layout.onLayoutChanged}
-              >
-                <Panel
-                  id={SIDEBAR_ID}
-                  defaultSize={SIDEBAR_DEFAULT}
-                  minSize={SIDEBAR_MIN}
-                  maxSize={SIDEBAR_MAX}
-                  className="flex min-w-0 flex-col bg-panel"
-                >
-                  <WorkspaceTree onAsk={setAsk} onFail={setFailure} />
-                </Panel>
-                {/*
-                  One hairline, with the hit area spilling either side of it. A visible 4px gutter
-                  between two panes is 4px of nothing, fifty times a day.
-                */}
-                <Separator className="group relative z-handle w-px shrink-0 cursor-col-resize bg-line data-[state=drag]:bg-accent">
-                  <span className="absolute -inset-x-1 inset-y-0 group-hover:bg-accent/40" />
-                </Separator>
-                <Panel id={EDITOR_ID} className="flex min-w-0 flex-col">
-                  <EditorPane onAsk={setAsk} onFail={setFailure} />
-                </Panel>
-              </Group>
-            </Panel>
-            <Separator className="group relative z-handle h-px shrink-0 cursor-row-resize bg-line data-[state=drag]:bg-accent">
-              <span className="absolute inset-x-0 -inset-y-1 group-hover:bg-accent/40" />
-            </Separator>
-            <Panel
-              id={CONSOLE_ID}
-              collapsible
-              collapsedSize={CONSOLE_COLLAPSED}
-              defaultSize={CONSOLE_COLLAPSED}
-              minSize={CONSOLE_MIN}
-              className="flex min-h-0 flex-col"
-              onResize={(size) => {
-                setConsoleOpen(size.inPixels > CONSOLE_COLLAPSED);
-              }}
-              panelRef={setConsolePanel}
+        {/* Motion's boundary sits inside the tooltip provider and outside everything else, so
+         * both presence surfaces are within it and neither Radix nor a pane has to know it is
+         * there. Decision 26. */}
+        <MotionRoot>
+          <div className="flex h-full flex-col">
+            <TitleBar onCreateWorkspace={showCreateWorkspace} />
+            <HostBanner />
+            <DegradedBanner />
+            <FailureBanner failure={failure} onDismiss={dismissFailure} />
+            <Group
+              orientation="vertical"
+              className="min-h-0 flex-1"
+              defaultLayout={shell.defaultLayout}
+              onLayoutChanged={shell.onLayoutChanged}
             >
-              <ConsoleDrawer onClose={toggleConsole} />
-            </Panel>
-          </Group>
-          <StatusBar consoleOpen={consoleOpen} onToggleConsole={toggleConsole} />
-        </div>
-        <AskDialog
-          ask={ask}
-          onClose={() => {
-            setAsk(null);
-          }}
-        />
-        <Palette open={paletteOpen} onDismiss={dismissPalette} onCommand={runCommand} />
+              <Panel id={WORKSPACE_ID} className="flex min-h-0 flex-col">
+                <Group
+                  orientation="horizontal"
+                  className="min-h-0 flex-1"
+                  defaultLayout={layout.defaultLayout}
+                  onLayoutChanged={layout.onLayoutChanged}
+                >
+                  <Panel
+                    id={SIDEBAR_ID}
+                    defaultSize={SIDEBAR_DEFAULT}
+                    minSize={SIDEBAR_MIN}
+                    maxSize={SIDEBAR_MAX}
+                    className="flex min-w-0 flex-col bg-panel"
+                  >
+                    <WorkspaceTree onAsk={setAsk} onFail={setFailure} />
+                  </Panel>
+                  {/*
+                    One hairline, with the hit area spilling either side of it. A visible 4px gutter
+                    between two panes is 4px of nothing, fifty times a day.
+                  */}
+                  <Separator className="group relative z-handle w-px shrink-0 cursor-col-resize bg-line data-[state=drag]:bg-accent">
+                    <span className="absolute -inset-x-1 inset-y-0 group-hover:bg-accent/40" />
+                  </Separator>
+                  <Panel id={EDITOR_ID} className="flex min-w-0 flex-col">
+                    <EditorPane onAsk={setAsk} onFail={setFailure} />
+                  </Panel>
+                </Group>
+              </Panel>
+              <Separator className="group relative z-handle h-px shrink-0 cursor-row-resize bg-line data-[state=drag]:bg-accent">
+                <span className="absolute inset-x-0 -inset-y-1 group-hover:bg-accent/40" />
+              </Separator>
+              <Panel
+                id={CONSOLE_ID}
+                collapsible
+                collapsedSize={CONSOLE_COLLAPSED}
+                defaultSize={CONSOLE_COLLAPSED}
+                minSize={CONSOLE_MIN}
+                className="flex min-h-0 flex-col"
+                onResize={(size) => {
+                  setConsoleOpen(size.inPixels > CONSOLE_COLLAPSED);
+                }}
+                panelRef={setConsolePanel}
+              >
+                <ConsoleDrawer onClose={toggleConsole} />
+              </Panel>
+            </Group>
+            <StatusBar consoleOpen={consoleOpen} onToggleConsole={toggleConsole} />
+          </div>
+          <AskDialog
+            ask={ask}
+            onClose={() => {
+              setAsk(null);
+            }}
+          />
+          <Palette open={paletteOpen} onDismiss={dismissPalette} onCommand={runCommand} />
+        </MotionRoot>
       </TooltipProvider>
     </IconContext.Provider>
   );
@@ -744,6 +751,17 @@ function StatusBar({
   );
 }
 
+/*
+ * The crossfade between two overlays. Opacity only: the pane fills a region whose edges do not
+ * move, so there is nothing for a translate to explain. The curve is `--ease-out` and the duration
+ * is shorter than any token because this one is a swap and not an arrival; both numbers are
+ * restated here for the same reason `BANNER_MOTION` restates its own - a custom property is not
+ * readable from a Motion transition. Decision 26.
+ */
+const OVERLAY_HIDDEN = { opacity: 0 } as const;
+const OVERLAY_SHOWN = { opacity: 1 } as const;
+const OVERLAY_TIMING = { duration: 0.14, ease: [0.23, 1, 0.32, 1] } as const;
+
 function EditorPane({
   onAsk,
   onFail,
@@ -774,7 +792,26 @@ function EditorPane({
     return (
       <>
         <TabBar onClose={closeTabOrAsk(onAsk)} />
-        <OverlayPane overlay={overlay} onDismiss={dismiss} />
+        {/*
+          `mode="wait"` so the two panes never overlap: a settings pane cross-dissolved over a
+          runner pane is a double exposure, and here it would also mean two CodeMirror instances
+          alive at once. `initial={false}` so the first overlay of a session appears with no fade -
+          it was opened by a keystroke or a menu item and the user is already looking at where it
+          will be. Keyed on `kind` and not on the object, because the runner variant carries a
+          `nodeId` and keying on the object would remount the runner every render.
+        */}
+        <AnimatePresence mode="wait" initial={false}>
+          <m.div
+            key={overlay.kind}
+            className="flex min-h-0 flex-1 flex-col"
+            initial={OVERLAY_HIDDEN}
+            animate={OVERLAY_SHOWN}
+            exit={OVERLAY_HIDDEN}
+            transition={OVERLAY_TIMING}
+          >
+            <OverlayPane overlay={overlay} onDismiss={dismiss} />
+          </m.div>
+        </AnimatePresence>
       </>
     );
   }
@@ -881,36 +918,47 @@ function EmptyEditor(): React.JSX.Element {
   );
 }
 
-function HostBanner(): React.JSX.Element | null {
+/*
+ * The three banners are conditional renders, so the `return null` lives inside `AnimatePresence`
+ * rather than above it: a component that has already returned null has nothing mounted for the
+ * exit to run on. Not `mode="popLayout"` - that measures layout on the child on its way out.
+ */
+function HostBanner(): React.JSX.Element {
   const hostFailure = useSessionStore((state) => state.hostFailure);
-  if (hostFailure === null) return null;
   return (
-    <Banner tone="danger" message={hostFailure.message} details={hostFailure.details}>
-      <Button
-        onClick={() => {
-          void switchWorkspace(hostFailure.root);
-        }}
-      >
-        Retry
-      </Button>
-    </Banner>
+    <AnimatePresence>
+      {hostFailure === null ? null : (
+        <Banner tone="danger" message={hostFailure.message} details={hostFailure.details}>
+          <Button
+            onClick={() => {
+              void switchWorkspace(hostFailure.root);
+            }}
+          >
+            Retry
+          </Button>
+        </Banner>
+      )}
+    </AnimatePresence>
   );
 }
 
-function DegradedBanner(): React.JSX.Element | null {
+function DegradedBanner(): React.JSX.Element {
   const degraded = useSessionStore((state) => state.degraded);
   const setDegraded = useSessionStore((state) => state.setDegraded);
-  if (degraded === null) return null;
   return (
-    <Banner tone="warn" message={degraded} details={[]}>
-      <Button
-        onClick={() => {
-          setDegraded(null);
-        }}
-      >
-        Dismiss
-      </Button>
-    </Banner>
+    <AnimatePresence>
+      {degraded === null ? null : (
+        <Banner tone="warn" message={degraded} details={[]}>
+          <Button
+            onClick={() => {
+              setDegraded(null);
+            }}
+          >
+            Dismiss
+          </Button>
+        </Banner>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -920,12 +968,15 @@ function FailureBanner({
 }: {
   readonly failure: Failure | null;
   readonly onDismiss: () => void;
-}): React.JSX.Element | null {
-  if (failure === null) return null;
+}): React.JSX.Element {
   return (
-    <Banner tone="danger" message={failure.message} details={failure.details}>
-      <Button onClick={onDismiss}>Dismiss</Button>
-    </Banner>
+    <AnimatePresence>
+      {failure === null ? null : (
+        <Banner tone="danger" message={failure.message} details={failure.details}>
+          <Button onClick={onDismiss}>Dismiss</Button>
+        </Banner>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -949,7 +1000,11 @@ function Banner({
   const palette =
     tone === "danger" ? "border-danger/30 bg-danger/10 text-danger" : "border-warn/30 bg-warn/10 text-warn";
   return (
-    <div role="alert" className={`flex shrink-0 items-start gap-2 border-b px-3 py-2 text-xs ${palette}`}>
+    <m.div
+      role="alert"
+      {...BANNER_MOTION}
+      className={`flex shrink-0 items-start gap-2 border-b px-3 py-2 text-xs ${palette}`}
+    >
       <span className="mt-0.5 shrink-0">
         <WarningIcon />
       </span>
@@ -962,6 +1017,6 @@ function Banner({
         ))}
       </div>
       <div className="shrink-0">{children}</div>
-    </div>
+    </m.div>
   );
 }
