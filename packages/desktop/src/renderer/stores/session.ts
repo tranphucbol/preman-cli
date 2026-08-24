@@ -7,10 +7,18 @@
  */
 import { create } from "zustand";
 
-import { EXIT_CODES, type Catalog, type EngineError, type EngineMessage } from "@preman/desktop/engine/protocol.js";
+import {
+  EXIT_CODES,
+  markPhase,
+  PHASES,
+  type Catalog,
+  type EngineError,
+  type EngineMessage,
+} from "@preman/desktop/engine/protocol.js";
 import type { CreateWorkspaceResult, HostFailure, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
 
 import { EngineRequestError, onEngineClient, type EngineClient } from "@preman/desktop/renderer/client.js";
+import { publishPhaseReader } from "@preman/desktop/renderer/phases.js";
 import { readSession, restoreCollapse, restoreOpenState, startPersistence } from "@preman/desktop/renderer/persist.js";
 import { useCatalogStore } from "./catalog.js";
 import { useOverlayStore } from "./overlay.js";
@@ -206,8 +214,13 @@ async function resume(client: EngineClient): Promise<void> {
   restoreCollapse(snapshot);
 
   // The first catalog is asked for rather than pushed: the host builds it lazily, so nothing
-  // exists to push until somebody wants it.
-  applyCatalog(await client.send("catalog", {}));
+  // exists to push until somebody wants it. Marked either side of the await rather than around
+  // `applyCatalog`, because what is between the two marks is the engine's build and the port, and
+  // what follows the second is this thread's own re-index.
+  markPhase(PHASES.rendererCatalogAsked);
+  const catalog = await client.send("catalog", {});
+  markPhase(PHASES.rendererCatalogArrived);
+  applyCatalog(catalog);
 
   // Asked for once, then pushed for the rest of the session. Not awaited: a workspace that is not
   // in a repository, or a `git` that is slow to answer, must not hold up the tabs.
@@ -240,6 +253,7 @@ export function connect(): () => void {
   });
 
   const stopPorts = onEngineClient((client) => {
+    markPhase(PHASES.rendererPortReceived);
     const session = useSessionStore.getState();
     session.client?.close();
     // Before the clear, not after: the last unsaved keystroke still belongs to the workspace whose
@@ -257,6 +271,9 @@ export function connect(): () => void {
     session.setHostFailure(null);
     session.setEnvironment(undefined);
     session.setClient(client, client.root);
+    // Re-parked on every port: a reader that answered for the previous host would report the
+    // timings of a workspace nobody is looking at.
+    publishPhaseReader(() => client.send("phases", {}));
 
     client.onPush(route);
     resume(client).catch((cause: unknown) => {

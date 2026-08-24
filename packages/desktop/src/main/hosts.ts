@@ -8,7 +8,7 @@
  */
 import { basename } from "node:path";
 import { MessageChannelMain, utilityProcess, type UtilityProcess, type WebContents } from "electron";
-import { ENGINE_PORT_MESSAGE, WORKSPACE_ROOT_FLAG } from "@preman/desktop/engine/protocol.js";
+import { ENGINE_PORT_MESSAGE, markPhase, PHASES, WORKSPACE_ROOT_FLAG } from "@preman/desktop/engine/protocol.js";
 import { CHANNELS, type HostFailure } from "@preman/desktop/preload/bridge.js";
 
 const HOST_IDLE_MS = 5 * 60_000;
@@ -58,6 +58,9 @@ export function createHostRegistry(options: HostRegistryOptions): HostRegistry {
     const channel = new MessageChannelMain();
     host.process.postMessage(ENGINE_PORT_MESSAGE, [channel.port1]);
     contents.postMessage(CHANNELS.enginePort, { root }, [channel.port2]);
+    // Still no message shape inspected here: this is a name from the same module as
+    // `ENGINE_PORT_MESSAGE`, marking the moment the handshake left this process.
+    markPhase(PHASES.mainPortPosted);
   }
 
   function spawn(root: string, respawns: number): Host {

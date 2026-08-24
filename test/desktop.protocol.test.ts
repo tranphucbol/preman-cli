@@ -18,6 +18,7 @@ import type {
   EnginePush,
   GitStatus,
   NodeDocument,
+  PhaseReport,
   RunEvent,
 } from "@preman/desktop/engine/protocol.js";
 import {
@@ -26,6 +27,8 @@ import {
   GROUP_DEFINITION_SUFFIX,
   ORDER_ABSENT,
   ORDER_STEP,
+  PHASE_PREFIX,
+  PHASES,
   VARIABLE_TOKEN_SOURCE,
   isEnginePush,
 } from "@preman/desktop/engine/protocol.js";
@@ -776,6 +779,59 @@ describe("the engine host protocol", () => {
       expect(error.message).toContain("closed");
     });
   });
+
+  describe("the phase report", () => {
+    /**
+     * How many times a phase has been marked in this process so far.
+     *
+     * Marks accumulate for the life of the process and every case in this file that opens a
+     * workspace adds a pair, so an absolute count says nothing. A delta across one host's first
+     * catalog request does.
+     */
+    const marked = (report: PhaseReport, phase: string): number =>
+      report.marks.filter((mark) => mark.name === phase).length;
+
+    it("givenAnEngineHost_whenPhasesRequested_thenTheCatalogBuildIsReported", async () => {
+      const app = open();
+
+      const before = await app.send("phases", {});
+      await app.send("catalog", {});
+      const after = await app.send("phases", {});
+
+      expect(marked(after, PHASES.engineCatalogEnter) - marked(before, PHASES.engineCatalogEnter)).toBe(1);
+      expect(marked(after, PHASES.engineCatalogExit) - marked(before, PHASES.engineCatalogExit)).toBe(1);
+      // The origin is what makes this report comparable to the window's. Without it the numbers
+      // are offsets into a process nobody else can see.
+      expect(after.timeOrigin).toBeGreaterThan(0);
+    });
+
+    it("givenADisposedEngineHost_whenPhasesRequested_thenItStillAnswers", async () => {
+      const app = open();
+      await app.send("catalog", {});
+
+      app.host.dispose();
+
+      // A mark is a record of something that already happened, so there is no stale answer to
+      // give — and a timeline is wanted most when the thing being diagnosed has already fallen
+      // over. This is the whole of the exception `dispatch` makes.
+      const report = await app.send("phases", {});
+      expect(report.marks.some((mark) => mark.name === PHASES.engineCatalogExit)).toBe(true);
+    });
+
+    it("givenADisposedEngineHost_whenCatalogRequested_thenItStillRefuses", async () => {
+      const app = open();
+      await app.send("catalog", {});
+
+      app.host.dispose();
+
+      // Deliberately the same assertion `dispose` above already makes, kept here as the other
+      // half of the case before it: the two sit together so that widening the hole in `dispatch`
+      // past `phases` fails a case next to the one that permitted it, and not only one four
+      // hundred lines away.
+      const error = await app.fail("catalog", {});
+      expect(error.message).toContain("closed");
+    });
+  });
 });
 
 describe("the engine host running requests", () => {
@@ -1121,6 +1177,24 @@ describe("the engine host running requests", () => {
  * importing the protocol never pulls a line of the engine into the renderer bundle. That
  * duplication is only safe while something checks it, which is this.
  */
+/**
+ * The phase names are marked in three processes and joined in one reader, so the two properties
+ * the join silently depends on are pinned here rather than left to a reviewer's eye.
+ */
+describe("the phase vocabulary", () => {
+  it("givenThePhaseRecord_whenRead_thenEveryNameIsUniqueAndPrefixed", () => {
+    const names = Object.values(PHASES);
+
+    // Two keys with one name would put two boundaries in one bucket, and the timeline would look
+    // complete while having lost a step.
+    expect(new Set(names).size).toBe(names.length);
+
+    // `readPhases` keeps the marks that start with the prefix. A name without it would be marked
+    // by whichever process owns it and read by nobody.
+    for (const name of names) expect(name.startsWith(PHASE_PREFIX), name).toBe(true);
+  });
+});
+
 describe("the wire's copies of core's constants", () => {
   it("givenProtocolExitCodes_whenComparedToCore_thenEveryValueMatches", () => {
     expect(EXIT_CODES).toStrictEqual(EXIT);

@@ -41,6 +41,9 @@ import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from
 import { toEngineError } from "@preman/desktop/engine/errors.js";
 import {
   BODY_WINDOW_BYTES,
+  markPhase,
+  PHASES,
+  readPhases,
   type MethodChoice,
   type MethodChoices,
   type DocumentKind,
@@ -246,8 +249,12 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   }
 
   async function ensureCatalog(): Promise<Catalog> {
+    // The early return is deliberately unmarked: a cached catalog is not a build, and marking it
+    // would put two enters against one exit the moment a workspace is switched back to.
     if (catalog !== undefined) return catalog;
+    markPhase(PHASES.engineCatalogEnter);
     const built = await buildCatalog(root);
+    markPhase(PHASES.engineCatalogExit);
     catalog = built;
     if (watcher === undefined && !disposed) startWatching();
     return built;
@@ -528,6 +535,15 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   }
 
   async function dispatch(request: EngineRequest): Promise<EngineResult> {
+    /*
+     * The one request answered above the refusal below, and the only one that ever will be.
+     *
+     * A mark records when this process did something, which stays true after disposal — it is not
+     * workspace state, so there is no stale answer to give. And a diagnostic readout is wanted
+     * exactly when something has gone wrong, which includes a host that has been closed. Decision
+     * 027 scopes this hole to `phases`; `test/desktop.protocol.test.ts` pins both halves.
+     */
+    if (request.kind === "phases") return readPhases();
     // A disposed host has closed its watcher, so its catalog can no longer be trusted to match
     // the disk. Refusing is honest; serving the last known state is how a GUI shows a lie.
     if (disposed) throw usage(`the engine for ${root} is closed`);

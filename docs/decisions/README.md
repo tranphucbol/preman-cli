@@ -34,6 +34,7 @@ These are the decisions behind the desktop app. The CLI predates the practice.
 | [024](024-the-console-repeats-the-response-pane.md)                 | The console repeats the response pane                                |
 | [025](025-variable-resolution-stays-in-the-engine.md)               | Variable resolution stays in the engine                              |
 | [026](026-the-app-is-allowed-to-move.md)                            | The app is allowed to move                                           |
+| [027](027-the-app-reports-its-own-phases.md)                        | The app reports its own phases                                       |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -46,6 +47,11 @@ the cost: it widens 019's event again and then renders a response body a second 
 that same engine, then gives plain inputs a lighter overlay rather than turning every grid cell into
 a CodeMirror instance. 026 reverses the "Motion" bullet in `docs/design-system.md` — the app moves
 now — and the reversal cost a one-frame transition suppression guard in `appearance/apply.ts`,
-without which a theme switch would start a colour transition on every mounted control at once.
+without which a theme switch would start a colour transition on every mounted control at once. 027
+is the first to answer 016 with an instrument rather than a number: opening a large workspace was
+slow, nobody could say which of the three processes was slow, and 002's port turned out to have no
+way to ask the one that was. It also has to say why it is not 017 — wall-clock phases and
+attributed blocking time measure two different questions — and it admits, in the record, that its
+own new budget row is gated well above its goal.
 
 `TEMPLATE.md` is the shape of a new one.

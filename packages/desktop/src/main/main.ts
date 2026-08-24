@@ -22,6 +22,7 @@ import {
 import { createHostRegistry, type HostRegistry } from "@preman/desktop/main/hosts.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
 import { createWorkspace } from "@preman/desktop/main/workspaces.js";
+import { markPhase, PHASES } from "@preman/desktop/engine/protocol.js";
 import {
   CHANNELS,
   TRAFFIC_LIGHT_HEIGHT_PX,
@@ -160,6 +161,7 @@ function createWindow(): BrowserWindow {
 
   created.once("ready-to-show", () => {
     created.show();
+    markPhase(PHASES.mainWindowShown);
   });
 
   // `ready-to-show` never fires if the document never paints, and a window that stays hidden is
@@ -395,6 +397,11 @@ function registerIpc(): void {
 }
 
 function start(): void {
+  // Not this process's true beginning: `app.whenReady()` has already happened, and the fifty-odd
+  // milliseconds of spawn before any JavaScript runs are excluded from the cold-start row for the
+  // same reason. `timeOrigin`, which `readPhases` reports, is the earlier anchor.
+  markPhase(PHASES.mainStart);
+
   // Unpackaged, the dock shows Electron's own icon: only `app.dock` can correct that, and only
   // after `whenReady`. A packaged build takes its icon from the bundle and ignores this.
   const dockIcon = appIcon();
@@ -418,6 +425,7 @@ function start(): void {
   const last = requireStore().read().activeRoot;
   const reopening = last !== null && looksLikeWorkspace(last) ? last : null;
   if (reopening !== null) requireHosts().prewarm(reopening);
+  markPhase(PHASES.mainPrewarm);
 
   window.webContents.once("did-finish-load", () => {
     if (reopening !== null) openWorkspace(reopening);

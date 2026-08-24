@@ -24,24 +24,31 @@ a built `packages/desktop/dist` and, today, macOS: it finds the Electron binary 
 | Metric                                            | Budget          | Asserted in                      |
 | ------------------------------------------------- | --------------- | -------------------------------- |
 | cold start to interactive window                  | ≤ 800ms         | `test/renderer/perf.app.test.ts` |
+| open a 5000-request workspace, to first row       | ≤ 4000ms\*      | `test/renderer/perf.app.test.ts` |
 | `buildCatalog`, 43 requests                       | ≤ 50ms          | `test/perf.test.ts`              |
 | `buildCatalog`, 1000 requests                     | ≤ 400ms         | `test/perf.test.ts`              |
 | workspace switch, host already warm               | ≤ 100ms         | `test/perf.test.ts`              |
 | console merge, 5000 rows in each of three streams | ≤ 10ms          | `test/perf.test.ts`              |
 | sidebar scroll, 5000 nodes                        | sustained 60fps | `test/renderer/perf.app.test.ts` |
-| total idle RSS, all processes, one workspace open | ≤ 250MB\*       | `test/renderer/perf.app.test.ts` |
+| total idle RSS, all processes, one workspace open | ≤ 250MB\*\*     | `test/renderer/perf.app.test.ts` |
 | tab switch                                        | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
 | keystroke to paint, any editor or grid            | ≤ 8ms           | `test/renderer/perf.app.test.ts` |
 | open a request tab, editor mounted                | ≤ 8ms           | `test/renderer/perf.app.test.ts` |
 | theme switch                                      | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
 | density switch                                    | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
 | longest task on main or renderer                  | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
-| send to first response paint, above network time  | ≤ 30ms          | not asserted\*\*                 |
+| send to first response paint, above network time  | ≤ 30ms          | not asserted\*\*\*               |
 
-\* Gated at 450MB, because 250 is a private-footprint number and macOS does not report one. The
-whole argument is below; it is the one row where the gate and the goal are different numbers.
+\* Gated at 4000ms against a goal of 2500ms, because this is the one row that cannot discard its
+first launch: a second launch would find the catalog already built and would measure the warm
+switch row instead. The gate sits above the worst of three observed runs rather than beside the
+goal.
 
-\*\* Not asserted because it needs a live server behind the app to have a response to paint, and
+\*\* Gated at 450MB, because 250 is a private-footprint number and macOS does not report one. The
+whole argument is below. This and the row above are the two where the gate and the goal are
+different numbers, and both say why in the section that reads them.
+
+\*\*\* Not asserted because it needs a live server behind the app to have a response to paint, and
 separating the paint from the network means instrumenting from the `response-head` push rather
 than from the click. That is a fixture, not an assertion, and it has not been built. It is
 feasible — `test/e2e.test.ts` already boots a real gRPC server in-process — so this row is
@@ -59,9 +66,9 @@ visible.
 
 It excludes roughly fifty milliseconds of process spawn before any JavaScript runs, and all of
 Playwright's launch scaffolding — neither of which the app can affect. It is measured against the
-committed fixture workspace, not the generated one: "cold start" and "a tree with five thousand
-nodes" are two different rows, and charging the first one a 5,000-file catalog build would measure
-the second.
+committed fixture workspace, not the generated one: "cold start" and "open a 5000-request
+workspace" are two different rows, and charging the first one a 5,000-file catalog build would
+measure the second.
 
 The first launch is discarded. It reads two hundred megabytes of Electron framework off disk and
 lands around 1300ms; every launch after it is around 550ms. The budget is a property of the app,
@@ -71,6 +78,56 @@ It also drives the built `dist/` under the Electron binary rather than an instal
 are the same bytes — electron-builder copies `dist/` into the bundle — and packaging inside a test
 would spend minutes producing a DMG in order to launch it once. The packaged bundle is verified by
 hand instead; Playwright will not attach to it.
+
+### Opening a five-thousand-request workspace, gated at 4000ms
+
+The row the cold-start row keeps pointing at. Same axis — the main process's own
+`performance.timeOrigin` — but against a generated workspace, and read to the moment the sidebar
+has actually painted rows rather than to the moment one exists in the DOM.
+
+It is read from the app's own `performance.mark` calls rather than from Playwright's view of the
+page, because the number is only useful if it says where the time went, and three processes are
+involved of which one is a page. Thirteen phases are marked: four in the main process, three in the
+engine host, six in the renderer. `PHASES` in `packages/desktop/src/engine/protocol.ts` is the list;
+decision 027 is why the marks ship rather than living behind a build flag, and why the engine host
+answers a `phases` request even after it has been disposed. The perf suite joins the three reports
+on their `timeOrigin`s and asserts a named causal order over them, so a phase that stops firing —
+or starts firing in the wrong place — fails a case rather than quietly leaving a gap.
+
+Measured 2563, 2742 and 3167ms over three runs. One of them, phase by phase:
+
+| span                                                        | cost   |
+| ----------------------------------------------------------- | ------ |
+| process spawn to `main.start`, which is after `whenReady()` | 310ms  |
+| store, host registry, IPC and menu, to `main.prewarm`       | 182ms  |
+| window created, `did-finish-load`, port posted              | 240ms  |
+| port reaches the renderer                                   | 187ms  |
+| engine host's own process finishes booting                  | 175ms  |
+| **`buildCatalog`, 5000 requests**                           | 1258ms |
+| catalog crosses the port, re-index, first paint             | 31ms   |
+
+Half of it is one call, and that call is close to its floor: read and parsed in isolation, the same
+five thousand files cost 424ms of `readFileSync` and 274ms of `parseYaml`. The engine host's boot
+and the build are already back to back, so there is nothing there to overlap either. What is left
+is the 900ms before the catalog is even asked for, which is four processes' worth of start-up and
+is the same 900ms the cold-start row spends.
+
+This row does not discard its first launch, and cannot: a second launch of the same workspace finds
+the engine host's catalog already built, which is the warm-switch row and not this one. So the
+number carries the two hundred megabytes of Electron framework that the cold-start row gets to
+leave out. The goal is 2500ms; the gate is 4000ms, set above the worst of the three runs rather
+than beside the goal. What it defends is the shape — an open linear in the number of requests. A
+change that makes it quadratic blows straight through 4000; a change that costs three hundred
+milliseconds is a review comment rather than a red suite.
+
+One thing this row does **not** measure, and did until the instrument said otherwise. On macOS the
+first read of a just-written tree costs an order of magnitude more than every read after it: over
+five thousand request files, pass one is 6121ms where passes two and three are 458ms and 433ms.
+`writeBigWorkspace` generates the workspace immediately before the launch, so that bill landed on
+this row and on no other — `test/perf.test.ts` discards a first attempt and never saw it. Charged,
+the open read as twelve seconds. `writeBigWorkspace` now reads every file back before it returns,
+which costs the same wall clock it always did and puts it somewhere it cannot be mistaken for the
+app.
 
 ### `buildCatalog`, and the warm switch
 
@@ -267,6 +324,17 @@ its own fallbacks, free to drift from the real one, and `order` legitimately app
 request file, so it cannot stop early either. This is the first row that will fail if the request
 format grows, and when it does the fix is a cache keyed on mtime, not a faster guess at the syntax.
 
+**A five-thousand-request open spends 900ms before it asks for anything.** That is the span from
+process spawn to `renderer.catalog.asked`, and it is four processes starting up: `whenReady`, the
+store and the menu, a Chromium document, and the engine host's own Node boot. It is the same 900ms
+the cold-start row spends and it is not specific to a large workspace, which is why the fix is not
+in this row.
+
+It is also the noisiest part of the number. On one run in three, `resume()` takes about 690ms
+between receiving the port and asking for the catalog — it reads app state back over IPC first —
+where the other two take under two milliseconds. Nothing has been changed for it yet; the phase
+marks are new and one anomaly in three runs is not yet a pattern.
+
 ## Changes made to meet the budget
 
 **Cold start was 1750ms.** The breakdown was 534ms to a renderer context, 252ms of HTML and
@@ -289,6 +357,11 @@ workspaces never write.
 directory and returns `{root, requests, nodes, cleanup}`. Ten requests per folder, five folders per
 collection, alternating gRPC and HTTP, each request carrying a realistic message, metadata and two
 scripts.
+
+It reads every file back before it returns. That looks like waste and is not: the first read of a
+just-written tree costs six seconds where the second costs four hundred milliseconds, and a
+generator that leaves that bill unpaid hands it to whichever case reads first. The argument is in
+the section on the five-thousand-request open, and in the function's own comment.
 
 Generated rather than committed: a thousand YAML files in `test/fixtures/` would make every
 `git status` in this repository slower for one test.

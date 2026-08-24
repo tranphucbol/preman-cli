@@ -199,7 +199,13 @@ export type EngineRequest =
   | { id: number; kind: "body-window"; handle: string; offset: number; length?: number }
   | { id: number; kind: "body-search"; handle: string; query: string; limit?: number }
   | { id: number; kind: "body-format"; handle: string }
-  | { id: number; kind: "body-release"; handle: string };
+  | { id: number; kind: "body-release"; handle: string }
+  /**
+   * What this engine host marked, and when. A `utilityProcess` has no CDP endpoint, so there is
+   * no other way to read its phases: the one phase that dominates a workspace open is the one
+   * phase an external profiler is structurally blind to.
+   */
+  | { id: number; kind: "phases" };
 
 export type EngineRequestKind = EngineRequest["kind"];
 
@@ -232,6 +238,7 @@ export interface EngineResults {
   "body-search": BodyMatch[];
   "body-format": string;
   "body-release": null;
+  phases: PhaseReport;
 }
 
 export type EngineResult = EngineResults[EngineRequestKind];
@@ -272,6 +279,88 @@ export const ENGINE_PORT_MESSAGE = "engine-port";
 
 /** What `--workspace-root=` prefixes on the engine host's argv. */
 export const WORKSPACE_ROOT_FLAG = "--workspace-root=";
+
+/**
+ * The boundaries a workspace open crosses, grouped by the process that marks them.
+ *
+ * Grouped, not ordered: the engine's catalog build is triggered by the renderer asking for it, so
+ * `engineCatalogEnter` lands after `rendererCatalogAsked` on the wall clock even though it is
+ * listed above it. The causal order is asserted in `test/renderer/perf.app.test.ts`, which is the
+ * only place that has all three reports in hand.
+ *
+ * These names live here, beside `ENGINE_PORT_MESSAGE`, for that constant's own reason: three
+ * processes mark them and one reader joins them, so a name spelled twice across a process
+ * boundary would produce a timeline that silently loses a phase. Decision 027.
+ *
+ * They ship. A mark costs sub-microseconds once per workspace open, and the alternative — a build
+ * flag — would put the measured build one flag away from the shipped one and make the field
+ * unprofilable. The marks carry timings and nothing else: no paths, no node ids, no bodies.
+ */
+export const PHASES = {
+  mainStart: "preman.main.start",
+  mainPrewarm: "preman.main.prewarm",
+  mainWindowShown: "preman.main.window-shown",
+  mainPortPosted: "preman.main.port-posted",
+  engineStart: "preman.engine.start",
+  engineCatalogEnter: "preman.engine.catalog.enter",
+  engineCatalogExit: "preman.engine.catalog.exit",
+  rendererPortReceived: "preman.renderer.port-received",
+  rendererCatalogAsked: "preman.renderer.catalog.asked",
+  rendererCatalogArrived: "preman.renderer.catalog.arrived",
+  rendererReplaceEnter: "preman.renderer.replace.enter",
+  rendererReplaceExit: "preman.renderer.replace.exit",
+  rendererRowsPainted: "preman.renderer.rows-painted",
+} as const;
+
+export type Phase = (typeof PHASES)[keyof typeof PHASES];
+
+export interface PhaseMark {
+  name: string;
+  /** Milliseconds since this process's own `timeOrigin`. */
+  at: number;
+}
+
+export interface PhaseReport {
+  /** Unix-epoch milliseconds. Added to `at` this puts every process on one timeline. */
+  timeOrigin: number;
+  marks: readonly PhaseMark[];
+}
+
+/**
+ * What every phase name starts with, and so what {@link readPhases} keeps.
+ *
+ * Exported because a profiler reading the main process cannot call `readPhases` — a function
+ * handed to `ElectronApplication.evaluate` is serialized and re-parsed, so it arrives without its
+ * imports — and the prefix is the one fact it has to be told rather than guess.
+ */
+export const PHASE_PREFIX = "preman.";
+const MARK_ENTRY_TYPE = "mark";
+
+/**
+ * Record a phase on this process's own timeline.
+ *
+ * Guards nothing and swallows nothing: the argument is a union of thirteen literals, so a mark
+ * that could throw is a mark whose name does not exist, which is a compile error and not a
+ * runtime one.
+ */
+export function markPhase(phase: Phase): void {
+  performance.mark(phase);
+}
+
+/**
+ * Every phase this process marked, with the origin needed to compare it to another process's.
+ *
+ * `performance` is a global in Chromium and in Node, which is why this can live on the wire
+ * contract without giving it a dependency. The prefix filter is what keeps a caller's own marks —
+ * or a library's — out of the report.
+ */
+export function readPhases(): PhaseReport {
+  const marks = performance
+    .getEntriesByType(MARK_ENTRY_TYPE)
+    .filter((entry) => entry.name.startsWith(PHASE_PREFIX))
+    .map((entry) => ({ name: entry.name, at: entry.startTime }));
+  return { timeOrigin: performance.timeOrigin, marks };
+}
 
 /**
  * The wire's own copy of core's `EXIT`.

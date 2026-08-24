@@ -2,8 +2,8 @@
  * The half of the performance budget that needs a real window.
  *
  * Gated behind `PREMAN_PERF=1` and run in CI only. A perf test that makes `bun run test` slow
- * gets deleted within a month, and this one launches Electron five times and generates five
- * thousand request files: it is a minute, not a second.
+ * gets deleted within a month, and this one launches Electron a dozen times and generates five
+ * thousand request files twice over: it is minutes, not a second.
  *
  * Run it with:
  *
@@ -36,6 +36,11 @@
  *   separates a fast sidebar from a slow one is the *dropped* frame: an interval of two periods
  *   or more. That is what `sustained 60fps` means in the budget table, and it is what this
  *   asserts.
+ * - Opening a five-thousand-request workspace is measured from the app's own phase marks rather
+ *   than from Playwright's view of the DOM, because the interesting part of that number is where
+ *   it went: three processes are involved and only one of them is a page. See
+ *   {@link phaseTimeline}. That row does *not* discard its first launch — a second launch would
+ *   find the catalog already built — so its gate is loose where the cold-start row's is tight.
  * - `IDLE_RSS_BUDGET_MB` is not the table's 250. See the constant.
  * - Tab switch, keystroke and longest task are all read off one measurement: how long the main
  *   thread was blocked, by anything, while the interaction happened. See {@link Sample}. The two
@@ -50,6 +55,8 @@ import { _electron, type ElectronApplication, type Page } from "playwright-core"
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PREFERENCES } from "@preman/desktop/preload/bridge.js";
 import type { AppState } from "@preman/desktop/main/store.js";
+import { PHASE_PREFIX, PHASES, type PhaseReport } from "@preman/desktop/engine/protocol.js";
+import { PHASE_READER_KEY, type PhaseReader } from "@preman/desktop/renderer/phases.js";
 import { FIXTURE_WS } from "../helpers.js";
 import { writeBigWorkspace, type GeneratedWorkspace } from "../support/big-workspace.js";
 
@@ -189,6 +196,64 @@ const DENSITY_SWITCHES = 6;
 const LAUNCH_TIMEOUT_MS = 120_000;
 const CASE_TIMEOUT_MS = 300_000;
 
+/**
+ * Five thousand requests, to first row painted. Kept separate from {@link SCROLL_REQUESTS} even
+ * though the number is the same: one row is about how long the open takes and the other about
+ * whether the tree is virtualized, and a future change to either should not silently move the
+ * other.
+ */
+const OPEN_BIG_REQUESTS = 5_000;
+/**
+ * Measured at 2563, 2742 and 3167ms over three runs on an M-series laptop, and wanted under 2500.
+ *
+ * The gate is above the worst of those rather than beside the goal, because this is the one row
+ * that does not discard its first launch — it cannot, since a second launch would find the
+ * engine's catalog already built and measure a warm switch instead. So the number carries the two
+ * hundred megabytes of Electron framework the cold-start row gets to leave out, plus whatever the
+ * runner's disk was doing. `docs/performance.md` has the phase-by-phase breakdown.
+ */
+const OPEN_BIG_BUDGET_MS = 4000;
+/** The Performance API's own name for a `performance.mark`. */
+const MARK_ENTRIES = "mark";
+/**
+ * One generous frame. The last phase is deferred by a `requestAnimationFrame`, so a timeline read
+ * the instant the first row appeared could arrive before the mark that closes it.
+ */
+const PAINT_SETTLE_MS = 100;
+/**
+ * How far a cross-process comparison is allowed to go the wrong way.
+ *
+ * Every process reports its own `timeOrigin`, which is a wall-clock reading taken when that
+ * process started, and its marks as offsets on a monotonic clock. Adding the two puts three
+ * processes on one axis, but not to the nanosecond: two adjacent marks either side of a port can
+ * land a fraction of a millisecond out of order without anything being wrong. The gaps this suite
+ * actually cares about are tens to thousands of milliseconds.
+ */
+const CLOCK_SKEW_MS = 5;
+
+/**
+ * The pairs a workspace open must respect, whichever process marked which.
+ *
+ * This is the assertion the grouped {@link PHASES} record cannot make on its own: declaration
+ * order is by process, so the only statement of what causes what is here. Each pair is a real
+ * edge — a port crossed, an await resolved, a frame committed — and not merely two things that
+ * happen to be adjacent.
+ */
+const CAUSAL_ORDER: readonly (readonly [string, string])[] = [
+  [PHASES.mainStart, PHASES.mainPrewarm],
+  [PHASES.mainStart, PHASES.mainWindowShown],
+  [PHASES.mainPrewarm, PHASES.mainPortPosted],
+  [PHASES.mainPortPosted, PHASES.rendererPortReceived],
+  [PHASES.rendererPortReceived, PHASES.rendererCatalogAsked],
+  [PHASES.rendererCatalogAsked, PHASES.engineCatalogEnter],
+  [PHASES.engineStart, PHASES.engineCatalogEnter],
+  [PHASES.engineCatalogEnter, PHASES.engineCatalogExit],
+  [PHASES.engineCatalogExit, PHASES.rendererCatalogArrived],
+  [PHASES.rendererCatalogArrived, PHASES.rendererReplaceEnter],
+  [PHASES.rendererReplaceEnter, PHASES.rendererReplaceExit],
+  [PHASES.rendererReplaceExit, PHASES.rendererRowsPainted],
+];
+
 interface LaunchedApp {
   app: ElectronApplication;
   page: Page;
@@ -251,6 +316,79 @@ async function launch(root: string): Promise<LaunchedApp> {
 async function startUpMs(app: LaunchedApp): Promise<number> {
   const origin = await app.app.evaluate(() => performance.timeOrigin);
   return app.interactiveAt - origin;
+}
+
+interface TimelineEntry {
+  name: string;
+  /** Milliseconds after the earliest of the three processes' time origins. */
+  at: number;
+}
+
+type Timeline = readonly TimelineEntry[];
+
+/** What a serialized `evaluate` body has to be told, because it arrives without its imports. */
+interface MarkQuery {
+  prefix: string;
+  entryType: string;
+}
+
+/**
+ * Every phase all three processes marked, on one axis, earliest first.
+ *
+ * Three reports, read three ways, because the three processes are reachable three ways. Main is a
+ * Node context Playwright can evaluate in directly. The renderer is a page. The engine host is a
+ * `utilityProcess` with no CDP endpoint at all, which is why it answers a `phases` request over
+ * the port instead — and why the renderer is asked for both its own report and the engine's in one
+ * call, through the reader `publishPhaseReader` parks on the window.
+ *
+ * The main-process body inlines what `readPhases` does rather than calling it. A function handed
+ * to `evaluate` is serialized and re-parsed in the target process, so it cannot close over an
+ * import; {@link MarkQuery} is the same constraint applied to the two constants it needs.
+ */
+async function phaseTimeline(app: LaunchedApp): Promise<Timeline> {
+  // Not a settle for its own sake: `markRowsPainted` defers itself one frame, so a read that
+  // raced the paint would report a timeline missing the phase it exists to measure.
+  await app.page.waitForTimeout(PAINT_SETTLE_MS);
+
+  const query: MarkQuery = { prefix: PHASE_PREFIX, entryType: MARK_ENTRIES };
+  const main = await app.app.evaluate(
+    (_api, marks): PhaseReport => ({
+      timeOrigin: performance.timeOrigin,
+      marks: performance
+        .getEntriesByType(marks.entryType)
+        .filter((entry) => entry.name.startsWith(marks.prefix))
+        .map((entry) => ({ name: entry.name, at: entry.startTime })),
+    }),
+    query,
+  );
+  const page = await app.page.evaluate((key) => {
+    const read = (window as unknown as Record<string, PhaseReader | undefined>)[key];
+    if (read === undefined) throw new Error(`window.${key} is missing: no engine port ever arrived.`);
+    return read();
+  }, PHASE_READER_KEY);
+
+  const reports = [main, page.renderer, page.engine];
+  // Main spawns the other two, so its origin is the earliest in practice. Computed rather than
+  // assumed, because "in practice" is not an assertion.
+  const base = Math.min(...reports.map((report) => report.timeOrigin));
+  return reports
+    .flatMap((report) => report.marks.map((mark) => ({ name: mark.name, at: report.timeOrigin - base + mark.at })))
+    .sort((left, right) => left.at - right.at);
+}
+
+/** When a phase happened, or `undefined` if this open never reached it. */
+function phaseAt(timeline: Timeline, phase: string): number | undefined {
+  return timeline.find((entry) => entry.name === phase)?.at;
+}
+
+/** {@link phaseAt} for the callers that have nothing to say about a phase that never fired. */
+function requirePhase(timeline: Timeline, phase: string): number {
+  const at = phaseAt(timeline, phase);
+  if (at === undefined) {
+    const fired = timeline.map((entry) => entry.name).join(", ");
+    throw new Error(`${phase} never fired. The timeline held: ${fired}`);
+  }
+  return at;
 }
 
 function requireBuild(): void {
@@ -664,6 +802,52 @@ describe.skipIf(!PERF_ENABLED)("the app's budget", () => {
       }
 
       expect(shortest).toBeLessThanOrEqual(START_BUDGET_MS);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "givenAColdOpen_whenPhasesRead_thenEveryDeclaredPhaseFired",
+    async () => {
+      requireBuild();
+      const timeline = await phaseTimeline(await launch(FIXTURE_WS));
+      const fired = new Set(timeline.map((entry) => entry.name));
+
+      // Read off the record rather than from a list repeated here. A phase declared and marked
+      // nowhere is the one failure mode of this instrument that nothing else would notice: the
+      // timeline would still be monotonic, still be under budget, and still be missing a step.
+      for (const phase of Object.values(PHASES)) {
+        expect(fired.has(phase), phase).toBe(true);
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "givenAColdOpen_whenPhasesRead_thenTheTimelineIsMonotonic",
+    async () => {
+      requireBuild();
+      const timeline = await phaseTimeline(await launch(FIXTURE_WS));
+
+      for (const [before, after] of CAUSAL_ORDER) {
+        const earlier = requirePhase(timeline, before);
+        const later = requirePhase(timeline, after);
+        expect(later, `${before} -> ${after}`).toBeGreaterThanOrEqual(earlier - CLOCK_SKEW_MS);
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "givenAFiveThousandRequestWorkspace_whenOpened_thenFirstRowPaintsUnderFourThousandMs",
+    async () => {
+      requireBuild();
+      generated = writeBigWorkspace(OPEN_BIG_REQUESTS);
+      const timeline = await phaseTimeline(await launch(generated.root));
+
+      // The same axis the cold-start row uses — main's own time origin — so the two rows are
+      // comparable, and the difference between them is the workspace and nothing else.
+      expect(requirePhase(timeline, PHASES.rendererRowsPainted)).toBeLessThanOrEqual(OPEN_BIG_BUDGET_MS);
     },
     CASE_TIMEOUT_MS,
   );

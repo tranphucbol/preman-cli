@@ -30,11 +30,12 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { CatalogNode, MutateOp, RequestKind } from "@preman/desktop/engine/protocol.js";
 
 import { resolveMark, type GitDecoration, type RowMark } from "@preman/desktop/renderer/model/git.js";
+import { markRowsPainted } from "@preman/desktop/renderer/phases.js";
 import { resolveDrop, type DropSide } from "@preman/desktop/renderer/model/order.js";
 import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import {
@@ -187,6 +188,13 @@ export function Sidebar(props: SidebarProps) {
   const visibleIds = useCatalogStore(selectVisible);
   const root = useCatalogStore(selectRoot);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // The last phase of a workspace open: rows exist, so the wait the user was actually having is
+  // over. `markRowsPainted` is once-only and defers itself a frame, which is why this pane can
+  // report a performance boundary without holding any state for it.
+  useEffect(() => {
+    if (visibleIds.length > 0) markRowsPainted();
+  }, [visibleIds.length]);
 
   /**
    * The single context target. Radix opens on the trigger, which is the whole viewport, so the

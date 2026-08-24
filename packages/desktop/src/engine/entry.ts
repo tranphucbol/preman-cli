@@ -7,6 +7,8 @@ import type { MessagePortMain, ParentPort } from "electron";
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
 import {
   ENGINE_PORT_MESSAGE,
+  markPhase,
+  PHASES,
   WORKSPACE_ROOT_FLAG,
   type EngineMessage,
   type EngineRequest,
@@ -29,6 +31,10 @@ if (root === undefined || root.length === 0) {
   process.stderr.write(`engine host started without ${WORKSPACE_ROOT_FLAG}<dir>\n`);
   process.exit(MISSING_ROOT_EXIT);
 }
+
+// After the root check, not before it: a host that exits for want of a root never started, and a
+// timeline with a start and no catalog in it would read as a build that hung.
+markPhase(PHASES.engineStart);
 
 const parentPort = (process as unknown as UtilityProcess).parentPort;
 /** More than one because a workspace switched back to re-attaches rather than respawns. */

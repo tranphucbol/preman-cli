@@ -12,12 +12,14 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 
-import type {
-  Catalog,
-  CatalogNode,
-  GitFileStatus,
-  GitStatus,
-  SnapshotEnvironment,
+import {
+  markPhase,
+  PHASES,
+  type Catalog,
+  type CatalogNode,
+  type GitFileStatus,
+  type GitStatus,
+  type SnapshotEnvironment,
 } from "@preman/desktop/engine/protocol.js";
 
 import { deriveGitDecorations, type GitDecoration } from "@preman/desktop/renderer/model/git.js";
@@ -107,6 +109,10 @@ export const useCatalogStore = create<CatalogState>((set) => ({
   ...EMPTY,
 
   replace(catalog) {
+    // `set` is synchronous, so this pair brackets `indexById` + `computeVisible` +
+    // `deriveGitDecorations` over every node: the one part of a workspace open that blocks this
+    // thread, and so the only phase decision 017's instrument would also see.
+    markPhase(PHASES.rendererReplaceEnter);
     set((state) => ({
       root: catalog.root,
       revision: catalog.revision,
@@ -126,6 +132,7 @@ export const useCatalogStore = create<CatalogState>((set) => ({
           ? state.selectedId
           : NO_SELECTION,
     }));
+    markPhase(PHASES.rendererReplaceExit);
   },
 
   applyGit(status) {
