@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import { GROUP_DEFINITION_SUFFIX, type CatalogNode, type GitFileStatus } from "@preman/desktop/engine/protocol.js";
-import { DESCENDANT, deriveGitDecorations } from "@preman/desktop/renderer/model/git.js";
+import { DESCENDANT, deriveGitDecorations, resolveMark } from "@preman/desktop/renderer/model/git.js";
 
 const ROOT_DEPTH = 0;
 const CHILD_DEPTH = 1;
@@ -102,5 +102,38 @@ describe("deriving git decorations", () => {
     );
 
     expect(decorations.size).toBe(0);
+  });
+});
+
+/**
+ * `resolveMark` is the one place the sidebar's single `GIT_COLUMN_PX` slot decides which of two
+ * independent facts - unsaved edits and git status - it shows. It is a pure function, so there is
+ * no tree or workspace to build here: only the two booleans a row's state boils down to.
+ */
+describe("resolving a row's mark", () => {
+  it("givenNodeWithUnsavedEditsAndGitStatus_whenMarkResolved_thenUnsavedWins", () => {
+    const mark = resolveMark(true, "modified");
+
+    expect(mark).toStrictEqual({ kind: "unsaved", decoration: "modified" });
+  });
+
+  it("givenNodeWithGitStatusOnly_whenMarkResolved_thenLetterIsShown", () => {
+    const mark = resolveMark(false, "modified");
+
+    expect(mark).toStrictEqual({ kind: "git", decoration: "modified" });
+  });
+
+  it("givenSavedNode_whenMarkResolved_thenLetterReturns", () => {
+    // The moment `Cmd+S` clears the edits, the same node with the same git status stops reading
+    // as unsaved and the letter it always had reappears - nothing about the git fact changed.
+    const whileUnsaved = resolveMark(true, "modified");
+    const afterSave = resolveMark(false, "modified");
+
+    expect(whileUnsaved).toStrictEqual({ kind: "unsaved", decoration: "modified" });
+    expect(afterSave).toStrictEqual({ kind: "git", decoration: "modified" });
+  });
+
+  it("givenNodeWithNeitherFact_whenMarkResolved_thenNothingIsShown", () => {
+    expect(resolveMark(false, undefined)).toBeUndefined();
   });
 });

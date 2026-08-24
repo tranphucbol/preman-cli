@@ -29,7 +29,18 @@ import { DEFAULT_PREFERENCES, TITLE_BAR_GUTTER_PX } from "@preman/desktop/preloa
 import type { PremanBridge, SessionSnapshot, WindowControl } from "@preman/desktop/preload/bridge.js";
 import { EngineRequestError, type EngineClient } from "@preman/desktop/renderer/client.js";
 import type { TestResult } from "@preman/desktop/renderer/model/response.js";
-import { FIELD, edit, pairsToText, project, readPairs, textToPairs } from "@preman/desktop/renderer/model/request.js";
+import {
+  FIELD,
+  edit,
+  editPairKey,
+  editPairValue,
+  pairsToText,
+  project,
+  readPairs,
+  textToPairs,
+} from "@preman/desktop/renderer/model/request.js";
+import { saveTab } from "@preman/desktop/renderer/actions.js";
+import { clearFlush, flushPending, registerFlush } from "@preman/desktop/renderer/pending.js";
 import {
   DRAFT_PERSIST_DEBOUNCE_MS,
   readSession,
@@ -51,6 +62,7 @@ const PAYMENT_ID = "postman/collections/payment";
 const ADMIN_ID = "postman/collections/admin";
 const PROFILE_ID = "postman/collections/admin/Profile.request.yaml";
 const HEADERS_FIELD = "headers";
+const EMPTY_VALUE = "";
 const SETTLE_MS = DRAFT_PERSIST_DEBOUNCE_MS * 2;
 
 /** Two requests over two data rows, which is what the runner's `#N` labels exist for. */
@@ -361,6 +373,113 @@ describe("external changes under an open tab", () => {
   });
 });
 
+describe("flushing the focused editor before a save", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+  /** Whatever this suite last registered, so a test that forgets to clear it does not leak. */
+  let registered: (() => void) | null = null;
+
+  beforeEach(async () => {
+    resetStores();
+    workspace = cloneFixtureWorkspace();
+    host = createEngineHost({ root: workspace.root, post: () => undefined });
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    const ping = useCatalogStore.getState().byId.get(PING_ID);
+    expect(ping).toBeDefined();
+    useTabsStore.getState().open(ping!);
+    useTabsStore.getState().loaded(PING_ID, await client.send("read-node", { nodeId: PING_ID }));
+  });
+
+  afterEach(() => {
+    if (registered !== null) clearFlush(registered);
+    registered = null;
+    host.dispose();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  /**
+   * `CodeEditor` and `Field` are uncontrolled and commit on blur, and `Cmd+S` is bound at
+   * `window` precisely so CodeMirror cannot swallow it - which also means it never blurs
+   * anything. `saveTab` calls `flushPending()` before it reads the store, so the focused
+   * editor's own commit lands first. This suite stands in for that editor with a hand-registered
+   * flush: CodeMirror needs a DOM this project's `node` test environment does not have, so the
+   * seam under test is `pending.ts` and the store, not the editor's chrome.
+   */
+  it("givenFocusedEditor_whenSaveInvoked_thenPendingTextIsWritten", async () => {
+    registered = () => useTabsStore.getState().setField(PING_ID, FIELD.url, "https://flushed.test/ping");
+    registerFlush(registered);
+
+    const failed = await saveTab(useTabsStore.getState().tabs.get(PING_ID)!);
+
+    expect(failed).toBeNull();
+    const tab = useTabsStore.getState().tabs.get(PING_ID);
+    expect(tab?.saved?.data).toMatchObject({ url: "https://flushed.test/ping" });
+    expect(isDirty(tab!)).toBe(false);
+  });
+
+  it("givenFocusedEditorWithNoTyping_whenSaveInvoked_thenNothingIsWritten", async () => {
+    // The guard at `RequestEditor.tsx`'s `onCommit` sites applies before a flush ever reaches
+    // `setField`: an editor whose text still equals its baseline calls nothing, so the tab this
+    // flush belongs to never became dirty and `saveTab` has nothing to write.
+    registered = () => undefined;
+    registerFlush(registered);
+    const before = useTabsStore.getState().tabs.get(PING_ID)?.saved;
+
+    const failed = await saveTab(useTabsStore.getState().tabs.get(PING_ID)!);
+
+    expect(failed).toBeNull();
+    expect(useTabsStore.getState().tabs.get(PING_ID)?.saved).toBe(before);
+  });
+
+  it("givenIdleTyping_whenDebounceElapses_thenTabIsUnsaved", () => {
+    // `CodeEditor`'s idle timer commits through the same `setField`/`setText` call a blur does,
+    // just 300ms into typing rather than on focus loss. What that buys is exactly this: `isDirty`
+    // - and so the Save button's `disabled` state - goes true while the caret is still in the
+    // field, not only once it leaves.
+    const tab = useTabsStore.getState().tabs.get(PING_ID)!;
+    expect(isDirty(tab)).toBe(false);
+
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://idle.test/ping");
+
+    expect(isDirty(useTabsStore.getState().tabs.get(PING_ID)!)).toBe(true);
+  });
+
+  it("givenTypingThenBlur_whenBothCommit_thenEditsHoldOneEntryPerPath", () => {
+    // The idle commit and the blur commit both land through `setField`, and `upsert` keys by
+    // path, so a field that changes twice before it is saved still contributes one entry - a
+    // ten-minute typing session does not make a tab "more dirty" for having taken longer.
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://idle.test/ping");
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://final.test/ping");
+
+    expect(useTabsStore.getState().tabs.get(PING_ID)?.edits).toStrictEqual([
+      { path: FIELD.url, value: "https://final.test/ping" },
+    ]);
+  });
+
+  it("givenTwoEditorsInSequence_whenOneTearsDown_thenTheOtherStaysRegistered", () => {
+    // `clearFlush` takes the function being cleared rather than clearing whatever is registered,
+    // so a teardown that fires after a newer editor already focused - and registered - cannot
+    // clear that newer editor's flush. This is the property `CodeEditor`'s blur handler and
+    // unmount cleanup both depend on.
+    const first = () => useTabsStore.getState().setField(PING_ID, FIELD.url, "https://first.test/ping");
+    const second = () => useTabsStore.getState().setField(PING_ID, FIELD.url, "https://second.test/ping");
+
+    registerFlush(first);
+    registerFlush(second);
+    clearFlush(first); // a stale teardown from the editor that already lost focus
+
+    registered = second;
+    flushPending();
+
+    expect(useTabsStore.getState().tabs.get(PING_ID)?.edits).toStrictEqual([
+      { path: FIELD.url, value: "https://second.test/ping" },
+    ]);
+  });
+});
+
 describe("the bulk header editor", () => {
   let workspace: ClonedWorkspace;
   let host: EngineHost;
@@ -409,6 +528,37 @@ describe("the bulk header editor", () => {
     ]);
     expect(reread.pairs.find((pair) => pair.key === "X-Disabled")?.disabled).toBe(true);
     expect(reread.pairs.find((pair) => pair.key === "X-Added")?.disabled).toBe(false);
+  });
+
+  /**
+   * A field the file has not written yet reads as `absent`, and the format's default for every
+   * pair list is the array. Two of these five used to test `=== "array"` and so treated `absent`
+   * as a map, writing `metadata: {key: value}` into a request whose schema declares a list —
+   * refused by core as `metadata: Expected array, received object`, against a request the user
+   * may only have edited the scripts of.
+   */
+  it("givenAbsentPairField_whenAPairIsEdited_thenTheEditKeepsTheArrayShape", () => {
+    const absent = readPairs({ $kind: "grpc-request" }, "metadata");
+    expect(absent.shape).toBe("absent");
+    const pair = { key: "x-tenant", value: EMPTY_VALUE, disabled: false, at: 0 };
+
+    const valued = editPairValue("metadata", absent, pair, "acme");
+    const keyed = editPairKey("metadata", absent, pair, "x-account");
+
+    // The whole field, as a list - never `["metadata", "x-tenant"]`, which is a map key.
+    expect(valued).toStrictEqual({ path: ["metadata"], value: [{ key: "x-tenant", value: "acme" }] });
+    expect(keyed).toStrictEqual([{ path: ["metadata"], value: [{ key: "x-account", value: EMPTY_VALUE }] }]);
+  });
+
+  it("givenMapShapedPairField_whenAPairIsEdited_thenTheMapKeyIsStillUsed", () => {
+    // Headers legitimately come as a map in the HTTP format, and that shape must keep working:
+    // the fix above is about `absent`, not about collapsing the two real shapes into one.
+    const list = readPairs({ headers: { Accept: "application/json" } }, HEADERS_FIELD);
+    expect(list.shape).toBe("map");
+
+    const valued = editPairValue(HEADERS_FIELD, list, list.pairs[0]!, "text/plain");
+
+    expect(valued).toStrictEqual({ path: [HEADERS_FIELD, "Accept"], value: "text/plain" });
   });
 
   it("givenTextWithBlankLinesAndComments_whenParsed_thenTheyAreSkipped", () => {

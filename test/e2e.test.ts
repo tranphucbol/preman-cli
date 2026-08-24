@@ -1792,6 +1792,28 @@ describe("mutable pm.request (gRPC)", () => {
       clone.cleanup();
     }
   });
+
+  /**
+   * The map shape has always been legal for HTTP headers, and real gRPC exports write metadata
+   * the same way. Reading only the array meant such a request parsed as a shape error, so it
+   * could be opened and edited in the desktop app but never run or saved.
+   */
+  it("givenMapShapedGrpcMetadata_whenRun_thenItReachesTheWireInterpolated", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeScriptedGrpcRequest(clone.root, {
+        metadata: 'metadata:\n  client-id: "{{greeting}}"\n  x-plain: literal',
+        script: "// nothing",
+      });
+      const { code } = await runCli(runArgs("Echo", "-d", clone.root, "--json"));
+
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.metadata["x-plain"]).toBe("literal");
+      expect(received[0]?.metadata["client-id"]).toBe("hello");
+    } finally {
+      clone.cleanup();
+    }
+  });
 });
 
 describe("group-level auth (gRPC)", () => {

@@ -208,8 +208,10 @@ export function readPairs(data: unknown, field: string): PairList {
 }
 
 /**
- * gRPC metadata is always the array shape in the format, so it reuses the array reading
- * rather than getting a parallel type.
+ * gRPC metadata is a pair list like any other, in either the map or the array shape. It used
+ * to be read as array-only on the belief that the format allowed nothing else, which is how a
+ * real workspace ended up holding a map-shaped `metadata:` that the editor would open and edit
+ * but core would refuse to run or save.
  */
 export function readMetadata(data: unknown): readonly Pair[] {
   return readPairs(data, "metadata").pairs;
@@ -221,9 +223,20 @@ export function readMetadata(data: unknown): readonly Pair[] {
  * A map has no place to record "disabled", so toggling a row in a map-shaped file has to
  * migrate that field to the array shape. That is a real restructure, so it is a separate,
  * explicitly-named operation rather than something a checkbox does quietly.
+ *
+ * All five of these branch on `map` and treat every other shape as the array: an `absent`
+ * field is one the file has not written yet, and the format's own default for every pair list
+ * is the array. Reading `absent` as a map instead - which two of these used to do, by testing
+ * `=== "array"` rather than `=== "map"` - writes `metadata: {key: value}` into a request whose
+ * schema declares a list, and core rightly refuses the whole save with
+ * `metadata: Expected array, received object`. The refusal names a field the user may not have
+ * touched in this session, because a rejected edit stays in `tab.edits` until it is saved or
+ * discarded.
  */
 export function editPairValue(field: string, list: PairList, pair: Pair, value: string): FieldEdit {
-  return list.shape === "array" ? edit([field, pair.at, "value"], value) : edit([field, pair.key], value);
+  if (list.shape === "map") return edit([field, pair.key], value);
+  if (list.shape === "absent") return edit([field], [asEntry({ ...pair, value })]);
+  return edit([field, pair.at, "value"], value);
 }
 
 /**
@@ -231,8 +244,9 @@ export function editPairValue(field: string, list: PairList, pair: Pair, value: 
  * key. Named here so the loss is visible at the call site rather than discovered in a diff.
  */
 export function editPairKey(field: string, list: PairList, pair: Pair, key: string): FieldEdit[] {
-  if (list.shape === "array") return [edit([field, pair.at, "key"], key)];
-  return [edit([field, pair.key], undefined), edit([field, key], pair.value)];
+  if (list.shape === "map") return [edit([field, pair.key], undefined), edit([field, key], pair.value)];
+  if (list.shape === "absent") return [edit([field], [asEntry({ ...pair, key })])];
+  return [edit([field, pair.at, "key"], key)];
 }
 
 export function editPairRemoved(field: string, list: PairList, pair: Pair): FieldEdit[] {

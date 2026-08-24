@@ -8,6 +8,7 @@ import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
 import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
 import { resolveTarget, type GrpcTarget } from "./grpc/target.js";
 import { CookieJar } from "./http/cookies.js";
+import { normalizeProperties } from "./http/headers.js";
 import { invokeHttp, NO_RESPONSE_STATUS, type HttpInvokeResult } from "./http/invoke.js";
 import { buildLiveHttpRequest, finaliseHttpRequest } from "./http/request.js";
 import type { HttpTarget } from "./http/target.js";
@@ -525,10 +526,10 @@ async function runGrpcRequest(
     authoredUrl.trim().length > 0
       ? authoredUrl
       : `${initialTarget.tls ? "grpcs" : "grpc"}://${initialTarget.authority}`;
-  const metadataEntries = (request.metadata ?? []).map((item) => ({
+  // Flattened first, so a map-shaped `metadata:` reaches the wire the same as the array form.
+  const metadataEntries = normalizeProperties(request.metadata, "metadata").map((item) => ({
     key: item.key,
-    value:
-      item.disabled === true ? (item.value ?? "") : interpolateStrict(item.value ?? "", store, `metadata.${item.key}`),
+    value: item.disabled === true ? item.value : interpolateStrict(item.value, store, `metadata.${item.key}`),
     ...(item.disabled === undefined ? {} : { disabled: item.disabled }),
   }));
   const rawBody = request.message?.content ?? "";

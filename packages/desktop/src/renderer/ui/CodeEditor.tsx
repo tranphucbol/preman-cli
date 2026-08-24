@@ -32,6 +32,7 @@ import {
   lineNumbers,
   placeholder as placeholderExtension,
 } from "@codemirror/view";
+import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
 import type { Variant } from "@preman/desktop/renderer/appearance/theme.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
@@ -156,6 +157,15 @@ const THEMES: Readonly<Record<Variant, Extension>> = {
 const EDGE_THRESHOLD_PX = 200;
 const SCROLL_TOP = 0;
 
+/**
+ * How long the document can sit unchanged before it commits on its own.
+ *
+ * Below the point where a user starts wondering whether the Save button is broken, and far
+ * above a keystroke: a ten-minute typing session still contributes exactly one entry to
+ * `edits`, because `upsert` is keyed by field path (`stores/tabs.ts`).
+ */
+const IDLE_COMMIT_MS = 300;
+
 /** Which end of the document the reader has reached. */
 export type ScrollEdge = "top" | "bottom";
 
@@ -262,6 +272,26 @@ export function CodeEditor({
     const language$ = new Compartment();
     const theme$ = new Compartment();
     variant$.current = theme$;
+
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    // The flush this editor currently has registered, so `blur` and teardown clear the exact
+    // registration `focus` made rather than whatever the registry happens to hold - a torn-down
+    // editor must not clear a newer editor's flush.
+    let flush: (() => void) | null = null;
+
+    function clearIdleTimer(): void {
+      if (idleTimer !== undefined) clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+
+    // The one path every commit goes through: blur, teardown, a debounced idle tick, and an
+    // explicit flush from `Cmd+S` all land here, and all of them cancel a timer that would
+    // otherwise fire again over a document that was just committed.
+    function commitNow(instance: EditorView): void {
+      clearIdleTimer();
+      commit.current?.(instance.state.doc.toString());
+    }
+
     // Read rather than closed over: the variant is not a dependency of this effect, because
     // changing the theme must reconfigure the editor rather than rebuild it and lose the history.
     const created = new EditorView({
@@ -291,9 +321,28 @@ export function CodeEditor({
                 ]),
               ]
             : []),
+          // Honest-while-typing (decision 7 in 016): a document sitting idle for
+          // `IDLE_COMMIT_MS` commits itself, so the Save button's `disabled` state and the
+          // sidebar's unsaved mark do not lag an unblurred editor by however long the caret
+          // stays in it.
+          EditorView.updateListener.of((update) => {
+            if (!update.docChanged) return;
+            clearIdleTimer();
+            idleTimer = setTimeout(() => {
+              idleTimer = undefined;
+              commit.current?.(update.view.state.doc.toString());
+            }, IDLE_COMMIT_MS);
+          }),
           EditorView.domEventHandlers({
+            focus: (_event, instance) => {
+              flush = () => commitNow(instance);
+              registerFlush(flush);
+              return false;
+            },
             blur: (_event, instance) => {
-              commit.current?.(instance.state.doc.toString());
+              if (flush !== null) clearFlush(flush);
+              flush = null;
+              commitNow(instance);
               return false;
             },
             scroll: (_event, instance) => {
@@ -312,7 +361,8 @@ export function CodeEditor({
     return () => {
       // Commit before teardown: switching sub-tab unmounts the editor, and losing the
       // last thing typed because it was never blurred is the worst kind of data loss.
-      commit.current?.(created.state.doc.toString());
+      if (flush !== null) clearFlush(flush);
+      commitNow(created);
       created.destroy();
       view.current = null;
       variant$.current = null;

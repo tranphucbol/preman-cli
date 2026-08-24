@@ -242,12 +242,44 @@ starts at the same x**, whatever kind of node it is.
 | -------------------- | ----- | ------------------------------------------------------------------------ |
 | `INDENT_PX`          | 12    | one level of nesting                                                     |
 | `LEAD_COLUMN_PX`     | 64    | one right-aligned column: caret + folder for a group, verb for a request |
-| `GIT_COLUMN_PX`      | 10    | the dirty marker, on the far right                                       |
+| `GIT_COLUMN_PX`      | 10    | the unsaved mark or the git letter, on the far right                     |
 | `DROP_LINE_INSET_PX` | 16    | where a drop indicator starts, so it does not span the lead column       |
 
 The lead column is **one** column, right-aligned. It was two — a caret column then a verb column —
 and that is bug four: a group's caret sat a full `DELETE` width from its own folder icon. Anything
-that adds a per-row affordance goes inside the existing column or the invariant is gone.
+that adds a per-row affordance goes inside the existing column or the invariant is gone. The
+unsaved mark below is the case in point: it had nowhere else to go, so it took over the same
+`GIT_COLUMN_PX` slot the git letter already used, rather than opening a fourth column.
+
+### Two facts, one shape, one column
+
+A node can be unsaved (edits sit in this tab, not yet written to disk) and modified in git (the
+file on disk differs from the last commit) independently, and the app has always had one glyph
+each for them: the accent-filled `size-1.5` disc — the same shape `TabStrip.tsx`'s close button
+uses for a dirty tab — and the single-letter `GIT_MARK` (`M`/`A`/`D`/`R`/`U`/`!`/`•`) coloured by
+`toneTagClass`. `docs/plans/016-unsaved-is-not-modified.md` makes that pairing consistent
+everywhere a node can show one:
+
+- **The filled accent disc always means "unsaved work of mine, right now."** Nowhere else uses
+  that shape for anything else, so seeing it never requires reading a tooltip to know it means
+  "you have not saved this."
+- **The sidebar's `GIT_COLUMN_PX` slot shows at most one glyph, and unsaved outranks git.** A row
+  with unsaved edits shows the disc, not the letter, even if the file is also modified in git —
+  `resolveMark` in `model/git.ts` picks the disc first and only falls back to `GIT_MARK` once a
+  tab has nothing unsaved. The `title` on that slot still names both facts when both are true
+  (`"Unsaved changes · Modified in git"`), because outranking a fact in the glyph is not the same
+  as hiding it.
+- **The script-phase rail does not spend the disc on "this phase has code."** That fact is shown
+  by the label's own ink brightness (`text-ink` once `slot.code` is non-empty, `text-ink-dim`
+  otherwise) instead, freeing the disc for the fact that actually needs it: a phase with an
+  uncommitted edit shows the disc next to its label, same shape, same meaning as the sidebar and
+  the tab strip.
+
+Two vocabularies now separate cleanly, and the plan is explicit that they must not swap: **unsaved**
+describes this tab's drafts, is scoped to the running session, and clears the moment `Cmd+S` writes
+the file; **git status** describes this file against the repository, is scoped to the working tree,
+and clears the moment the change is committed. `M`/`A`/`D`/`R`/`U`/`!` keep their meaning exactly as
+before — decision 16 changes what shares a column with them, not what they mean.
 
 ## TypeScript is the source
 
