@@ -23,6 +23,7 @@ import {
   NO_BODY,
   type Pair,
   type PairList,
+  type ScriptSlot,
   edit,
   editPairAdded,
   editPairEnabled,
@@ -107,9 +108,17 @@ const SCRIPT_LABELS: Record<string, string> = {
  * The phase rail is a vertical selection list, so it takes the row tier and the sidebar's selected
  * paint rather than the horizontal sub-tab's underline. Two things claiming to be the current
  * thing in two different visual languages, a few hundred pixels apart, is the confusion.
+ *
+ * No baked text colour: whether a phase has code is the label's own tone (`PHASE_LABEL_CLASS`
+ * below), not the trigger's, so `group-hover`/`group-data` are how the trigger's interaction
+ * states still brighten it.
  */
 const PHASE_CLASS =
-  "flex h-row shrink-0 items-center gap-2 px-gutter text-left text-xs text-ink-dim hover:bg-hover hover:text-ink data-[state=active]:bg-selected data-[state=active]:text-ink focus:outline-none";
+  "group flex h-row shrink-0 items-center gap-2 px-gutter text-left text-xs hover:bg-hover data-[state=active]:bg-selected focus:outline-none";
+
+/** The label's tone: dim for an empty phase, full ink for one with code, either way brightened
+ * by hover or selection on the trigger it lives in. */
+const PHASE_LABEL_CLASS = "truncate group-hover:text-ink group-data-[state=active]:text-ink";
 
 const FIRST_SLOT = 0;
 const EMPTY_SCRIPT = "";
@@ -783,6 +792,20 @@ function rebase(change: FieldEdit, path: readonly string[]): FieldEdit {
 }
 
 /**
+ * Whether this phase has an edit sitting in `tab.edits`.
+ *
+ * A phase with no slot in the file yet (`slot.at === null`) cannot have one: `editScript` cannot
+ * have written a path for an index the document does not have, so there is nothing to match.
+ * Once it does, the very first keystroke's edit replaces the whole entry at `["scripts", at]`
+ * (there was no `code` field to patch) and every one after patches `["scripts", at, "code"]`;
+ * matching on the shared `["scripts", at]` prefix rather than one exact path catches both.
+ */
+function hasPendingScriptEdit(tab: Tab, slot: ScriptSlot): boolean {
+  if (slot.at === null) return false;
+  return tab.edits.some((change) => change.path[0] === "scripts" && change.path[1] === slot.at);
+}
+
+/**
  * The phases down the side, one editor beside them.
  *
  * Showing both phases at once split the height between two editors that were each too short to
@@ -821,14 +844,22 @@ function ScriptsPane({
       className="flex min-h-0 flex-1"
     >
       <Tabs.List className="flex w-40 shrink-0 flex-col border-r border-line bg-panel" aria-label="Script phases">
-        {slots.map((slot) => (
-          <Tabs.Trigger key={slot.type} value={slot.type} className={PHASE_CLASS}>
-            <span className="truncate">{SCRIPT_LABELS[slot.type] ?? slot.type}</span>
-            {slot.code.trim() === EMPTY_SCRIPT ? null : (
-              <span className="ml-auto size-1.5 shrink-0 rounded-full bg-ink-faint" role="img" aria-label="has code" />
-            )}
-          </Tabs.Trigger>
-        ))}
+        {slots.map((slot) => {
+          const hasCode = slot.code.trim() !== EMPTY_SCRIPT;
+          const unsaved = hasPendingScriptEdit(tab, slot);
+          const label = SCRIPT_LABELS[slot.type] ?? slot.type;
+          return (
+            <Tabs.Trigger key={slot.type} value={slot.type} className={PHASE_CLASS}>
+              <span className={cn(PHASE_LABEL_CLASS, hasCode ? "text-ink" : "text-ink-dim")}>{label}</span>
+              {unsaved ? (
+                <>
+                  <span className="ml-auto size-1.5 shrink-0 rounded-full bg-accent" aria-hidden="true" />
+                  <span className="sr-only">, unsaved</span>
+                </>
+              ) : null}
+            </Tabs.Trigger>
+          );
+        })}
       </Tabs.List>
 
       {/* One `Content` per phase, so the inactive trigger's `aria-controls` points at something

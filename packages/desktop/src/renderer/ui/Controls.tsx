@@ -12,7 +12,9 @@
  */
 import * as SelectPrimitive from "@radix-ui/react-select";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-import type { ComponentProps, ReactNode, Ref } from "react";
+import { useCallback, useEffect, useRef, type ComponentProps, type FocusEvent, type ReactNode, type Ref } from "react";
+
+import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
 
 import { cn } from "./cn.js";
 import { CheckIcon, GLYPH_CLASS, PickerIcon } from "./icons.js";
@@ -153,8 +155,59 @@ export interface FieldProps extends Omit<ComponentProps<"input">, "className"> {
 }
 
 /** Uncontrolled by convention: pass `defaultValue` and commit on blur, never `value` per keystroke. */
-export function Field({ mono = false, ...rest }: FieldProps) {
-  return <input className={cn(INPUT_CLASS, mono && "font-mono")} spellCheck={false} {...rest} />;
+export function Field({ mono = false, ref, onFocus, onBlur, ...rest }: FieldProps) {
+  const node = useRef<HTMLInputElement | null>(null);
+  const setRef = useCallback(
+    (element: HTMLInputElement | null) => {
+      node.current = element;
+      if (typeof ref === "function") ref(element);
+      else if (ref != null) ref.current = element;
+    },
+    [ref],
+  );
+
+  // Read through a ref rather than closed over directly, so `flush` below can hold one identity
+  // across renders while still calling the current handler: `registerFlush`/`clearFlush` match by
+  // reference, and a caller's inline `onBlur` is a fresh closure on every render.
+  const onBlur$ = useRef(onBlur);
+  useEffect(() => {
+    onBlur$.current = onBlur;
+  }, [onBlur]);
+
+  // `Cmd+S` is bound at `window` precisely so no field can swallow it, which also means it never
+  // reaches this input to blur it and commit. This is what lets Save ask "what is the caret
+  // sitting on right now?" without moving focus off the field to get an answer - the caret stays
+  // put, and the same `onBlur` a real blur would have called runs against the live element.
+  const flush = useCallback(() => {
+    const element = node.current;
+    if (element === null) return;
+    onBlur$.current?.({ currentTarget: element, target: element } as FocusEvent<HTMLInputElement>);
+  }, []);
+
+  // React does not fire `blur` when a focused input is unmounted, so the `onBlur` handler below
+  // is not enough on its own: switching tab or sub-tab with the caret in a field would leave this
+  // flush registered, holding a detached element and the *old* tab's `onBlur`. The next `Cmd+S`
+  // would then write that field into whichever tab it captured. Cleared, never committed -
+  // `CodeEditor` commits on teardown because losing a script is losing an afternoon, while
+  // committing a vanished field's last keystroke into another request is the bug, not the save.
+  useEffect(() => () => clearFlush(flush), [flush]);
+
+  return (
+    <input
+      ref={setRef}
+      className={cn(INPUT_CLASS, mono && "font-mono")}
+      spellCheck={false}
+      onFocus={(event) => {
+        registerFlush(flush);
+        onFocus?.(event);
+      }}
+      onBlur={(event) => {
+        clearFlush(flush);
+        onBlur?.(event);
+      }}
+      {...rest}
+    />
+  );
 }
 
 /**

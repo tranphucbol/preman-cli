@@ -34,7 +34,7 @@ import { useCallback, useRef, useState } from "react";
 
 import type { CatalogNode, MutateOp, RequestKind } from "@preman/desktop/engine/protocol.js";
 
-import type { GitDecoration } from "@preman/desktop/renderer/model/git.js";
+import { resolveMark, type GitDecoration, type RowMark } from "@preman/desktop/renderer/model/git.js";
 import { resolveDrop, type DropSide } from "@preman/desktop/renderer/model/order.js";
 import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import {
@@ -45,6 +45,7 @@ import {
   useNode,
   type CatalogState,
 } from "@preman/desktop/renderer/stores/catalog.js";
+import { useUnsavedMark } from "@preman/desktop/renderer/stores/tabs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import {
@@ -121,23 +122,28 @@ const UNSUPPORTED_LABEL = "n/a";
 const GRPC_LABEL = "gRPC";
 
 /**
- * The git mark, and the width reserved for it on every row.
+ * The row's mark column, and the width reserved for it on every row.
  *
  * One character at the right edge, VS Code's letters because they are the ones people already
  * read, and the column is always there so a `git stash` does not reflow every name in the tree.
  * A descendant gets a dot rather than a letter: something below this row changed, and naming
  * *which* status would be a lie when several differ.
+ *
+ * Unsaved work outranks git in this one slot (plan 016): while a tab has pending edits its row
+ * shows the accent disc instead of its letter, and the letter returns the instant it is saved.
+ * The title still names both facts when both are true, since the glyph can only show one.
  */
 const GIT_COLUMN_PX = 10;
 const GIT_MARK: Record<GitDecoration, { readonly glyph: string; readonly tone: string; readonly title: string }> = {
-  modified: { glyph: "M", tone: "text-warn", title: "Modified" },
-  added: { glyph: "A", tone: "text-ok", title: "Added" },
-  deleted: { glyph: "D", tone: "text-danger", title: "Deleted" },
-  renamed: { glyph: "R", tone: "text-accent", title: "Renamed" },
-  untracked: { glyph: "U", tone: "text-ok", title: "Untracked" },
-  conflicted: { glyph: "!", tone: "text-danger", title: "Conflicted" },
-  descendant: { glyph: "•", tone: "text-ink-faint", title: "Contains changes" },
+  modified: { glyph: "M", tone: "text-warn", title: "Modified in git" },
+  added: { glyph: "A", tone: "text-ok", title: "Added in git" },
+  deleted: { glyph: "D", tone: "text-danger", title: "Deleted in git" },
+  renamed: { glyph: "R", tone: "text-accent", title: "Renamed in git" },
+  untracked: { glyph: "U", tone: "text-ok", title: "Untracked in git" },
+  conflicted: { glyph: "!", tone: "text-danger", title: "Conflicted in git" },
+  descendant: { glyph: "•", tone: "text-ink-faint", title: "Contains changes in git" },
 };
+const UNSAVED_TITLE = "Unsaved changes";
 
 const selectVisible = (state: CatalogState) => state.visibleIds;
 const selectRoot = (state: CatalogState) => state.root;
@@ -418,6 +424,7 @@ function Row({
   const selected = useIsSelected(nodeId);
   const collapsed = useIsCollapsed(nodeId);
   const git = useGitDecoration(nodeId);
+  const unsaved = useUnsavedMark(nodeId);
 
   // Both, on the same element and the same id: a row is a thing you can pick up and a place you can
   // put one, and the pair is what lets `pointerWithin` name a row without a separate hit target.
@@ -494,26 +501,46 @@ function Row({
         {node.name}
       </span>
 
-      <GitMark decoration={git} />
+      <NodeMark decoration={git} unsaved={unsaved} />
     </div>
   );
 }
 
 /**
- * The row's git state, or the space it would take. Rendered even when there is nothing to say,
- * so the names in a decorated tree sit exactly where they sat in a clean one.
+ * The row's mark, or the space it would take. Rendered even when there is nothing to say, so the
+ * names in a decorated tree sit exactly where they sat in an undecorated one.
+ *
+ * No longer only a git mark (hence the rename): `resolveMark` decides whether this row's own
+ * unsaved edits or its git status wins the one glyph the column has room for.
  */
-function GitMark({ decoration }: { readonly decoration: GitDecoration | undefined }) {
-  const mark = decoration === undefined ? undefined : GIT_MARK[decoration];
+function NodeMark({
+  decoration,
+  unsaved,
+}: {
+  readonly decoration: GitDecoration | undefined;
+  readonly unsaved: boolean;
+}) {
+  const mark = resolveMark(unsaved, decoration);
   return (
     <span
       className="shrink-0 text-center font-mono text-2xs leading-none"
       style={{ width: GIT_COLUMN_PX }}
-      title={mark?.title}
+      title={mark === undefined ? undefined : titleFor(mark)}
     >
-      {mark === undefined ? null : <span className={mark.tone}>{mark.glyph}</span>}
+      {mark === undefined ? null : mark.kind === "unsaved" ? (
+        <span className="inline-block size-1.5 rounded-full bg-accent" role="img" aria-label={UNSAVED_TITLE} />
+      ) : (
+        <span className={GIT_MARK[mark.decoration].tone}>{GIT_MARK[mark.decoration].glyph}</span>
+      )}
     </span>
   );
+}
+
+/** Composes both facts when both are true, since the glyph can only ever show one of them. */
+function titleFor(mark: RowMark): string {
+  if (mark.kind === "git") return GIT_MARK[mark.decoration].title;
+  const gitTitle = mark.decoration === undefined ? undefined : GIT_MARK[mark.decoration].title;
+  return gitTitle === undefined ? UNSAVED_TITLE : `${UNSAVED_TITLE} · ${gitTitle}`;
 }
 
 /**

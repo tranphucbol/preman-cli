@@ -50,6 +50,8 @@ const ADMIN_ID = "postman/collections/admin";
 const LOCAL_ENV_ID = "postman/environments/LOCAL.environment.yaml";
 const ESCAPE_ID = "../../../etc/passwd";
 const ECHO_NODE_ID = "postman/collections/payment/Echo.request.yaml";
+/** The one fixture request with no `metadata` key at all, which is the shape that matters here. */
+const DESCRIPTOR_ONLY_ID = "postman/collections/payment/Descriptor Only.request.yaml";
 const FIRST_REQUEST_ID = 1;
 
 const ECHO_METHOD = "test.echo.EchoService.Echo";
@@ -325,6 +327,42 @@ describe("the engine host protocol", () => {
       expect(error.message).toContain("outside the workspace");
       expect(error.exitCode).toBe(EXIT.CLI);
     });
+
+    /**
+     * A real workspace held a gRPC request whose `metadata:` was a YAML map. The editor opened
+     * it, ran its scripts and showed the grid, but every save was refused with
+     * `metadata: Expected array, received object` - naming a field the user had not touched,
+     * because validation reads the whole document, not the delta. The map shape is legal now,
+     * so a save that only changes a script has nothing to say about metadata.
+     */
+    it("givenMapShapedMetadataOnDisk_whenOnlyAScriptIsEdited_thenTheSaveSucceeds", async () => {
+      const app = open();
+      await app.send("write-node", {
+        nodeId: DESCRIPTOR_ONLY_ID,
+        edits: [{ path: ["metadata"], value: { "client-id": "abc", "client-key": "xyz" } }],
+      });
+
+      const document = await app.send("write-node", {
+        nodeId: DESCRIPTOR_ONLY_ID,
+        edits: [{ path: ["scripts"], value: [{ type: "beforeInvoke", language: "javascript", code: "// touched" }] }],
+      });
+
+      expect((document.data as { metadata: unknown }).metadata).toStrictEqual({
+        "client-id": "abc",
+        "client-key": "xyz",
+      });
+    });
+
+    it("givenWholeListEditIntoAnAbsentListField_whenWritten_thenItLandsAsAnArray", async () => {
+      const app = open();
+
+      const document = await app.send("write-node", {
+        nodeId: DESCRIPTOR_ONLY_ID,
+        edits: [{ path: ["metadata"], value: [{ key: "x-tenant", value: "acme" }] }],
+      });
+
+      expect((document.data as { metadata: unknown }).metadata).toStrictEqual([{ key: "x-tenant", value: "acme" }]);
+    });
   });
 
   describe("write-text", () => {
@@ -523,6 +561,123 @@ describe("the engine host protocol", () => {
           const status = await waitForGitStatus(app, () => writeFileSync(file, touched));
           expect(status.repository).toBe(true);
           expect(status.files[ECHO_NODE_ID]).toBe("modified");
+        } finally {
+          app.host.dispose();
+          repo.cleanup();
+        }
+      },
+      TIMEOUT_MS,
+    );
+  });
+
+  /**
+   * `reconcile` (`engine/host.ts`) suppresses the `external-change` push for a path whose disk
+   * bytes still match what this host just wrote there — content, not a timer, per
+   * `docs/plans/016-unsaved-is-not-modified.md` decision 9. Each test opens its own workspace
+   * and watcher, for the same reason the git-decoration test above does: sharing `open()`'s
+   * harness across cases would mix one test's writes into another's push counts.
+   */
+  describe("the watcher and the app's own writes", () => {
+    it(
+      "givenAppWroteFile_whenWatcherFires_thenNoExternalChangeForThatPath",
+      async () => {
+        const repo = cloneFixtureWorkspace();
+        const app = harnessFor(repo.root);
+        try {
+          // The watcher only starts once the catalog has been built.
+          await app.send("catalog", {});
+          const before = app.pushesOf("git-status").length;
+
+          // Repeated because the very first write can land in the gap `docs/decisions/011`
+          // describes; each retry writes the same bytes, so it stays our own write throughout.
+          await pokeUntil(
+            () => {
+              void app.send("write-node", {
+                nodeId: PING_ID,
+                edits: [{ path: ["description"], value: "written by the app" }],
+              });
+            },
+            () => app.pushesOf("git-status").length > before,
+            GIT_SETTLE_MS,
+          );
+
+          expect(app.pushesOf("external-change").some((push) => push.nodeIds.includes(PING_ID))).toBe(false);
+        } finally {
+          app.host.dispose();
+          repo.cleanup();
+        }
+      },
+      TIMEOUT_MS,
+    );
+
+    it(
+      "givenAppWroteFileThenSomeoneElseDid_whenWatcherFires_thenExternalChangeIsPublished",
+      async () => {
+        const repo = cloneFixtureWorkspace();
+        const app = harnessFor(repo.root);
+        try {
+          await app.send("catalog", {});
+          const file = join(repo.root, PING_ID);
+
+          // Let the app's own write settle first, so the next report the watcher makes is
+          // unambiguously about someone else's edit.
+          const settledAt = app.pushesOf("git-status").length;
+          await pokeUntil(
+            () => {
+              void app.send("write-node", {
+                nodeId: PING_ID,
+                edits: [{ path: ["description"], value: "written by the app" }],
+              });
+            },
+            () => app.pushesOf("git-status").length > settledAt,
+            GIT_SETTLE_MS,
+          );
+
+          // Different bytes than the app just wrote — a poke that repeated the app's own edit
+          // would keep matching `written` and this case would never distinguish itself from the
+          // one above.
+          const externalBytes = `${readFileSync(file, "utf8")}\n# edited outside the app\n`;
+          await pokeUntil(
+            () => writeFileSync(file, externalBytes),
+            () => app.pushesOf("external-change").some((push) => push.nodeIds.includes(PING_ID)),
+            GIT_SETTLE_MS,
+          );
+
+          expect(readFileSync(file, "utf8")).toBe(externalBytes);
+        } finally {
+          app.host.dispose();
+          repo.cleanup();
+        }
+      },
+      TIMEOUT_MS,
+    );
+
+    it(
+      "givenAppWroteFile_whenWatcherFires_thenCatalogAndGitStatusStillRefresh",
+      async () => {
+        const repo = cloneFixtureWorkspace();
+        const app = harnessFor(repo.root);
+        try {
+          await app.send("catalog", {});
+          const catalogBefore = app.pushesOf("catalog").length;
+          const gitBefore = app.pushesOf("git-status").length;
+
+          // Suppression is scoped to the `external-change` push alone (decision 10): the catalog
+          // must still move a renamed row, and the git overlay must still follow the save that
+          // caused it, for our own writes exactly as for anyone else's.
+          await pokeUntil(
+            () => {
+              void app.send("write-node", {
+                nodeId: PING_ID,
+                edits: [{ path: ["description"], value: "written by the app" }],
+              });
+            },
+            () => app.pushesOf("git-status").length > gitBefore,
+            GIT_SETTLE_MS,
+          );
+
+          expect(app.pushesOf("catalog").length).toBeGreaterThan(catalogBefore);
+          expect(app.pushesOf("external-change").some((push) => push.nodeIds.includes(PING_ID))).toBe(false);
         } finally {
           app.host.dispose();
           repo.cleanup();

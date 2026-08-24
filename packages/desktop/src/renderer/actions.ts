@@ -16,6 +16,7 @@ import type {
   VariableWrite,
 } from "@preman/desktop/engine/protocol.js";
 
+import { flushPending } from "@preman/desktop/renderer/pending.js";
 import { loadTab, toEngineError, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
@@ -40,17 +41,27 @@ function client() {
  * different things: `write-text` keeps the user's bytes, `write-node` patches keys and keeps
  * everyone else's comments. A tab that has both takes the raw text, because that is the one
  * the user was last looking at.
+ *
+ * `flushPending()` runs before the store is read. The caret may be sitting in an editor that
+ * commits on blur - which `Cmd+S` never causes, since it is bound at `window` precisely so no
+ * field can swallow it - so without this, "Save" would write whatever was there before the last
+ * keystroke. `setField`/`setText` land through `useTabsStore.getState().setField` synchronously
+ * and outside React, so there is no batching window between the flush and the re-read below: by
+ * the time `useTabsStore.getState()` runs, the flushed edit is already in it.
  */
 export async function saveTab(tab: Tab): Promise<Failure | null> {
   const engine = client();
-  if (engine === null || !isDirty(tab)) return null;
+  if (engine === null) return null;
+  flushPending();
   const tabs = useTabsStore.getState();
+  const current = tabs.tabs.get(tab.nodeId) ?? tab;
+  if (!isDirty(current)) return null;
   try {
     const document =
-      tab.text !== null
-        ? await engine.send("write-text", { nodeId: tab.nodeId, text: tab.text })
-        : await engine.send("write-node", { nodeId: tab.nodeId, edits: [...tab.edits] });
-    tabs.saved(tab.nodeId, document);
+      current.text !== null
+        ? await engine.send("write-text", { nodeId: current.nodeId, text: current.text })
+        : await engine.send("write-node", { nodeId: current.nodeId, edits: [...current.edits] });
+    tabs.saved(current.nodeId, document);
     return null;
   } catch (cause) {
     return failure(cause);
@@ -69,6 +80,10 @@ export async function sendNode(nodeId: string): Promise<Failure | null> {
   const engine = client();
   if (engine === null) return null;
 
+  // Flushed before the dirty check, not just before the write inside `saveTab`: a focused editor
+  // that has not blurred can hold text the store does not know about yet, and skipping this would
+  // read that tab as clean and send the file as it was before the last keystroke.
+  flushPending();
   const tab = useTabsStore.getState().tabs.get(nodeId);
   if (tab !== undefined && isDirty(tab)) {
     const saveFailure = await saveTab(tab);

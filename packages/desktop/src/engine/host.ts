@@ -197,6 +197,13 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   let reconciling: Promise<void> = Promise.resolve();
   let gitTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  /**
+   * The bytes this host last wrote to a path, so the watcher can tell our own write from
+   * someone else's. Content, not a timer: a timer would swallow a genuine external write
+   * that lands in the same window. Bounded to at most the writes since the last watcher
+   * tick — every `reconcile` call clears it, whether or not a given path matched.
+   */
+  const written = new Map<string, string>();
 
   function publish(next: Catalog): Catalog {
     catalog = next;
@@ -204,11 +211,26 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     return next;
   }
 
+  /** True when `path`'s bytes on disk still match what this host last wrote there. */
+  function matchesOwnWrite(path: string): boolean {
+    const expected = written.get(path);
+    if (expected === undefined) return false;
+    try {
+      return readFileSync(path, ENCODING) === expected;
+    } catch {
+      return false;
+    }
+  }
+
   async function reconcile(paths: string[]): Promise<void> {
     if (disposed || catalog === undefined) return;
     const next = await refreshCatalog(catalog, paths);
     publish(next);
-    post({ push: "external-change", nodeIds: paths.map((path) => nodeIdFor(root, path)) });
+    // Only the `external-change` push is filtered: the catalog and the git overlay must
+    // still follow our own writes (renaming a request moves its row, saving clears its `M`).
+    const external = paths.filter((path) => !matchesOwnWrite(path));
+    post({ push: "external-change", nodeIds: external.map((path) => nodeIdFor(root, path)) });
+    written.clear();
     scheduleGitStatus();
   }
 
@@ -270,15 +292,20 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     }
     if (kind === "request") await editRequestFile(file, edits.edits);
     else await editDefinitionFile(file, edits.edits);
-    return readNode(nodeId);
+    const document = await readNode(nodeId);
+    written.set(file, document.text);
+    return document;
   }
 
   /** The raw YAML tab. The mutation seam owns the refusal, so an invalid document never lands. */
   async function writeText(nodeId: string, text: string): Promise<NodeDocument> {
     const path = resolveWithinRoot(root, nodeId);
     const kind = await documentKindFor(nodeId, path);
-    await replaceFileText(fileFor(path, kind), text);
-    return readNode(nodeId);
+    const file = fileFor(path, kind);
+    await replaceFileText(file, text);
+    const document = await readNode(nodeId);
+    written.set(file, document.text);
+    return document;
   }
 
   async function mutate(op: MutateOp): Promise<MutateResult> {

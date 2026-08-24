@@ -235,3 +235,15 @@ export function useTab(nodeId: string): Tab | undefined {
 export function useActiveTab(): Tab | undefined {
   return useTabsStore((state) => (state.activeId === null ? undefined : state.tabs.get(state.activeId)));
 }
+
+/**
+ * Whether a node's tab, if it has one, carries unsaved edits. A boolean rather than the tab
+ * itself, so the sidebar's per-row subscription (`Sidebar.tsx`) does not repaint a row for an
+ * edit to a field the row does not show.
+ */
+export function useUnsavedMark(nodeId: string): boolean {
+  return useTabsStore((state) => {
+    const tab = state.tabs.get(nodeId);
+    return tab !== undefined && isDirty(tab);
+  });
+}

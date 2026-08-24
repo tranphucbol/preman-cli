@@ -68,6 +68,25 @@ export function deriveGitDecorations(
   return decorations;
 }
 
+/**
+ * What a row's mark column shows, once unsaved work and git status are both known.
+ *
+ * A filled disc means unsaved work of mine, right now, and nothing else - so it wins over the
+ * git letter when both are true, per plan 016. The git decoration is still carried on the
+ * `"unsaved"` case, not dropped, because the row's `title` names both facts at once even though
+ * the glyph can only show one of them.
+ */
+export type RowMark =
+  | { readonly kind: "unsaved"; readonly decoration: GitDecoration | undefined }
+  | { readonly kind: "git"; readonly decoration: GitDecoration };
+
+/** Which mark a row shows: unsaved work outranks git status, and no edits falls through to it. */
+export function resolveMark(hasUnsavedEdits: boolean, decoration: GitDecoration | undefined): RowMark | undefined {
+  if (hasUnsavedEdits) return { kind: "unsaved", decoration };
+  if (decoration === undefined) return undefined;
+  return { kind: "git", decoration };
+}
+
 /** The row this exact file belongs to, if any. Not every changed file is a node. */
 function ownerOf(path: string, requests: ReadonlySet<string>, groups: ReadonlySet<string>): string | undefined {
   if (requests.has(path)) return path;

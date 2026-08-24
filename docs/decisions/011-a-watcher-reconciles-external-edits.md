@@ -38,3 +38,15 @@ made between `fs.watch` returning and the stream actually starting, so a test th
 waits is flaky by construction. `pokeUntil()` in `test/helpers.ts` exists for this: it re-writes
 until the watcher reports, and its poke interval must exceed both debounces or it resets the timer
 it is waiting on.
+
+**A clean tab does not reload for the app's own write.** `docs/plans/016-unsaved-is-not-modified.md`
+narrows "reloads silently" above: the engine host now remembers the bytes it last wrote to a path,
+and when the watcher reports that same path with those same bytes still on disk, the reload this
+decision promises simply has nothing to do. The renderer already installed the document the engine
+re-read at the moment of the save, so re-publishing it as an external change would be announcing the
+user's own edit back to them as if it came from outside. This is a clarification of "clean tab
+reloads silently," not a reversal of it: a save from a second window, or an edit that lands on disk
+with different bytes than this host last wrote, still reconciles exactly as described above. Only
+the push naming the change is narrowed — the catalog refresh and the git-status re-read that follow
+a save are unconditional, because a save can still move the row (a renamed request) or change what
+git reports (the very act of writing tracked bytes).

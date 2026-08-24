@@ -3,6 +3,6 @@
   "permission": {
     "external_directory": {
       "~/Library/Application Support/preman/**": "allow",
-    },
-  },
+    }
+  }
 }

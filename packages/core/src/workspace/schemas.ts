@@ -83,28 +83,6 @@ const requestSchemaRef = z
   })
   .passthrough();
 
-export const grpcRequestSchema = z
-  .object({
-    $kind: z.literal("grpc-request"),
-    name: z.string(),
-    url: z.string().optional().default(""),
-    methodPath: z.string(),
-    /** base64 FileDescriptorSet embedded by the Postman client. */
-    methodDescriptor: z.string().optional(),
-    message: z.object({ content: z.string().optional() }).passthrough().optional(),
-    metadata: z
-      .array(
-        z.object({ key: z.string(), value: z.string().optional(), disabled: z.boolean().optional() }).passthrough(),
-      )
-      .optional(),
-    auth: authSchema.optional(),
-    settings: z.record(z.unknown()).optional(),
-    schema: requestSchemaRef.optional(),
-    scripts: z.array(scriptSchema).optional(),
-    order: z.number().optional(),
-  })
-  .passthrough();
-
 const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
 /**
@@ -125,6 +103,31 @@ const keyValueSourceSchema = z.union([
       .passthrough(),
   ),
 ]);
+
+export const grpcRequestSchema = z
+  .object({
+    $kind: z.literal("grpc-request"),
+    name: z.string(),
+    url: z.string().optional().default(""),
+    methodPath: z.string(),
+    /** base64 FileDescriptorSet embedded by the Postman client. */
+    methodDescriptor: z.string().optional(),
+    message: z.object({ content: z.string().optional() }).passthrough().optional(),
+    /**
+     * The same map-or-array shape as HTTP headers, and for the same reason: gRPC metadata is
+     * a key/value list, and real exports write it both ways. Reading only the array meant a
+     * workspace could hold a request preman would open, display and edit but refuse to run
+     * *or* save - `parseRequest` and `validateRequest` both rejected the whole file, naming
+     * `metadata` even when the user had only touched a script.
+     */
+    metadata: keyValueSourceSchema.optional(),
+    auth: authSchema.optional(),
+    settings: z.record(z.unknown()).optional(),
+    schema: requestSchemaRef.optional(),
+    scripts: z.array(scriptSchema).optional(),
+    order: z.number().optional(),
+  })
+  .passthrough();
 
 const formDataEntrySchema = z
   .object({
