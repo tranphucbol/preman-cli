@@ -11,6 +11,7 @@ import {
   DEFAULT_PREFERENCES,
   ENGINE_PORT_WINDOW_MESSAGE,
   TITLE_BAR_GUTTER_PX,
+  type CreateWorkspaceResult,
   type EnginePortDelivery,
   type HostFailure,
   type Preferences,
@@ -79,6 +80,8 @@ const bridge: PremanBridge = {
   listWorkspaces: () => ipcRenderer.invoke(CHANNELS.listWorkspaces) as Promise<WorkspaceHandle[]>,
   pickWorkspaceDirectory: () => ipcRenderer.invoke(CHANNELS.pickWorkspace) as Promise<string | null>,
   openWorkspace: (root: string) => ipcRenderer.invoke(CHANNELS.openWorkspace, root) as Promise<void>,
+  createWorkspace: (name: string) =>
+    ipcRenderer.invoke(CHANNELS.createWorkspace, name) as Promise<CreateWorkspaceResult>,
   forgetWorkspace: (root: string) => ipcRenderer.invoke(CHANNELS.forgetWorkspace, root) as Promise<void>,
   revealInFileManager: (target: string) => ipcRenderer.invoke(CHANNELS.revealInFileManager, target) as Promise<void>,
   pickDataFile: () => ipcRenderer.invoke(CHANNELS.pickDataFile) as Promise<string | null>,
@@ -101,6 +104,17 @@ const bridge: PremanBridge = {
     ipcRenderer.on(CHANNELS.openSettings, handler);
     return () => {
       ipcRenderer.off(CHANNELS.openSettings, handler);
+    };
+  },
+  // The same unsubscribe-safe shape as `onOpenSettings` above: the renderer re-subscribes whenever
+  // its callback changes identity, and a listener that could not be removed would stack.
+  onCreateWorkspace(listener) {
+    const handler = (): void => {
+      listener();
+    };
+    ipcRenderer.on(CHANNELS.openCreateWorkspace, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.openCreateWorkspace, handler);
     };
   },
 };

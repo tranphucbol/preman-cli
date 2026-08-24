@@ -13,6 +13,9 @@ export const CHANNELS = {
   listWorkspaces: "preman:list-workspaces",
   pickWorkspace: "preman:pick-workspace",
   openWorkspace: "preman:open-workspace",
+  createWorkspace: "preman:create-workspace",
+  /** Main to renderer, from the File menu's Create New Workspace item. */
+  openCreateWorkspace: "preman:open-create-workspace",
   forgetWorkspace: "preman:forget-workspace",
   revealInFileManager: "preman:reveal",
   pickDataFile: "preman:pick-data-file",
@@ -120,6 +123,17 @@ export interface WorkspaceHandle {
 }
 
 /**
+ * What creating a workspace answers.
+ *
+ * A refusal is a value, not a rejection. An unusable name and an existing directory are expected
+ * answers that the naming dialog shows beside the field, and Electron reports anything thrown
+ * inside `ipcMain.handle` as `Error invoking remote method …` — a sentence about IPC, not about
+ * what the user typed. Only genuinely unexpected failures are left to reject.
+ */
+export type CreateWorkspaceResult =
+  { readonly ok: true; readonly root: string } | { readonly ok: false; readonly message: string };
+
+/**
  * A tab the user had open. `subTab` is `string | null` rather than the renderer's `SubTab` union
  * because this file is also compiled into the main process, which has no business knowing which
  * sub-tabs an editor has; the renderer validates the value on the way back in.
@@ -210,6 +224,14 @@ export interface PremanBridge {
   pickWorkspaceDirectory(): Promise<string | null>;
   /** Ask for a host for `root`. The port arrives through `onEnginePort`. */
   openWorkspace(root: string): Promise<void>;
+  /**
+   * Make an empty workspace called `name` in the one place this app puts new ones.
+   *
+   * A name, never a path: main resolves the home directory and owns every file system call, so
+   * the renderer cannot name a destination. `pickWorkspaceDirectory` stays the way to a root
+   * that already exists somewhere else.
+   */
+  createWorkspace(name: string): Promise<CreateWorkspaceResult>;
   forgetWorkspace(root: string): Promise<void>;
   revealInFileManager(target: string): Promise<void>;
   /**
@@ -237,4 +259,11 @@ export interface PremanBridge {
   setWindowChrome(chrome: WindowChrome): void;
   /** The app menu's Settings item. Returns an unsubscribe function. */
   onOpenSettings(listener: () => void): () => void;
+  /**
+   * The File menu's Create New Workspace item. Returns an unsubscribe function.
+   *
+   * A request rather than a result: Electron has no native text-input dialog, so the menu asks the
+   * renderer to open the one naming dialog the dropdown and the palette also open.
+   */
+  onCreateWorkspace(listener: () => void): () => void;
 }

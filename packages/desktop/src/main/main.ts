@@ -6,6 +6,7 @@
  * renderer asks its own engine host over a port this file only hands over.
  */
 import { existsSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   app,
@@ -20,6 +21,7 @@ import {
 } from "electron";
 import { createHostRegistry, type HostRegistry } from "@preman/desktop/main/hosts.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
+import { createWorkspace } from "@preman/desktop/main/workspaces.js";
 import {
   CHANNELS,
   TRAFFIC_LIGHT_HEIGHT_PX,
@@ -233,6 +235,16 @@ function buildMenu(): void {
             void openWorkspaceDialog();
           },
         },
+        // No accelerator: creating a workspace is a once-in-a-while action, and the menu plus the
+        // command palette make it findable without spending another global key combination.
+        {
+          label: "Create New Workspace…",
+          click: () => {
+            // Sends rather than asks: Electron has no native text-input dialog, so the name is
+            // collected by the one renderer dialog the dropdown and the palette also open.
+            window?.webContents.send(CHANNELS.openCreateWorkspace);
+          },
+        },
         ...(process.platform === "darwin" ? [] : [{ type: "separator" as const }, SETTINGS_ITEM]),
         { type: "separator" },
         { role: process.platform === "darwin" ? "close" : "quit" },
@@ -321,6 +333,14 @@ function registerIpc(): void {
   ipcMain.handle(CHANNELS.openWorkspace, (_event: IpcMainInvokeEvent, root: string) => {
     openWorkspace(root);
   });
+
+  // The home directory is resolved here, never in the renderer and never by a shell: `~` is
+  // documentation, and a renderer that could name a destination would be a renderer with a path.
+  // Creation stops at the directories; the renderer opens the result over `openWorkspace`, so
+  // there is no creation-specific host lifecycle.
+  ipcMain.handle(CHANNELS.createWorkspace, (_event: IpcMainInvokeEvent, name: string) =>
+    createWorkspace(homedir(), name),
+  );
 
   ipcMain.handle(CHANNELS.forgetWorkspace, (_event: IpcMainInvokeEvent, root: string) => {
     requireHosts().release(root);

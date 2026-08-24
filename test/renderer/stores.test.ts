@@ -26,7 +26,12 @@ import type {
 } from "@preman/desktop/engine/protocol.js";
 import { EXIT_CODES, ORDER_STEP } from "@preman/desktop/engine/protocol.js";
 import { DEFAULT_PREFERENCES, TITLE_BAR_GUTTER_PX } from "@preman/desktop/preload/bridge.js";
-import type { PremanBridge, SessionSnapshot, WindowControl } from "@preman/desktop/preload/bridge.js";
+import type {
+  CreateWorkspaceResult,
+  PremanBridge,
+  SessionSnapshot,
+  WindowControl,
+} from "@preman/desktop/preload/bridge.js";
 import { EngineRequestError, type EngineClient } from "@preman/desktop/renderer/client.js";
 import type { TestResult } from "@preman/desktop/renderer/model/response.js";
 import {
@@ -51,7 +56,7 @@ import {
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
 import { CONSOLE_MAX_LINES, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
-import { applyExternalChange, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import { applyExternalChange, createNewWorkspace, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { DEFAULT_BODY_VIEW, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 
 import { cloneFixtureHttpWorkspace, cloneFixtureWorkspace, type ClonedWorkspace } from "../helpers.js";
@@ -63,6 +68,14 @@ const ADMIN_ID = "postman/collections/admin";
 const PROFILE_ID = "postman/collections/admin/Profile.request.yaml";
 const HEADERS_FIELD = "headers";
 const EMPTY_VALUE = "";
+
+/** Workspace creation: the name asked for, where main says it went, and why it might refuse. */
+const NEW_WORKSPACE_NAME = "payments";
+const NEW_WORKSPACE_ROOT = "/tmp/home/.local/share/preman/workspace/payments";
+const CREATE_REFUSAL = "/tmp/home/.local/share/preman/workspace/payments already exists.";
+/** The fake's default, so a test that forgot to say what creation answers cannot pass by accident. */
+const NO_CREATE_ANSWER = "no creation result was staged";
+const NO_CALLS = 0;
 const SETTLE_MS = DRAFT_PERSIST_DEBOUNCE_MS * 2;
 
 /** Two requests over two data rows, which is what the runner's `#N` labels exist for. */
@@ -92,6 +105,12 @@ interface FakeBridge {
   saved(): SessionSnapshot | null;
   seed(snapshot: SessionSnapshot): void;
   writes(): number;
+  /** What creation answers. Set per test; the default is a refusal, so nothing succeeds by accident. */
+  answerCreate(result: CreateWorkspaceResult): void;
+  /** Which names creation was asked for, which roots were opened, and how often Recents was read. */
+  created(): string[];
+  opened(): string[];
+  lists(): number;
 }
 
 /** What main hands back when nothing has been stored: no `activeEnvironment` key at all, because
@@ -104,6 +123,10 @@ function fakeBridge(): FakeBridge {
   let stored: SessionSnapshot = emptySnapshot();
   let written: SessionSnapshot | null = null;
   let writes = 0;
+  let createResult: CreateWorkspaceResult = { ok: false, message: NO_CREATE_ANSWER };
+  const createNames: string[] = [];
+  const openedRoots: string[] = [];
+  let listCalls = 0;
 
   const bridge: PremanBridge = {
     titleBarGutter: TITLE_BAR_GUTTER_PX,
@@ -111,10 +134,21 @@ function fakeBridge(): FakeBridge {
     savePreferences: () => Promise.resolve(),
     setWindowChrome: () => undefined,
     onOpenSettings: () => () => undefined,
+    onCreateWorkspace: () => () => undefined,
     onHostFailure: () => () => undefined,
-    listWorkspaces: () => Promise.resolve([]),
+    listWorkspaces: () => {
+      listCalls += 1;
+      return Promise.resolve([]);
+    },
     pickWorkspaceDirectory: () => Promise.resolve(null),
-    openWorkspace: () => Promise.resolve(),
+    openWorkspace: (root: string) => {
+      openedRoots.push(root);
+      return Promise.resolve();
+    },
+    createWorkspace: (name: string) => {
+      createNames.push(name);
+      return Promise.resolve(createResult);
+    },
     forgetWorkspace: () => Promise.resolve(),
     revealInFileManager: () => Promise.resolve(),
     pickDataFile: () => Promise.resolve(null),
@@ -136,6 +170,12 @@ function fakeBridge(): FakeBridge {
       stored = structuredClone(snapshot);
     },
     writes: () => writes,
+    answerCreate: (result) => {
+      createResult = result;
+    },
+    created: () => [...createNames],
+    opened: () => [...openedRoots],
+    lists: () => listCalls,
   };
 }
 
@@ -601,6 +641,54 @@ describe("the bulk header editor", () => {
       { key: "Accept", value: "application/json" },
       { key: "Off", value: "yes", disabled: true },
     ]);
+  });
+});
+
+/**
+ * Creating a workspace, from the seam the renderer actually has.
+ *
+ * The filesystem half is `test/desktop.workspace.test.ts`; what is left here is the rule that makes
+ * the dialog honest. A refusal has to come back as a value and change nothing — not open a host,
+ * not reorder Recents — because the dialog is still on screen showing the name that caused it.
+ */
+describe("creating a workspace from the window", () => {
+  let bridge: FakeBridge;
+
+  beforeEach(() => {
+    resetStores();
+    bridge = fakeBridge();
+    installBridge(bridge.bridge);
+  });
+
+  afterEach(() => {
+    uninstallBridge();
+    resetStores();
+  });
+
+  it("givenWorkspaceCreationSucceeds_whenCreateNewWorkspaceRuns_thenItOpensAndRefreshesRecents", async () => {
+    bridge.answerCreate({ ok: true, root: NEW_WORKSPACE_ROOT });
+
+    const result = await createNewWorkspace(NEW_WORKSPACE_NAME);
+
+    expect(result).toEqual({ ok: true, root: NEW_WORKSPACE_ROOT });
+    // The name crosses, never a path: main is the only side that knows where a new workspace goes.
+    expect(bridge.created()).toEqual([NEW_WORKSPACE_NAME]);
+    // Opened through the same call a recent workspace takes, and Recents read back afterwards.
+    expect(bridge.opened()).toEqual([NEW_WORKSPACE_ROOT]);
+    expect(bridge.lists()).toBeGreaterThan(NO_CALLS);
+  });
+
+  it("givenWorkspaceCreationFails_whenCreateNewWorkspaceRuns_thenItReturnsTheErrorWithoutOpening", async () => {
+    bridge.answerCreate({ ok: false, message: CREATE_REFUSAL });
+
+    const result = await createNewWorkspace(NEW_WORKSPACE_NAME);
+
+    expect(result).toEqual({ ok: false, message: CREATE_REFUSAL });
+    expect(bridge.created()).toEqual([NEW_WORKSPACE_NAME]);
+    // Nothing else moved: no host asked for, no Recents read, no session state touched.
+    expect(bridge.opened()).toHaveLength(NO_CALLS);
+    expect(bridge.lists()).toBe(NO_CALLS);
+    expect(useSessionStore.getState().root).toBeNull();
   });
 });
 

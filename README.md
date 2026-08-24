@@ -140,6 +140,10 @@ and environments, and runs them. The CLI and the app read and write the same fil
 created in the window runs from the terminal, and a file changed by either one appears in the other
 on its next read.
 
+It can also create an empty workspace, named from the workspace dropdown, the File menu or the
+command palette, always under `~/.local/share/preman/workspace`; `Open workspace…` remains the way
+to a workspace that already exists anywhere else.
+
 ```sh
 bun run desktop          # build the app and launch it
 bun run desktop:package  # build, then wrap it into packages/desktop/release

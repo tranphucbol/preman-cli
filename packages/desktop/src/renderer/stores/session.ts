@@ -8,7 +8,7 @@
 import { create } from "zustand";
 
 import { EXIT_CODES, type Catalog, type EngineError, type EngineMessage } from "@preman/desktop/engine/protocol.js";
-import type { HostFailure, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
+import type { CreateWorkspaceResult, HostFailure, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
 
 import { EngineRequestError, onEngineClient, type EngineClient } from "@preman/desktop/renderer/client.js";
 import { readSession, restoreCollapse, restoreOpenState, startPersistence } from "@preman/desktop/renderer/persist.js";
@@ -294,4 +294,22 @@ export async function openWorkspaceDialog(): Promise<void> {
 export async function switchWorkspace(root: string): Promise<void> {
   await window.preman.openWorkspace(root);
   await refreshWorkspaces();
+}
+
+/**
+ * Make a workspace and move the window to it.
+ *
+ * The refusal is returned rather than raised as a banner: the naming dialog is still on screen, and
+ * an unusable name or an existing directory is answered beside the field that caused it. Nothing
+ * here touches the session unless a directory was actually created — a failed attempt leaves the
+ * active workspace, its host and Recents exactly as they were.
+ *
+ * Opening goes through `switchWorkspace`, the same path a recent workspace takes, so creation adds
+ * no host lifecycle of its own.
+ */
+export async function createNewWorkspace(name: string): Promise<CreateWorkspaceResult> {
+  const result = await window.preman.createWorkspace(name);
+  if (!result.ok) return result;
+  await switchWorkspace(result.root);
+  return result;
 }

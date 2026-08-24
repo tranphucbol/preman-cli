@@ -59,6 +59,7 @@ import {
 } from "@preman/desktop/renderer/actions.js";
 import {
   connect,
+  createNewWorkspace,
   loadTab,
   openWorkspaceDialog,
   refreshWorkspaces,
@@ -106,9 +107,11 @@ const UNCHOSEN_ENVIRONMENT = "\u0000unchosen";
 /**
  * What the palette can do besides jumping to a request.
  *
- * Only things the window itself can carry out with no further questions. "New collection" is
- * deliberately absent: it opens a dialog, and a palette that answers one prompt with another is
- * a menu with extra steps.
+ * Mostly things the window carries out with no further questions, and "New collection" is still
+ * deliberately absent: the sidebar's own button is a click away from the tree it acts on.
+ * `Create new workspace…` is the one prompt here, because creating a workspace has no home in the
+ * tree - there is no workspace yet - so the palette, the File menu and the workspace dropdown are
+ * all it has. The palette closes first, then the naming dialog opens.
  */
 const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "search", label: "Search the workspace", detail: "⌘⇧F" },
@@ -117,8 +120,21 @@ const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "save", label: "Save", detail: "⌘S" },
   { kind: "command", id: "send", label: "Send", detail: "⌘↵" },
   { kind: "command", id: "open-workspace", label: "Open workspace…", detail: "⌘⇧O" },
+  { kind: "command", id: "create-workspace", label: "Create new workspace…", detail: "command" },
   { kind: "command", id: "settings", label: "Settings", detail: "⌘," },
 ];
+
+/** The naming dialog creation opens, from all three of its entry points. */
+const CREATE_WORKSPACE_ASK = {
+  kind: "name",
+  title: "Create new workspace",
+  label: "Name",
+  initial: "",
+  submit: "Create",
+  // Assignable because `CreateWorkspaceResult`'s success arm carries a `root` the dialog ignores:
+  // it waits for `ok`, and the store has already switched the window by the time it sees one.
+  onConfirm: createNewWorkspace,
+} as const satisfies Ask;
 
 export function App(): React.JSX.Element {
   useEffect(connect, []);
@@ -138,6 +154,15 @@ export function App(): React.JSX.Element {
   const dismissPalette = useCallback(() => {
     setPaletteOpen(false);
   }, []);
+
+  // One callback for the dropdown, the File menu and the palette. Three ways in, one dialog: a
+  // second copy of this would eventually be the copy that opened a differently-worded prompt.
+  const showCreateWorkspace = useCallback(() => {
+    setAsk(CREATE_WORKSPACE_ASK);
+  }, []);
+  // Same shape as Settings above, and for the same reason: the menu lives in the main process and
+  // the dialog is renderer state, so the menu sends and this is where it lands.
+  useEffect(() => window.preman.onCreateWorkspace(showCreateWorkspace), [showCreateWorkspace]);
 
   // The library owns pane persistence, which keeps one more thing out of the app-data store.
   const layout = useDefaultLayout({ id: LAYOUT_ID, panelIds: [SIDEBAR_ID, EDITOR_ID], storage: localStorage });
@@ -182,19 +207,22 @@ export function App(): React.JSX.Element {
         case "open-workspace":
           void openWorkspaceDialog();
           return;
+        case "create-workspace":
+          showCreateWorkspace();
+          return;
         case "settings":
           useOverlayStore.getState().showSettings();
           return;
       }
     },
-    [toggleConsole],
+    [showCreateWorkspace, toggleConsole],
   );
 
   return (
     <IconContext.Provider value={ICON_DEFAULTS}>
       <TooltipProvider>
         <div className="flex h-full flex-col">
-          <TitleBar />
+          <TitleBar onCreateWorkspace={showCreateWorkspace} />
           <HostBanner />
           <DegradedBanner />
           <FailureBanner failure={failure} onDismiss={dismissFailure} />
@@ -399,7 +427,7 @@ function Palette({
  * `h-bar` and not `h-tab`, because the row is the one the traffic lights are centred in: its
  * height is duplicated as `TITLE_BAR_HEIGHT_PX`.
  */
-function TitleBar(): React.JSX.Element {
+function TitleBar({ onCreateWorkspace }: { readonly onCreateWorkspace: () => void }): React.JSX.Element {
   const gutter = window.preman.titleBarGutter;
   return (
     <header
@@ -408,7 +436,7 @@ function TitleBar(): React.JSX.Element {
       style={gutter > 0 ? { paddingLeft: gutter } : undefined}
     >
       <div className="flex items-center no-drag">
-        <WorkspacePicker />
+        <WorkspacePicker onCreateWorkspace={onCreateWorkspace} />
       </div>
       <div className="flex-1" />
       {/* `no-drag` is not decoration here: the whole header is a drag region, and a button inside
@@ -451,7 +479,7 @@ function TabBar({ onClose }: { readonly onClose: (nodeId: string) => void }): Re
   );
 }
 
-function WorkspacePicker(): React.JSX.Element {
+function WorkspacePicker({ onCreateWorkspace }: { readonly onCreateWorkspace: () => void }): React.JSX.Element {
   const workspaces = useSessionStore((state) => state.workspaces);
   const root = useSessionStore((state) => state.root);
   const active = workspaces.find((workspace) => workspace.root === root);
@@ -489,6 +517,11 @@ function WorkspacePicker(): React.JSX.Element {
         >
           Open workspace…
         </DropdownItem>
+        {/*
+          Directly below opening one, and no separator between them: they are the two answers to
+          "which workspace" for someone who is not already in the list above.
+        */}
+        <DropdownItem onSelect={onCreateWorkspace}>Create new workspace…</DropdownItem>
       </DropdownContent>
     </DropdownMenu>
   );
