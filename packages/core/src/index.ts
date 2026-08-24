@@ -85,6 +85,7 @@ export {
   type VariableLayer,
   type VariableView,
 } from "@preman/core/api/variables.js";
+export { previewText, type TextPreview } from "@preman/core/api/preview.js";
 export type { Scope } from "@preman/core/vars/store.js";
 export { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
 export { toJunitReport, type RunReport } from "@preman/core/report/junit.js";

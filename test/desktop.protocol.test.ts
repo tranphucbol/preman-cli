@@ -6,6 +6,7 @@ import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
 import { FORMAT_LIMIT_BYTES as CORE_FORMAT_LIMIT_BYTES } from "@preman/core/api/bodies.js";
 import { ORDER_ABSENT as CORE_ORDER_ABSENT } from "@preman/core/api/catalog.js";
 import { EXIT } from "@preman/core/errors.js";
+import { TOKEN_SOURCE as CORE_TOKEN_SOURCE } from "@preman/core/vars/interpolate.js";
 import { DEFINITION_FILE, ORDER_STEP as CORE_ORDER_STEP, RESOURCES_DIR } from "@preman/core/workspace/paths.js";
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
 import type {
@@ -25,6 +26,7 @@ import {
   GROUP_DEFINITION_SUFFIX,
   ORDER_ABSENT,
   ORDER_STEP,
+  VARIABLE_TOKEN_SOURCE,
   isEnginePush,
 } from "@preman/desktop/engine/protocol.js";
 
@@ -68,6 +70,24 @@ const SEPARATOR_LENGTH = 1;
 /** `test/fixtures/data/users.csv` has two rows, and one request runs once per row. */
 const CSV_ROWS = 2;
 const MARKER_KEY = "run_marker";
+
+/**
+ * The strings the two token patterns are compared over. Each one is a case where a naive copy
+ * would disagree: empty braces, surrounding whitespace, adjacency, a nested brace, and a token
+ * split across a line.
+ */
+const TOKEN_CORPUS = [
+  "{{greeting}}",
+  "{{ greeting }}",
+  "{{}}",
+  "{{ }}",
+  "a{{one}}b{{two}}c",
+  "{{{nested}}}",
+  "{{multi\nline}}",
+  "{{a}}{{b}}",
+  "no tokens here",
+  "{{$guid}} {{$randomInt}}",
+];
 const MARKER = "written-by-a-script";
 
 /** Succeeds outright: the collection's own auth is not needed and `/echo` answers 200. */
@@ -534,6 +554,16 @@ describe("the engine host protocol", () => {
 
       expect(result.matches.length).toBe(1);
       expect(result.truncated).toBe(true);
+    });
+  });
+
+  describe("preview", () => {
+    it("givenPreviewRequest_whenHostHandlesIt_thenTextIsSubstituted", async () => {
+      const preview = await open().send("preview", { text: "{{greeting}} {{greetng}}", environment: "LOCAL" });
+
+      expect(preview.text).toBe("hello {{greetng}}");
+      expect(preview.missing).toEqual(["greetng"]);
+      expect(preview.unsupported).toEqual([]);
     });
   });
 
@@ -1113,5 +1143,20 @@ describe("the wire's copies of core's constants", () => {
     // The git overlay turns a changed definition file into a decoration on its folder row by
     // stripping this tail. A drifted copy would leave every folder undecorated and silent.
     expect(GROUP_DEFINITION_SUFFIX).toBe(`/${RESOURCES_DIR}/${DEFINITION_FILE}`);
+  });
+
+  it("givenCoreTokenSource_whenComparedToTheWire_thenTheyMatch", () => {
+    expect(VARIABLE_TOKEN_SOURCE).toBe(CORE_TOKEN_SOURCE);
+  });
+
+  it("givenTokenSources_whenRunOverOneCorpus_thenTheyFindTheSameNames", () => {
+    // Two identical strings only prove a copy. The same corpus through both patterns proves the
+    // copy means the same thing, which is what the renderer's hit-testing actually depends on.
+    const names = (source: string, text: string) =>
+      [...text.matchAll(new RegExp(source, "g"))].map((match) => match[1]);
+
+    for (const text of TOKEN_CORPUS) {
+      expect(names(VARIABLE_TOKEN_SOURCE, text)).toEqual(names(CORE_TOKEN_SOURCE, text));
+    }
   });
 });

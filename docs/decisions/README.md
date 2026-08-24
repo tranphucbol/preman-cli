@@ -32,6 +32,7 @@ These are the decisions behind the desktop app. The CLI predates the practice.
 | [022](022-preferences-are-global-and-synchronous-at-first-paint.md) | Preferences are global, and read synchronously at first paint        |
 | [023](023-the-parser-is-fed-a-masked-document.md)                   | The parser is fed a masked document                                  |
 | [024](024-the-console-repeats-the-response-pane.md)                 | The console repeats the response pane                                |
+| [025](025-variable-resolution-stays-in-the-engine.md)               | Variable resolution stays in the engine                              |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -40,6 +41,8 @@ theme is defined once" is still true word for word. 023 came straight after, fro
 the newly legible syntax colours had made obvious: the grammar had been misparsing every body with
 a `{{token}}` in it all along. 024 is the first that accepts duplication as the point rather than
 the cost: it widens 019's event again and then renders a response body a second way, because 013's
-"bodies stay in the engine" also means the engine forgets them.
+"bodies stay in the engine" also means the engine forgets them. 025 keeps the answer to a token in
+that same engine, then gives plain inputs a lighter overlay rather than turning every grid cell into
+a CodeMirror instance.
 
 `TEMPLATE.md` is the shape of a new one.

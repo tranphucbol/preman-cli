@@ -45,9 +45,19 @@ import { listMethods, messageSkeleton, type Failure } from "@preman/desktop/rend
 import type { PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { useAncestors, useNode } from "@preman/desktop/renderer/stores/catalog.js";
 import { loadTab } from "@preman/desktop/renderer/stores/session.js";
-import { type SubTab, type Tab, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
+import {
+  BODY_VIEWS,
+  DEFAULT_BODY_VIEW,
+  type BodyView,
+  type SubTab,
+  type Tab,
+  isDirty,
+  useTabsStore,
+} from "@preman/desktop/renderer/stores/tabs.js";
 import type { Ask } from "@preman/desktop/renderer/ui/Dialog.js";
 import { CodeEditor, type CodeLanguage } from "@preman/desktop/renderer/ui/CodeEditor.js";
+import { NOTHING_ASKED, type TokenReporter, type UnresolvedNames } from "@preman/desktop/renderer/ui/template.js";
+import { TokenBox, useTokenBox } from "@preman/desktop/renderer/ui/TokenBox.js";
 import {
   Button,
   CellField,
@@ -71,6 +81,7 @@ import {
 } from "@preman/desktop/renderer/ui/icons.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
+import { BodyPreview } from "@preman/desktop/renderer/panes/BodyPreview.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { KeyValueGrid } from "@preman/desktop/renderer/panes/KeyValueGrid.js";
 
@@ -92,6 +103,22 @@ const SUB_TABS: readonly { readonly id: SubTab; readonly label: string }[] = [
 
 const TRIGGER_CLASS =
   "h-tab shrink-0 border-b-2 border-transparent px-2.5 text-xs text-ink-dim hover:text-ink data-[state=active]:border-accent data-[state=active]:text-ink";
+
+/**
+ * The Edit/Preview switch's labels. Read out loud rather than stored: `BODY_VIEWS` is the
+ * declaration and this is only how it is spelled.
+ */
+const BODY_VIEW_LABELS: Record<BodyView, string> = {
+  edit: "Edit",
+  preview: "Preview",
+};
+
+/**
+ * The body types with authored text behind them, and therefore the only ones the Preview switch
+ * appears on. `urlencoded`, `formdata`, `file` and `none` hide it rather than disabling it: a
+ * disabled control says the state is reachable.
+ */
+const PREVIEWABLE_BODY_TYPES: ReadonlySet<BodyType> = new Set<BodyType>(["raw", "graphql"]);
 
 /**
  * What each script phase is called in the interface. The `scripts` entry's `type` is what the file
@@ -163,6 +190,9 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
   );
 
   const picker = useMethodPicker(tab.nodeId, apply, onFail);
+  // The target row is the one part of this pane that is on screen whatever the sub-tab is, so it
+  // owns its own box rather than borrowing one from a pane that may be unmounted.
+  const box = useTokenBox();
 
   if (tab.loading) return <Notice message="Loading." />;
   if (tab.error !== null) return <Failure title={tab.error.message} details={tab.error.details} />;
@@ -186,6 +216,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
                 defaultValue={readText(data, FIELD.methodPath)}
                 placeholder="package.Service/Method"
                 aria-label="Method path"
+                onToken={box.report}
                 onBlur={(event) => {
                   commit(FIELD.methodPath, readText(data, FIELD.methodPath), event.currentTarget.value);
                 }}
@@ -225,6 +256,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
             defaultValue={readText(data, FIELD.url)}
             placeholder={grpc ? "{{grpc_host}}" : "{{base_url}}/path"}
             aria-label="URL"
+            onToken={box.report}
             onBlur={(event) => {
               commit(FIELD.url, readText(data, FIELD.url), event.currentTarget.value);
             }}
@@ -283,9 +315,16 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
 
         <Pane value="body">
           {grpc ? (
-            <MessagePane data={data} apply={apply} onAsk={onAsk} onFail={onFail} />
+            <MessagePane
+              nodeId={tab.nodeId}
+              view={tab.bodyView}
+              data={data}
+              apply={apply}
+              onAsk={onAsk}
+              onFail={onFail}
+            />
           ) : (
-            <BodyPane data={data} apply={apply} />
+            <BodyPane nodeId={tab.nodeId} view={tab.bodyView} data={data} apply={apply} />
           )}
         </Pane>
 
@@ -316,6 +355,10 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
         onDismiss={picker.dismiss}
         onChoose={picker.choose}
       />
+
+      {box.clicked !== null && (
+        <TokenBox key={box.clicked.name} name={box.clicked.name} at={box.clicked.at} onDismiss={box.dismiss} />
+      )}
     </div>
   );
 }
@@ -480,6 +523,7 @@ function PairPane({
 function AuthPane({ data, apply }: { readonly data: unknown; readonly apply: Apply }) {
   const type = readText(data, FIELD.authType);
   const credentials = readCredentials(data);
+  const box = useTokenBox();
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-gutter">
@@ -491,6 +535,7 @@ function AuthPane({ data, apply }: { readonly data: unknown; readonly apply: App
             mono
             defaultValue={type}
             placeholder="bearer"
+            onToken={box.report}
             onBlur={(event) => {
               if (event.currentTarget.value !== type) apply([edit(FIELD.authType, event.currentTarget.value)]);
             }}
@@ -500,10 +545,14 @@ function AuthPane({ data, apply }: { readonly data: unknown; readonly apply: App
       <FieldRows
         rows={credentials}
         empty="No credentials here. Either the folder supplies them, or add them on the YAML tab."
+        onToken={box.report}
         onCommit={(key, value) => {
           apply([edit(["auth", "credentials", key], value)]);
         }}
       />
+      {box.clicked !== null && (
+        <TokenBox key={box.clicked.name} name={box.clicked.name} at={box.clicked.at} onDismiss={box.dismiss} />
+      )}
     </div>
   );
 }
@@ -539,10 +588,13 @@ function readNestedRecord(data: unknown, path: readonly string[]): readonly Pair
 function FieldRows({
   rows,
   empty,
+  onToken,
   onCommit,
 }: {
   readonly rows: readonly Pair[];
   readonly empty: string;
+  /** Absent for the settings block: core reads those itself and interpolates none of them. */
+  readonly onToken?: TokenReporter;
   readonly onCommit: (key: string, value: string) => void;
 }) {
   if (rows.length === 0) return <p className="text-2xs text-ink-faint">{empty}</p>;
@@ -556,6 +608,7 @@ function FieldRows({
               key={`${pair.key}:${pair.value}`}
               defaultValue={pair.value}
               aria-label={pair.key}
+              onToken={onToken}
               onBlur={(event) => {
                 if (event.currentTarget.value !== pair.value) onCommit(pair.key, event.currentTarget.value);
               }}
@@ -564,6 +617,104 @@ function FieldRows({
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * The `Edit` / `Preview` switch, in the chrome row the pane already has.
+ *
+ * A nested `Tabs.Root` rather than a pair of buttons, so the underline that says which one is
+ * current is the app's one way of saying that, and so the two triggers are one arrow-key group.
+ * No new row: a bar sized by a two-item switch is a tier `docs/design-system.md` does not have.
+ */
+function ViewSwitch({ nodeId, view }: { readonly nodeId: string; readonly view: BodyView }) {
+  return (
+    <Tabs.Root
+      className="ml-auto"
+      value={view}
+      onValueChange={(next) => {
+        useTabsStore.getState().setBodyView(nodeId, next as BodyView);
+      }}
+    >
+      <Tabs.List className="flex items-center" aria-label="Body view">
+        {BODY_VIEWS.map((candidate) => (
+          <Tabs.Trigger key={candidate} value={candidate} className={TRIGGER_CLASS}>
+            {BODY_VIEW_LABELS[candidate]}
+          </Tabs.Trigger>
+        ))}
+      </Tabs.List>
+    </Tabs.Root>
+  );
+}
+
+/** The one language with `{{token}}` in it, and therefore the only one `TemplateEditor` uses. */
+const TEMPLATE_LANGUAGE: CodeLanguage = "json-template";
+
+/**
+ * The same answer with one name taken out of it.
+ *
+ * Called after a write, so the underline under the name that was just defined goes away without
+ * costing a second round trip. Everything else the preview said is still true.
+ */
+function withoutName(unresolved: UnresolvedNames, name: string): UnresolvedNames {
+  if (unresolved === NOTHING_ASKED || !unresolved.names.has(name)) return unresolved;
+  const names = new Set(unresolved.names);
+  names.delete(name);
+  return { ...unresolved, names };
+}
+
+/**
+ * One authored text, in either of its two views, and the two pieces of state they share.
+ *
+ * The unresolved names come back from the preview and go straight into the editor's linter, so the
+ * two views are one component rather than two siblings. It is also where the rule that an editor
+ * whose Preview was never opened lints nothing lives: there is no other asker.
+ *
+ * The clicked token is held here rather than inside `CodeEditor` because the editor is a view over
+ * a document and knows nothing about environments. It reports a name and a rect; what that name
+ * means is a question for something that can talk to the engine.
+ */
+function TemplateEditor({
+  view,
+  value,
+  hint,
+  onCommit,
+}: {
+  readonly view: BodyView;
+  readonly value: string;
+  readonly hint?: string;
+  readonly onCommit: (next: string) => void;
+}) {
+  const [unresolved, setUnresolved] = useState<UnresolvedNames>(NOTHING_ASKED);
+  const box = useTokenBox();
+
+  const clicked = box.clicked?.name;
+  const wrote = useCallback(() => {
+    if (clicked === undefined) return;
+    setUnresolved((current) => withoutName(current, clicked));
+  }, [clicked]);
+
+  if (view === "preview") return <BodyPreview text={value} onResolved={setUnresolved} />;
+  return (
+    <>
+      <CodeEditor
+        value={value}
+        language={TEMPLATE_LANGUAGE}
+        placeholder={hint}
+        unresolved={unresolved}
+        onCommit={onCommit}
+        onToken={box.report}
+      />
+      {box.clicked !== null && (
+        <TokenBox
+          key={box.clicked.name}
+          name={box.clicked.name}
+          at={box.clicked.at}
+          onDismiss={box.dismiss}
+          onWrite={wrote}
+        />
+      )}
+    </>
   );
 }
 
@@ -583,11 +734,15 @@ const REPLACE_MESSAGE_WARNING =
  * the message is often the only hand-written part of a request.
  */
 function MessagePane({
+  nodeId,
+  view,
   data,
   apply,
   onAsk,
   onFail,
 }: {
+  readonly nodeId: string;
+  readonly view: BodyView;
   readonly data: unknown;
   readonly apply: Apply;
   readonly onAsk: (ask: Ask) => void;
@@ -629,11 +784,12 @@ function MessagePane({
         {methodPath.length === 0 && (
           <span className="text-2xs text-ink-faint">Set a method path first: the example comes from its proto.</span>
         )}
+        <ViewSwitch nodeId={nodeId} view={view} />
       </div>
-      <CodeEditor
+      <TemplateEditor
+        view={view}
         value={message}
-        language="json-template"
-        placeholder={MESSAGE_HINT}
+        hint={MESSAGE_HINT}
         onCommit={(next) => {
           if (next !== message) apply([edit(FIELD.message, next)]);
         }}
@@ -642,10 +798,19 @@ function MessagePane({
   );
 }
 
-const RAW_LANGUAGE: CodeLanguage = "json-template";
-
-function BodyPane({ data, apply }: { readonly data: unknown; readonly apply: Apply }) {
+function BodyPane({
+  nodeId,
+  view,
+  data,
+  apply,
+}: {
+  readonly nodeId: string;
+  readonly view: BodyView;
+  readonly data: unknown;
+  readonly apply: Apply;
+}) {
   const type = readBodyType(data);
+  const previewable = PREVIEWABLE_BODY_TYPES.has(type);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -665,18 +830,23 @@ function BodyPane({ data, apply }: { readonly data: unknown; readonly apply: App
             </SelectOption>
           ))}
         </Select>
+        {previewable && <ViewSwitch nodeId={nodeId} view={view} />}
       </div>
-      <BodyContent type={type} data={data} apply={apply} />
+      {/* A body type without text to preview falls back to `Edit` rather than showing an empty
+          preview: the switch it was set from is not on screen any more. */}
+      <BodyContent type={type} view={previewable ? view : DEFAULT_BODY_VIEW} data={data} apply={apply} />
     </div>
   );
 }
 
 function BodyContent({
   type,
+  view,
   data,
   apply,
 }: {
   readonly type: BodyType;
+  readonly view: BodyView;
   readonly data: unknown;
   readonly apply: Apply;
 }) {
@@ -719,9 +889,11 @@ function BodyContent({
           }}
         />
         <SectionLabel>Variables</SectionLabel>
-        <CodeEditor
+        {/* Only the variables are previewed: they are the half on `json-template`. The query is
+            `text` because the runner does not interpolate it. */}
+        <TemplateEditor
+          view={view}
           value={readText(data, FIELD.graphqlVariables)}
-          language="json-template"
           onCommit={(next) => {
             if (next !== readText(data, FIELD.graphqlVariables)) apply([edit(FIELD.graphqlVariables, next)]);
           }}
@@ -732,9 +904,9 @@ function BodyContent({
 
   const raw = readText(data, FIELD.bodyContent);
   return (
-    <CodeEditor
+    <TemplateEditor
+      view={view}
       value={raw}
-      language={RAW_LANGUAGE}
       onCommit={(next) => {
         if (next !== raw) apply([edit(FIELD.bodyContent, next)]);
       }}

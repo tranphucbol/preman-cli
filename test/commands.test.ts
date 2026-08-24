@@ -42,7 +42,7 @@ describe("list output", () => {
       "    Deep Echo  grpc",
       "",
       "environments",
-      "  LOCAL  4 vars",
+      "  LOCAL  5 vars",
     ]);
   });
 
@@ -68,7 +68,7 @@ describe("list output", () => {
     ]);
     expect(report.environments).toHaveLength(1);
     expect(report.environments[0]?.name).toBe("LOCAL");
-    expect(report.environments[0]?.keys).toEqual(["grpc_url", "trans_id", "greeting", "mode"]);
+    expect(report.environments[0]?.keys).toEqual(["grpc_url", "trans_id", "greeting", "mode", "nested_token"]);
     expect(report.specs).toHaveLength(2);
     // Decision: the JSON shape omits includeDirs even though verbose text prints them.
     expect(report).not.toHaveProperty("includeDirs");
@@ -100,7 +100,13 @@ describe("env show output", () => {
     expect(name).toBe("LOCAL");
     expect(file).toContain("LOCAL.environment.yaml");
     expect(blank).toBe("");
-    expect(values).toEqual(["  greeting = hello", "  grpc_url = (empty)", "  mode = SUCCEED", "  trans_id = (empty)"]);
+    expect(values).toEqual([
+      "  greeting = hello",
+      "  grpc_url = (empty)",
+      "  mode = SUCCEED",
+      "  nested_token = {{greeting}} world",
+      "  trans_id = (empty)",
+    ]);
   });
 
   it("givenEmptyValue_whenShown_thenPlaceholderShown", () => {

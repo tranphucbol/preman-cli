@@ -33,6 +33,18 @@ export function isSubTab(value: string): value is SubTab {
   return (SUB_TABS as readonly string[]).includes(value);
 }
 
+/**
+ * Whether the Body sub-tab is showing the text as authored or as it would be sent.
+ *
+ * Declared the same way `SUB_TABS` is, for the same reason: the switch renders from the runtime
+ * list, so a view that exists as a type but not as a value would not compile.
+ */
+export const BODY_VIEWS = ["edit", "preview"] as const;
+
+export type BodyView = (typeof BODY_VIEWS)[number];
+
+export const DEFAULT_BODY_VIEW: BodyView = "edit";
+
 export interface Tab {
   readonly nodeId: string;
   readonly title: string;
@@ -47,6 +59,14 @@ export interface Tab {
    * phase from the other protocol selects nothing rather than blanking the editor.
    */
   readonly scriptPhase: string | null;
+  /**
+   * Whether the Body sub-tab is showing `Edit` or `Preview`.
+   *
+   * Deliberately not persisted: `main/store.ts` writes `{ nodeId, subTab }` per tab, and a tab
+   * that reopened into a read-only view would look broken. A preview is a question you ask, not
+   * a place you leave the editor in.
+   */
+  readonly bodyView: BodyView;
   /** The document as the engine last read it, or null while loading. */
   readonly saved: NodeDocument | null;
   /** Field edits not yet written. Upserted by path, so retyping one cell does not grow this. */
@@ -91,6 +111,7 @@ export interface TabsState {
   activate: (nodeId: string) => void;
   setSubTab: (nodeId: string, subTab: SubTab) => void;
   setScriptPhase: (nodeId: string, scriptPhase: string) => void;
+  setBodyView: (nodeId: string, bodyView: BodyView) => void;
   /** Install the document the engine read, clearing loading and any previous error. */
   loaded: (nodeId: string, document: NodeDocument) => void;
   failed: (nodeId: string, error: EngineError) => void;
@@ -139,6 +160,7 @@ export const useTabsStore = create<TabsState>((set) => ({
         kind: node.kind,
         subTab: DEFAULT_SUB_TAB,
         scriptPhase: NO_SCRIPT_PHASE,
+        bodyView: DEFAULT_BODY_VIEW,
         saved: null,
         edits: [],
         text: null,
@@ -174,6 +196,10 @@ export const useTabsStore = create<TabsState>((set) => ({
 
   setScriptPhase(nodeId, scriptPhase) {
     set((state) => patch(state, nodeId, { scriptPhase }));
+  },
+
+  setBodyView(nodeId, bodyView) {
+    set((state) => patch(state, nodeId, { bodyView }));
   },
 
   loaded(nodeId, document) {

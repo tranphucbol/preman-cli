@@ -12,6 +12,7 @@ import type {
   MethodChoices,
   MutateOp,
   ReportFormat,
+  TextPreview,
   VariableView,
   VariableWrite,
 } from "@preman/desktop/engine/protocol.js";
@@ -267,6 +268,24 @@ export async function writeVariable(write: VariableWrite): Promise<Result<Variab
   if (engine === null) return { ok: false, failure: DISCONNECTED };
   try {
     return { ok: true, value: await engine.send("write-variable", { write }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * What a text would become on the next run, resolved against the session's environment.
+ *
+ * The engine resolves it, never this side of the port: expansion is recursive, cycle-guarded and
+ * evaluates dynamic variables per occurrence, so a second implementation here would eventually
+ * show a value a run would not send.
+ */
+export async function previewText(text: string): Promise<Result<TextPreview>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    const { environment } = useSessionStore.getState();
+    return { ok: true, value: await engine.send("preview", { text, environment: environment ?? null }) };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }

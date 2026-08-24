@@ -18,6 +18,8 @@ import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
 
 import { cn } from "./cn.js";
 import { CheckIcon, GLYPH_CLASS, PickerIcon } from "./icons.js";
+import { initialText, TokenOverlay, useTokenPills } from "./TokenOverlay.js";
+import type { TokenReporter } from "./template.js";
 
 const TOOLTIP_DELAY_MS = 400;
 
@@ -145,17 +147,57 @@ export function Tooltip({
  * and the button that acts on it are one control in the user's head - the URL bar and Send, the
  * search box and its toggle - and 26px beside 30px reads as one of them being broken. 26px stays
  * the height of the chrome tier: icon buttons, quiet buttons, menu items.
+ *
+ * Split in three because the token backdrop sits behind the input and has to agree with it about
+ * where a character lands. `METRICS` is the half that decides that and is handed to the overlay
+ * verbatim; `FILL` moves to the wrapper when there is a backdrop, because an opaque input has
+ * nothing behind it; `INK` is the input's alone.
  */
-const INPUT_CLASS =
-  "h-control-lg w-full min-w-0 rounded-sm border border-line-strong bg-control px-2 text-xs text-ink placeholder:text-ink-faint disabled:text-ink-faint";
+const FIELD_METRICS = "h-control-lg w-full min-w-0 border px-2 text-xs";
+const FIELD_FILL = "rounded-sm bg-control";
+const FIELD_INK = "rounded-sm border-line-strong placeholder:text-ink-faint disabled:text-ink-faint";
+
+const CELL_METRICS = "h-row w-full min-w-0 truncate px-2 text-xs";
+const CELL_INK = "bg-transparent placeholder:text-ink-faint focus:outline-none";
+
+/**
+ * A field's ink, as a closed set rather than a class the caller writes.
+ *
+ * The two grids both need to say "this value is here and loses" - a disabled header, a shadowed
+ * variable - and both used to spell it out in their own class string. One vocabulary, because two
+ * spellings of "struck through and dimmed" is how one of them ends up a shade off. It is also the
+ * *only* declaration of a field's colour, since `cn` is a join and not a merge: a second one in the
+ * base class would leave which of the two wins to the order the stylesheet happens to be in.
+ */
+const TONE_CLASS = {
+  normal: "text-ink",
+  /** Present, but not what a run will use: a disabled header, a shadowed variable. */
+  struck: "text-ink-faint line-through",
+  /** Not present at all. */
+  muted: "text-ink-faint",
+} as const;
+
+export type FieldTone = keyof typeof TONE_CLASS;
+
+/** For the read-only twin of a field: a grid column that is a `span` and not an `input`. */
+export function toneClass(tone: FieldTone): string {
+  return TONE_CLASS[tone];
+}
 
 export interface FieldProps extends Omit<ComponentProps<"input">, "className"> {
   readonly mono?: boolean;
   readonly ref?: Ref<HTMLInputElement>;
+  readonly tone?: FieldTone;
+  /**
+   * Present only where core interpolates this field's value, per decision 14. Paints `{{token}}`s
+   * as pills behind the text and reports the one that was clicked; absent leaves the markup exactly
+   * as it was, which is what the rename dialog and the search box want.
+   */
+  readonly onToken?: TokenReporter;
 }
 
 /** Uncontrolled by convention: pass `defaultValue` and commit on blur, never `value` per keystroke. */
-export function Field({ mono = false, ref, onFocus, onBlur, ...rest }: FieldProps) {
+export function Field({ mono = false, ref, onFocus, onBlur, tone = "normal", onToken, ...rest }: FieldProps) {
   const node = useRef<HTMLInputElement | null>(null);
   const setRef = useCallback(
     (element: HTMLInputElement | null) => {
@@ -192,10 +234,13 @@ export function Field({ mono = false, ref, onFocus, onBlur, ...rest }: FieldProp
   // committing a vanished field's last keystroke into another request is the bug, not the save.
   useEffect(() => () => clearFlush(flush), [flush]);
 
-  return (
+  const pills = useTokenPills(initialText(rest.defaultValue), onToken);
+  const metrics = cn(FIELD_METRICS, mono && "font-mono");
+
+  const input = (
     <input
       ref={setRef}
-      className={cn(INPUT_CLASS, mono && "font-mono")}
+      className={cn(metrics, FIELD_INK, TONE_CLASS[tone], onToken === undefined ? FIELD_FILL : "bg-transparent")}
       spellCheck={false}
       onFocus={(event) => {
         registerFlush(flush);
@@ -205,8 +250,23 @@ export function Field({ mono = false, ref, onFocus, onBlur, ...rest }: FieldProp
         clearFlush(flush);
         onBlur?.(event);
       }}
+      onInput={pills.onInput}
+      onScroll={pills.onScroll}
+      onMouseUp={pills.onMouseUp}
       {...rest}
     />
+  );
+
+  if (onToken === undefined) return input;
+
+  // The fill moves out here so the backdrop has somewhere to be seen from. `border-transparent` on
+  // the overlay rather than no border at all: the input's 1px border insets its text by 1px, and a
+  // backdrop that skips it is a backdrop one pixel to the left.
+  return (
+    <span className={cn("relative block w-full min-w-0", FIELD_FILL)}>
+      <TokenOverlay value={pills.value} className={cn(metrics, "border-transparent")} />
+      {input}
+    </span>
   );
 }
 
@@ -214,16 +274,30 @@ export function Field({ mono = false, ref, onFocus, onBlur, ...rest }: FieldProp
  * A borderless input for grid cells. The border is dropped because forty bordered cells in a
  * column is a wall, and the row's own hairline already says where the cell ends.
  */
-export function CellField({ mono = true, ...rest }: FieldProps) {
-  return (
+export function CellField({ mono = true, tone = "normal", onToken, ...rest }: FieldProps) {
+  const pills = useTokenPills(initialText(rest.defaultValue), onToken);
+  const metrics = cn(CELL_METRICS, mono && "font-mono");
+
+  const input = (
     <input
-      className={cn(
-        "h-row w-full min-w-0 bg-transparent px-2 text-xs text-ink placeholder:text-ink-faint focus:bg-control",
-        mono && "font-mono",
-      )}
+      className={cn(metrics, CELL_INK, TONE_CLASS[tone], onToken === undefined && "focus:bg-control")}
       spellCheck={false}
+      onInput={pills.onInput}
+      onScroll={pills.onScroll}
+      onMouseUp={pills.onMouseUp}
       {...rest}
     />
+  );
+
+  if (onToken === undefined) return input;
+
+  // `focus-within` on the wrapper rather than `focus` on the input: the focus fill has to be behind
+  // the pills, and the pills are behind the input.
+  return (
+    <span className="relative block w-full min-w-0 focus-within:bg-control">
+      <TokenOverlay value={pills.value} className={metrics} />
+      {input}
+    </span>
   );
 }
 

@@ -21,6 +21,8 @@ import { isDirty, useTabsStore } from "./tabs.js";
 const NO_CLIENT = null;
 /** How many environments a workspace may have before choosing one stops being unambiguous. */
 const SOLE_ENVIRONMENT = 1;
+const NO_VARIABLE_WRITES = 0;
+const ONE_VARIABLE_WRITE = 1;
 
 export interface SessionState {
   client: EngineClient | null;
@@ -36,6 +38,15 @@ export interface SessionState {
    * lie or unreachable, so the picker needs all three.
    */
   environment: string | null | undefined;
+  /**
+   * How many variables this app has written. A counter rather than a flag, so it can be a
+   * dependency: every reader that resolves a token re-resolves when it moves.
+   *
+   * The watcher does turn the environment file this wrote into a catalog revision, but it arrives
+   * on a debounce and not at all when the watcher is degraded. A preview that lags the value you
+   * just set is exactly how a preview stops being believed.
+   */
+  variableWrites: number;
 
   // Function properties rather than method signatures: these are read off the state object and
   // handed to event handlers, and none of them uses `this`.
@@ -44,6 +55,8 @@ export interface SessionState {
   setDegraded: (message: string | null) => void;
   setHostFailure: (failure: HostFailure | null) => void;
   setEnvironment: (name: string | null | undefined) => void;
+  /** Called after a successful `write-variable`, by whoever made it. */
+  countVariableWrite: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -53,6 +66,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   degraded: null,
   hostFailure: null,
   environment: undefined,
+  variableWrites: NO_VARIABLE_WRITES,
 
   setClient(client, root) {
     set({ client, root });
@@ -68,6 +82,9 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
   setEnvironment(environment) {
     set({ environment });
+  },
+  countVariableWrite() {
+    set((state) => ({ variableWrites: state.variableWrites + ONE_VARIABLE_WRITE }));
   },
 }));
 

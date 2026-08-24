@@ -22,7 +22,7 @@ import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, type Extension, type StateField } from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
@@ -37,7 +37,15 @@ import type { Variant } from "@preman/desktop/renderer/appearance/theme.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { HIGHLIGHT_STYLE } from "@preman/desktop/renderer/ui/highlight.js";
-import { jsonTemplate } from "@preman/desktop/renderer/ui/template.js";
+import {
+  NOTHING_ASKED,
+  jsonTemplate,
+  setUnresolved,
+  tokenClicks,
+  unresolvedField,
+  type TokenReporter,
+  type UnresolvedNames,
+} from "@preman/desktop/renderer/ui/template.js";
 
 /**
  * `json-template` is JSON that may contain `{{token}}`, which plain JSON is not. It is the language
@@ -46,9 +54,14 @@ import { jsonTemplate } from "@preman/desktop/renderer/ui/template.js";
  */
 export type CodeLanguage = "json" | "json-template" | "yaml" | "javascript" | "xml" | "text";
 
-const LANGUAGE_EXTENSION: Record<CodeLanguage, () => Extension> = {
+/**
+ * The field is threaded through rather than owned here so that only the language that has tokens
+ * can be given one. Every other entry ignores it, which is the point: `json` is a body that came
+ * back off the wire and has nothing left to resolve.
+ */
+const LANGUAGE_EXTENSION: Record<CodeLanguage, (unresolved?: StateField<UnresolvedNames>) => Extension> = {
   json: () => json(),
-  "json-template": () => jsonTemplate(),
+  "json-template": (unresolved) => jsonTemplate(unresolved),
   yaml: () => yaml(),
   javascript: () => javascript(),
   xml: () => xml(),
@@ -176,6 +189,7 @@ function baseExtensions(
   gutter: boolean,
   hint: string,
   engineFind: boolean,
+  unresolved: StateField<UnresolvedNames> | undefined,
   theme: Extension,
 ): Extension[] {
   return [
@@ -201,7 +215,7 @@ function baseExtensions(
     ]),
     EditorView.lineWrapping,
     theme,
-    LANGUAGE_EXTENSION[language](),
+    LANGUAGE_EXTENSION[language](unresolved),
     ...(gutter ? [lineNumbers(), highlightActiveLineGutter(), foldGutter()] : []),
     ...(hint === "" ? [] : [placeholderExtension(hint)]),
     EditorState.readOnly.of(readOnly),
@@ -227,6 +241,17 @@ export interface CodeEditorProps {
    * scroll event, so a caller that loads on it must guard against re-entry itself.
    */
   readonly onEdge?: (edge: ScrollEdge) => void;
+  /**
+   * Which names do not resolve, for the `json-template` linter. Supplying it at all - even as
+   * `NOTHING_ASKED` - is what installs the linter, so an editor that never previews carries
+   * neither the field nor the debounced pass over its document.
+   */
+  readonly unresolved?: UnresolvedNames;
+  /**
+   * Called when a `{{token}}` is clicked, with the name and the rect it was drawn in. The click
+   * still places the caret: this is an addition to the gesture, not a replacement for it.
+   */
+  readonly onToken?: TokenReporter;
 }
 
 export function CodeEditor({
@@ -239,11 +264,15 @@ export function CodeEditor({
   onCommit,
   onFind,
   onEdge,
+  unresolved,
+  onToken,
 }: CodeEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
   /** Set by the mount effect, read by the two effects that reach into a live view. */
   const variant$ = useRef<Compartment | null>(null);
+  /** The linter's field, when this editor has one. Read by the effect that pushes an answer in. */
+  const unresolved$ = useRef<StateField<UnresolvedNames> | null>(null);
 
   const variant = useAppearanceStore((state) => state.theme.variant);
   const editorFontSize = useAppearanceStore((state) => state.preferences.editorFontSize);
@@ -253,6 +282,7 @@ export function CodeEditor({
   const commit = useRef(onCommit);
   const find = useRef(onFind);
   const edge = useRef(onEdge);
+  const token = useRef(onToken);
   // Synced in an effect rather than assigned during render. Writing a ref during render is a
   // real hazard in concurrent React: a render that gets thrown away still leaves its write
   // behind. An effect runs only for the render that committed.
@@ -260,11 +290,27 @@ export function CodeEditor({
     commit.current = onCommit;
     find.current = onFind;
     edge.current = onEdge;
-  }, [onCommit, onFind, onEdge]);
+    token.current = onToken;
+  }, [onCommit, onFind, onEdge, onToken]);
 
   // Whether the editor was built without its own search. A boolean rather than the callback
   // itself, so passing a fresh arrow every render does not rebuild the editor.
   const engineFind = onFind !== undefined;
+
+  // Same reason, for the token gesture: a pane that renders a fresh handler every keystroke must
+  // not be able to rebuild the view and drop the undo history.
+  const clicksTokens = onToken !== undefined;
+
+  // Whether this editor lints. A boolean for the same reason `engineFind` is one: the answer
+  // itself changes on every preview, and rebuilding the view on it would drop the undo history
+  // mid-edit. The answer is pushed in as an effect instead, by the effect below.
+  //
+  // `NOTHING_ASKED` counts as no linter and not as an empty one. Measured: installing `linter()`
+  // over a document nobody has asked about costs the worst keystroke in a typing burst about 30ms
+  // - it is a debounced full pass over the document either way - and it can report nothing, so an
+  // editor whose Preview was never opened carries none of it. That is the same sentence the plan
+  // writes as "lints nothing", now enforced rather than merely true.
+  const lints = unresolved !== undefined && unresolved !== NOTHING_ASKED;
 
   useEffect(() => {
     const parent = host.current;
@@ -272,6 +318,8 @@ export function CodeEditor({
     const language$ = new Compartment();
     const theme$ = new Compartment();
     variant$.current = theme$;
+    const unresolvedNames = lints ? unresolvedField() : undefined;
+    unresolved$.current = unresolvedNames ?? null;
 
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     // The flush this editor currently has registered, so `blur` and teardown clear the exact
@@ -306,6 +354,7 @@ export function CodeEditor({
             gutter,
             placeholder,
             engineFind,
+            unresolvedNames,
             theme$.of(THEMES[useAppearanceStore.getState().theme.variant]),
           ),
           ...(engineFind
@@ -354,6 +403,7 @@ export function CodeEditor({
               return false;
             },
           }),
+          ...(clicksTokens ? [tokenClicks((clicked, at) => token.current?.(clicked, at))] : []),
         ],
       }),
     });
@@ -366,11 +416,19 @@ export function CodeEditor({
       created.destroy();
       view.current = null;
       variant$.current = null;
+      unresolved$.current = null;
     };
     // `value` is the initial document only. Later changes are handled by the effect below,
     // which is why it is deliberately absent from these dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, readOnly, gutter, placeholder, engineFind]);
+  }, [language, readOnly, gutter, placeholder, engineFind, lints, clicksTokens]);
+
+  /** The answer, pushed into a live editor. A reconfigure would rebuild the lint state for nothing. */
+  useEffect(() => {
+    const instance = view.current;
+    if (instance === null || unresolved$.current === null) return;
+    instance.dispatch({ effects: setUnresolved.of(unresolved ?? NOTHING_ASKED) });
+  }, [unresolved]);
 
   /**
    * The only transaction the appearance feature dispatches. Every colour in the editor is a custom

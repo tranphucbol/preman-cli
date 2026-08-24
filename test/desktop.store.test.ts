@@ -13,13 +13,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createAppStore, type AppState } from "@preman/desktop/main/store.js";
-import { DEFAULT_PREFERENCES, type Preferences } from "@preman/desktop/preload/bridge.js";
+import { DEFAULT_PREFERENCES, type Preferences, type SessionTab } from "@preman/desktop/preload/bridge.js";
 
 const STATE_FILE = "state.json";
 const ENCODING = "utf8";
 const CURRENT_VERSION = 1;
 const FUTURE_VERSION = 99;
 const A_ROOT = "/tmp/some-workspace";
+const A_NODE = "postman/Demo.postman_collection/Ping.grpc";
 
 const dirs: string[] = [];
 
@@ -114,5 +115,29 @@ describe("app store preferences", () => {
     writeFileSync(join(dir, STATE_FILE), "{ not json", ENCODING);
 
     expect(createAppStore(dir).read().preferences).toEqual(DEFAULT_PREFERENCES);
+  });
+});
+
+describe("what a saved tab carries", () => {
+  it("givenTabInPreview_whenPersisted_thenOnlyNodeIdAndSubTabAreWritten", () => {
+    const dir = userData();
+
+    // `saveSession` copies a tab field by field rather than spreading it, which is what keeps a
+    // view state out of app data. Sent here with a `bodyView` on it — the shape the renderer's
+    // `Tab` has and its `SessionTab` deliberately does not — so the copy is the thing under test
+    // and not the type that usually stops this.
+    createAppStore(dir).saveSession(A_ROOT, {
+      activeEnvironment: null,
+      activeNodeId: A_NODE,
+      collapsedIds: [],
+      tabs: [{ nodeId: A_NODE, subTab: "body", bodyView: "preview" } as SessionTab],
+      drafts: [],
+    });
+
+    const [tab] = stored(dir).workspaces[0]?.tabs ?? [];
+    expect(tab).toEqual({ nodeId: A_NODE, subTab: "body" });
+    // The assertion that matters: the key is gone, not merely undefined. Reopening the workspace
+    // therefore has nothing to restore and the tab comes back in Edit.
+    expect(Object.keys(tab ?? {})).toEqual(["nodeId", "subTab"]);
   });
 });

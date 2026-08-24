@@ -183,7 +183,13 @@ describe("collection tree ordering", () => {
 describe("environments", () => {
   it("givenFixtureEnvironment_whenLoaded_thenSkipsDisabledValues", () => {
     const env = findEnvironment(fixtureWorkspace(), "LOCAL");
-    expect(env?.values).toEqual({ grpc_url: "", trans_id: "", greeting: "hello", mode: "SUCCEED" });
+    expect(env?.values).toEqual({
+      grpc_url: "",
+      trans_id: "",
+      greeting: "hello",
+      mode: "SUCCEED",
+      nested_token: "{{greeting}} world",
+    });
     expect(env?.values.disabled_var).toBeUndefined();
     expect(listEnvironments(fixtureWorkspace()).map((e) => e.name)).toEqual(["LOCAL"]);
   });

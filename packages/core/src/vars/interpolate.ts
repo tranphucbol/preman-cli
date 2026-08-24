@@ -7,8 +7,14 @@ import {
 } from "./dynamic/index.js";
 import type { VariableStore } from "./store.js";
 
+/**
+ * The source of {@link TOKEN}, for a consumer that may not import this module's `RegExp`: a global
+ * regex carries `lastIndex`, so a shared instance is a bug two callers apart.
+ */
+export const TOKEN_SOURCE = String.raw`\{\{\s*([^{}]+?)\s*\}\}`;
+
 /** `{{ name }}` — inner text may not contain braces, surrounding whitespace is trimmed. */
-const TOKEN = /\{\{\s*([^{}]+?)\s*\}\}/g;
+const TOKEN = new RegExp(TOKEN_SOURCE, "g");
 
 const MAX_DEPTH = 10;
 

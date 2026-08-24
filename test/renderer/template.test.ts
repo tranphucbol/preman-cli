@@ -8,7 +8,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { jsonTemplate, maskTemplates } from "@preman/desktop/renderer/ui/template.js";
+import {
+  NOTHING_ASKED,
+  jsonTemplate,
+  maskTemplates,
+  unresolvedDiagnostics,
+} from "@preman/desktop/renderer/ui/template.js";
 
 const parser = jsonTemplate().language.parser;
 
@@ -110,5 +115,46 @@ describe("parsing a template body", () => {
     expect(errors).toBe(0);
     expect(properties).toStrictEqual(['"a"', '"b"', '"c"']);
     expect(strings).toStrictEqual(['"text"']);
+  });
+});
+
+/**
+ * The linter, as the pure function it is deliberately split into: there is no DOM here, so an
+ * `EditorView` is not something these tests can build, and the diagnostics are the whole of it.
+ */
+describe("linting a template body", () => {
+  const LOCAL = { names: new Set(["greetng"]), environment: "LOCAL" };
+
+  it("givenUnresolvedName_whenLinted_thenOneWarningPerOccurrence", () => {
+    const doc = `{ "a": "{{greetng}}", "b": "{{ greetng }}" }`;
+
+    const found = unresolvedDiagnostics(doc, LOCAL);
+
+    expect(found).toHaveLength(2);
+    expect(found.map((one) => one.severity)).toStrictEqual(["warning", "warning"]);
+    expect(found[0]?.message).toBe("{{greetng}} is not defined in LOCAL");
+    // The span covers the braces too, not just the name: the underline is on the token.
+    expect(doc.slice(found[0]?.from, found[0]?.to)).toBe("{{greetng}}");
+    expect(doc.slice(found[1]?.from, found[1]?.to)).toBe("{{ greetng }}");
+  });
+
+  it("givenResolvedName_whenLinted_thenNoDiagnostic", () => {
+    expect(unresolvedDiagnostics(`{ "a": "{{greeting}}" }`, LOCAL)).toStrictEqual([]);
+  });
+
+  it("givenNoResolverAnswerYet_whenLinted_thenNothingIsReported", () => {
+    // The state an editor whose Preview was never opened stays in, and the reason a keystroke
+    // never costs a round trip.
+    expect(unresolvedDiagnostics(`{ "a": "{{greetng}}" }`, NOTHING_ASKED)).toStrictEqual([]);
+  });
+
+  it("givenLintedDocument_whenMaskIsRead_thenMaskingIsUnchanged", () => {
+    // Decision 23's mask is load-bearing and the linter compiles its own pattern, so a document
+    // the linter has an opinion about must still parse exactly as it did before.
+    const doc = `{ "app_id": {{greetng}}, "next": 2 }`;
+
+    expect(unresolvedDiagnostics(doc, LOCAL)).toHaveLength(1);
+    expect(maskTemplates(doc)).toHaveLength(doc.length);
+    expect(nodes(doc).properties).toStrictEqual(['"app_id"', '"next"']);
   });
 });

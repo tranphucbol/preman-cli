@@ -26,16 +26,23 @@ import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
-import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
+import { CellField, IconButton, toneClass, type FieldTone } from "@preman/desktop/renderer/ui/Controls.js";
 import { AddIcon, CloseIcon, RefreshIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { GLOBALS_READ_ONLY_HINT, TokenBox, useTokenBox } from "@preman/desktop/renderer/ui/TokenBox.js";
+import type { TokenReporter } from "@preman/desktop/renderer/ui/template.js";
 
 const OVERSCAN = 12;
 
 const KEY_COLUMN = "minmax(10rem, 1fr)";
 const LAYER_COLUMN = "minmax(12rem, 2fr)";
 
-const CELL_CLASS =
-  "h-row w-full min-w-0 truncate bg-transparent px-2 font-mono text-xs text-ink placeholder:text-ink-faint focus:bg-control focus:outline-none";
+/**
+ * The add row's key input, and only that. Every value cell is a `CellField`; this one is not,
+ * because it shares its cell with the plus icon and so supplies no left padding of its own - and
+ * because a key is not interpolated, so it is the one input here with no token backdrop to align.
+ */
+const ADD_KEY_CLASS =
+  "h-row w-full min-w-0 truncate bg-transparent font-mono text-xs text-ink placeholder:text-ink-faint focus:bg-control focus:outline-none";
 const HEADER_CELL_CLASS = "px-2 text-2xs font-medium tracking-wide text-ink-faint uppercase";
 /** An absent value, rather than an empty one. A blank cell cannot say which of the two it is. */
 const ABSENT = "—";
@@ -47,7 +54,6 @@ const NEXT_READ = 1;
 const NO_ENVIRONMENT_LABEL = "No environment";
 const LOADING_HINT = "Reading variables…";
 const NO_VARIABLES_HINT = "This workspace defines no variables yet.";
-const READ_ONLY_HINT = "preman has no writer for globals: edit the file and this pane follows.";
 
 export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void }): React.JSX.Element {
   const environment = useSessionStore((state) => state.environment);
@@ -122,6 +128,10 @@ type Commit = (layer: VariableLayer, key: string, value: string) => Promise<void
 
 function Table({ view, onCommit }: { readonly view: VariableView; readonly onCommit: Commit }): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // An environment value can itself be a token - `interpolate.ts` expands one recursively - so the
+  // pane that edits values is also a pane that shows them, and a box opened here is a box opened on
+  // the row above.
+  const box = useTokenBox();
   const { layers, bindings } = view;
   const template = `${KEY_COLUMN} ${layers.map(() => LAYER_COLUMN).join(" ")}`;
 
@@ -164,6 +174,7 @@ function Table({ view, onCommit }: { readonly view: VariableView; readonly onCom
                   layers={layers}
                   template={template}
                   top={item.start}
+                  onToken={box.report}
                   onCommit={onCommit}
                 />
               );
@@ -173,9 +184,15 @@ function Table({ view, onCommit }: { readonly view: VariableView; readonly onCom
       </div>
 
       {writable === undefined ? (
-        <p className="shrink-0 border-t border-line px-gutter py-1.5 text-2xs text-ink-faint">{READ_ONLY_HINT}</p>
+        <p className="shrink-0 border-t border-line px-gutter py-1.5 text-2xs text-ink-faint">
+          {GLOBALS_READ_ONLY_HINT}
+        </p>
       ) : (
         <AddRow layer={writable} template={template} columns={layers.length} onCommit={onCommit} />
+      )}
+
+      {box.clicked !== null && (
+        <TokenBox key={box.clicked.name} name={box.clicked.name} at={box.clicked.at} onDismiss={box.dismiss} />
       )}
     </div>
   );
@@ -193,12 +210,14 @@ function Row({
   layers,
   template,
   top,
+  onToken,
   onCommit,
 }: {
   readonly binding: VariableBinding;
   readonly layers: readonly VariableLayer[];
   readonly template: string;
   readonly top: number;
+  readonly onToken: TokenReporter;
   readonly onCommit: Commit;
 }) {
   return (
@@ -211,7 +230,14 @@ function Row({
         {binding.key}
       </span>
       {layers.map((layer) => (
-        <Cell key={layer.scope} layer={layer} binding={binding} value={layer.values[binding.key]} onCommit={onCommit} />
+        <Cell
+          key={layer.scope}
+          layer={layer}
+          binding={binding}
+          value={layer.values[binding.key]}
+          onToken={onToken}
+          onCommit={onCommit}
+        />
       ))}
     </div>
   );
@@ -221,18 +247,20 @@ function Cell({
   layer,
   binding,
   value,
+  onToken,
   onCommit,
 }: {
   readonly layer: VariableLayer;
   readonly binding: VariableBinding;
   readonly value: string | undefined;
+  readonly onToken: TokenReporter;
   readonly onCommit: Commit;
 }) {
   const tone = toneFor(layer.scope, binding, value !== undefined);
 
   if (!layer.writable) {
     return (
-      <span className={cn("truncate px-2 font-mono text-xs", tone)} title={value ?? EMPTY}>
+      <span className={cn("truncate px-2 font-mono text-xs", toneClass(tone))} title={value ?? EMPTY}>
         {value ?? ABSENT}
       </span>
     );
@@ -243,6 +271,7 @@ function Cell({
       value={value}
       label={`${binding.key} in ${layer.label}`}
       tone={tone}
+      onToken={onToken}
       onCommit={(next) => {
         void onCommit(layer, binding.key, next);
       }}
@@ -250,11 +279,10 @@ function Cell({
   );
 }
 
-/** Winner, loser, or nothing at all. The one place a scope becomes a class. */
-function toneFor(scope: Scope, binding: VariableBinding, present: boolean): string {
-  if (!present) return "text-ink-faint";
-  if (binding.scope === scope) return "text-ink";
-  return "text-ink-faint line-through";
+/** Winner, loser, or nothing at all. The one place a scope becomes a tone. */
+function toneFor(scope: Scope, binding: VariableBinding, present: boolean): FieldTone {
+  if (!present) return "muted";
+  return binding.scope === scope ? "normal" : "struck";
 }
 
 /**
@@ -268,23 +296,25 @@ function ValueCell({
   value,
   label,
   tone,
+  onToken,
   onCommit,
 }: {
   readonly value: string | undefined;
   readonly label: string;
-  readonly tone: string;
+  readonly tone: FieldTone;
+  readonly onToken: TokenReporter;
   readonly onCommit: (value: string) => void;
 }) {
   return (
-    <input
+    <CellField
       // Remounted when the stored value changes, so a write elsewhere - or a script's writeback
       // during a run - reaches a cell the user is not currently typing in.
       key={value}
       defaultValue={value ?? EMPTY}
-      spellCheck={false}
       aria-label={label}
       placeholder={ABSENT}
-      className={cn(CELL_CLASS, tone)}
+      tone={tone}
+      onToken={onToken}
       onBlur={(event) => {
         const next = event.currentTarget.value;
         if (next !== (value ?? EMPTY)) onCommit(next);
@@ -329,7 +359,7 @@ function AddRow({
           spellCheck={false}
           placeholder={`New key in ${layer.label}`}
           aria-label={`New key in ${layer.label}`}
-          className={cn(CELL_CLASS, "px-0")}
+          className={ADD_KEY_CLASS}
           onChange={(event) => {
             setKey(event.currentTarget.value);
           }}

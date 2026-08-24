@@ -79,3 +79,8 @@ parse is the same parse plus one `replace` over a document that is, by that cap,
 A future `{{token}}` feature — completion from the variable scope, a hover showing the resolved
 value, an underline for an unresolved name — now has a language to hang off. That was not the reason
 for this change and it is not promised here.
+
+Two of those three were then built on it. Decision 025 adds the unresolved underline as a `linter()`
+over this language and a click that opens the value for editing; completion is still unpromised. The
+mask stayed untouched: the new work compiles its own narrower pattern, because a name is what a box
+opens on and `{{}}` has no name in it.

@@ -28,6 +28,7 @@ const DECLARED_SURFACE = [
   "listGroups",
   "listRequests",
   "moveNode",
+  "previewText",
   "readEnvironment",
   "readVariables",
   "refreshCatalog",

@@ -12,10 +12,11 @@
  */
 
 import { useState } from "react";
-import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
-import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { CellField, IconButton, type FieldTone } from "@preman/desktop/renderer/ui/Controls.js";
 import { AddIcon, DeleteIcon, FilterIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { type Pair, type PairList, pairsToText, textToPairs } from "@preman/desktop/renderer/model/request.js";
+import type { TokenReporter } from "@preman/desktop/renderer/ui/template.js";
+import { TokenBox, useTokenBox } from "@preman/desktop/renderer/ui/TokenBox.js";
 
 const COMMIT_DEBOUNCE_MS = 150;
 const EMPTY = "";
@@ -25,9 +26,11 @@ const TOGGLE_COLUMN = "1.75rem";
 const ACTION_COLUMN = "1.75rem";
 const GRID_TEMPLATE = `${TOGGLE_COLUMN} ${KEY_COLUMN} ${VALUE_COLUMN} ${ACTION_COLUMN}`;
 
-const CELL_CLASS =
-  "h-row w-full min-w-0 truncate bg-transparent px-2 font-mono text-xs text-ink placeholder:text-ink-faint focus:bg-control focus:outline-none";
 const HEADER_CELL_CLASS = "px-2 text-2xs font-medium tracking-wide text-ink-faint uppercase";
+
+/** A row the user has switched off is still on screen and still not going to be sent. */
+const DISABLED_TONE: FieldTone = "struck";
+const PLAIN_TONE: FieldTone = "normal";
 
 export interface KeyValueGridProps {
   readonly list: PairList;
@@ -89,6 +92,10 @@ function BulkPane({ list, noun, onBulk }: KeyValueGridProps) {
 }
 
 function GridPane({ list, noun, onToggle, onKeyChange, onValueChange, onRemove, onAdd }: KeyValueGridProps) {
+  // One box for the whole grid, not one per row: only one cell can be clicked at a time, and a box
+  // per row is forty popovers waiting to be mounted.
+  const box = useTokenBox();
+
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       <div
@@ -133,6 +140,7 @@ function GridPane({ list, noun, onToggle, onKeyChange, onValueChange, onRemove, 
             value={pair.value}
             disabled={pair.disabled}
             placeholder="value"
+            onToken={box.report}
             onCommit={(next) => {
               onValueChange(pair, next);
             }}
@@ -150,6 +158,9 @@ function GridPane({ list, noun, onToggle, onKeyChange, onValueChange, onRemove, 
         </div>
       ))}
       <AddRow noun={noun} onAdd={onAdd} />
+      {box.clicked !== null && (
+        <TokenBox key={box.clicked.name} name={box.clicked.name} at={box.clicked.at} onDismiss={box.dismiss} />
+      )}
     </div>
   );
 }
@@ -166,22 +177,25 @@ function DebouncedCell({
   value,
   disabled,
   placeholder,
+  onToken,
   onCommit,
 }: {
   readonly value: string;
   readonly disabled: boolean;
   readonly placeholder: string;
+  /** Absent on the key column: core interpolates a header's value and never its name. */
+  readonly onToken?: TokenReporter;
   readonly onCommit: (value: string) => void;
 }) {
   const [timer, setTimer] = useState<number | null>(null);
 
   return (
-    <input
+    <CellField
       key={value}
       defaultValue={value}
-      spellCheck={false}
       placeholder={placeholder}
-      className={cn(CELL_CLASS, disabled && "text-ink-faint line-through")}
+      tone={disabled ? DISABLED_TONE : PLAIN_TONE}
+      onToken={onToken}
       onChange={(event) => {
         const next = event.currentTarget.value;
         if (timer !== null) window.clearTimeout(timer);
@@ -220,12 +234,10 @@ function AddRow({ noun, onAdd }: { readonly noun: string; readonly onAdd: (key: 
       <div className="flex h-row items-center justify-center text-glyph">
         <AddIcon />
       </div>
-      <input
+      <CellField
         value={key}
-        spellCheck={false}
         placeholder={`New ${noun}`}
         aria-label={`New ${noun}`}
-        className={CELL_CLASS}
         onChange={(event) => {
           setKey(event.currentTarget.value);
         }}

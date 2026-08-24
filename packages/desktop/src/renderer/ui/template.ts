@@ -30,16 +30,21 @@
 
 import { jsonLanguage } from "@codemirror/lang-json";
 import { Language, LanguageSupport } from "@codemirror/language";
-import { Prec } from "@codemirror/state";
+import { type Diagnostic, linter } from "@codemirror/lint";
+import { type Extension, Prec, StateEffect, StateField } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
-  type EditorView,
+  EditorView,
   MatchDecorator,
+  type Rect,
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
 import { type Input, Parser, type PartialParse, type TreeFragment } from "@lezer/common";
+
+import { VARIABLE_TOKEN_SOURCE } from "@preman/desktop/engine/protocol.js";
+import { tokenAt } from "@preman/desktop/renderer/model/tokens.js";
 
 /**
  * Two compiled instances of one pattern. A global regex carries `lastIndex`, and `MatchDecorator`
@@ -68,7 +73,7 @@ const MASK_LIMIT_CHARS = 256 * 1024;
  * string or a number would with a `property` key beside it, so its own token it is, solved and gated
  * against those three by `scripts/audit.ts`.
  */
-const TOKEN_COLOR = "var(--syntax-template)";
+export const TOKEN_COLOR = "var(--syntax-template)";
 
 const NO_EXTRA_EXTENSIONS = [] as const;
 
@@ -139,6 +144,121 @@ const tokenPainter = ViewPlugin.fromClass(
 );
 
 /**
+ * What the engine answered about the names in this document, and the environment it answered for.
+ *
+ * `null` is "nobody has asked yet", which is the state an editor whose Preview was never opened
+ * stays in for its whole life: a warning that costs a round trip must not be triggered by a
+ * keystroke, so nothing here ever asks on its own.
+ */
+export interface Unresolved {
+  /** Names that resolved to nothing, as `previewText` reported them. */
+  readonly names: ReadonlySet<string>;
+  /** How the environment is named in the message. */
+  readonly environment: string;
+}
+
+export type UnresolvedNames = Unresolved | null;
+
+/** Typed as `null` and not as `UnresolvedNames`, so a comparison against it narrows. */
+export const NOTHING_ASKED = null;
+
+/** `VARIABLE_TOKEN_SOURCE` has exactly one group, and it is the name. */
+const NAME_GROUP = 1;
+const NO_DIAGNOSTICS: Diagnostic[] = [];
+const WARNING = "warning";
+
+/** How a new answer reaches a live editor. */
+export const setUnresolved = StateEffect.define<UnresolvedNames>();
+
+/**
+ * One field per editor rather than one shared instance.
+ *
+ * A `StateField` holds its value inside an `EditorState`, so sharing one would in fact be correct —
+ * but the field is what decides whether the `linter()` is installed at all, and building it per
+ * caller is what lets an editor that never lints carry neither.
+ */
+export function unresolvedField(): StateField<UnresolvedNames> {
+  return StateField.define<UnresolvedNames>({
+    create: () => NOTHING_ASKED,
+    update: (value, transaction) => {
+      // Last effect wins: two answers in one transaction would mean two previews landed together,
+      // and the later one is the one that describes the current text.
+      let next = value;
+      for (const effect of transaction.effects) if (effect.is(setUnresolved)) next = effect.value;
+      return next;
+    },
+  });
+}
+
+/**
+ * The diagnostics for a document, as a pure function of the text and the answer.
+ *
+ * Split out from the `linter()` because the test suite has no DOM (`vitest.config.ts`), so an
+ * `EditorView` is not something a test here can build. It is also the whole of the behaviour.
+ */
+export function unresolvedDiagnostics(doc: string, unresolved: UnresolvedNames): Diagnostic[] {
+  if (unresolved === NOTHING_ASKED) return NO_DIAGNOSTICS;
+  // Its own instance, per the note above: this pattern is global, and `lastIndex` on a shared one
+  // would make the second call over the same text find nothing.
+  const pattern = new RegExp(VARIABLE_TOKEN_SOURCE, "g");
+  const found: Diagnostic[] = [];
+  for (const match of doc.matchAll(pattern)) {
+    const [whole] = match;
+    const name = match[NAME_GROUP];
+    if (name === undefined || !unresolved.names.has(name)) continue;
+    found.push({
+      from: match.index,
+      to: match.index + whole.length,
+      severity: WARNING,
+      message: `{{${name}}} is not defined in ${unresolved.environment}`,
+    });
+  }
+  return found;
+}
+
+/** What a click on a token reports: the name, and where on screen the token was drawn. */
+export type TokenReporter = (name: string, at: DOMRect) => void;
+
+/**
+ * A rect covering both ends of the token, in viewport coordinates.
+ *
+ * `coordsAtPos` answers per position, and a wrapped token's two ends can be on different lines, so
+ * the union is the honest anchor: the box then hangs off the whole token rather than off whichever
+ * half the click was nearer.
+ */
+function rectBetween(start: Rect, end: Rect): DOMRect {
+  const left = Math.min(start.left, end.left);
+  const right = Math.max(start.right, end.right);
+  return new DOMRect(left, start.top, right - left, end.bottom - start.top);
+}
+
+/**
+ * Clicking a token reports it, and changes nothing else.
+ *
+ * Every handler returns `false`, which is decision 6: CodeMirror still places the caret where the
+ * click landed. A gesture that stole the click would make a body the one text field in the app
+ * where you cannot put the cursor in the middle of a name.
+ */
+export function tokenClicks(report: TokenReporter): Extension {
+  return EditorView.domEventHandlers({
+    mousedown: (event, view) => {
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos === null) return false;
+      // Hit-tested against the clicked line rather than the whole document: the name group can
+      // cross a newline, and a token written across two lines is not one anybody meant.
+      const line = view.state.doc.lineAt(pos);
+      const token = tokenAt(line.text, pos - line.from);
+      if (token === null) return false;
+      const start = view.coordsAtPos(line.from + token.from);
+      const end = view.coordsAtPos(line.from + token.to);
+      if (start === null || end === null) return false;
+      report(token.name, rectBetween(start, end));
+      return false;
+    },
+  });
+}
+
+/**
  * `Prec.highest` is not a detail, and it is the opposite of what reading the docs suggests.
  * Overlapping mark decorations nest, and `color` on the *innermost* span is what the reader sees —
  * an outer span loses, `!important` or not, because inheritance always loses to a declaration on
@@ -146,7 +266,17 @@ const tokenPainter = ViewPlugin.fromClass(
  * `Prec.high`, and at `Prec.low` this one wrapped it and the tokens came out number-amber and
  * string-green. `Prec.highest` puts this inside it, where it wins. Lower this and the tokens
  * silently stop looking like tokens, with nothing failing to say so.
+ *
+ * The optional field is how an unresolved name becomes visible before send (decision 10). A
+ * `linter()` and no `lintGutter()`: the wavy underline and the hover message are what is wanted,
+ * and a gutter would change the editor's layout for a class of problem the Preview pane above
+ * already lists in a banner. The field is an argument rather than something this module owns, so
+ * the language stays a pure function of what it was handed and the pane keeps the async.
  */
-export function jsonTemplate(): LanguageSupport {
-  return new LanguageSupport(templateJsonLanguage, [Prec.highest(tokenPainter)]);
+export function jsonTemplate(unresolved?: StateField<UnresolvedNames>): LanguageSupport {
+  const lint =
+    unresolved === undefined
+      ? NO_EXTRA_EXTENSIONS
+      : [unresolved, linter((view) => unresolvedDiagnostics(view.state.doc.toString(), view.state.field(unresolved)))];
+  return new LanguageSupport(templateJsonLanguage, [Prec.highest(tokenPainter), ...lint]);
 }

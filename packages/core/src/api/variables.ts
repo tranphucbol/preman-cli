@@ -63,17 +63,29 @@ function holders(store: VariableStore, key: string): Scope[] {
   return SCOPES.filter((scope) => store.getIn(scope, key) !== undefined);
 }
 
+export interface ReaderScope {
+  ws: Workspace;
+  /** The chosen environment, or `undefined` when none is. */
+  env: EnvironmentEntry | undefined;
+  globals: Record<string, string>;
+  /** The two persistable layers, in the precedence {@link VariableStore} walks. */
+  store: VariableStore;
+}
+
 /**
- * The scope chain behind a `{{token}}`, for a reader rather than a run.
+ * The layers a reader resolves against, for anything that answers a question about the
+ * workspace rather than running against it: globals, plus the chosen environment when there
+ * is one.
  *
  * `null` and `undefined` both mean "no environment": an inspection has no ambiguity to
  * resolve, so unlike a run it never adopts a sole environment and never asks.
  *
- * Only the scopes a workspace can persist are reported. `data` and `local` exist solely
- * for the duration of a run, and `collection` is declared by {@link SCOPES} but no
- * workspace file populates it.
+ * Only the scopes a workspace can persist are here. `data` and `local` exist solely for the
+ * duration of a run, and `collection` is declared by {@link SCOPES} but no workspace file
+ * populates it. Shared with `previewText` so a listing and a preview can never describe
+ * different chains.
  */
-export function readVariables(dir: string, name: string | null | undefined): VariableView {
+export function readerScope(dir: string, name: string | null | undefined): ReaderScope {
   const ws = requireWorkspace(dir);
   const env = name == null ? undefined : requireEnvironment(ws, name);
   const globals = loadGlobals(ws);
@@ -82,6 +94,16 @@ export function readVariables(dir: string, name: string | null | undefined): Var
     globals,
     ...(env === undefined ? {} : { environment: env.values }),
   });
+
+  return { ws, env, globals, store };
+}
+
+/**
+ * The scope chain behind a `{{token}}`, for a reader rather than a run. See
+ * {@link readerScope} for which layers are in play and why.
+ */
+export function readVariables(dir: string, name: string | null | undefined): VariableView {
+  const { ws, env, globals, store } = readerScope(dir, name);
 
   const layers: VariableLayer[] = [
     { scope: "globals", label: GLOBALS_LABEL, file: globalsFile(ws), writable: false, values: globals },

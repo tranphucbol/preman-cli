@@ -52,7 +52,7 @@ import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
 import { CONSOLE_MAX_LINES, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { applyExternalChange, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
-import { isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
+import { DEFAULT_BODY_VIEW, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 
 import { cloneFixtureHttpWorkspace, cloneFixtureWorkspace, type ClonedWorkspace } from "../helpers.js";
 
@@ -303,6 +303,39 @@ describe("tab isolation", () => {
     const tab = useTabsStore.getState().tabs.get(PING_ID);
     expect(tab?.edits).toHaveLength(1);
     expect(tab?.edits[0]?.value).toBe("http");
+  });
+});
+
+describe("which body view a tab opens in", () => {
+  beforeEach(resetStores);
+  afterEach(resetStores);
+
+  it("givenTabInPreview_whenReopened_thenViewIsEdit", () => {
+    const node = { id: PING_ID, name: "Ping", kind: "request" } as const;
+    useTabsStore.getState().open(node);
+    useTabsStore.getState().setBodyView(PING_ID, "preview");
+    expect(useTabsStore.getState().tabs.get(PING_ID)?.bodyView).toBe("preview");
+
+    // The whole store is cleared and the node opened again, which is what a workspace switch and a
+    // session restore both do. Preview is a place the user is looking, not a property of the
+    // request, so it must not survive that — and the only way it could is if it were persisted.
+    useTabsStore.getState().clear();
+    useTabsStore.getState().open(node);
+
+    expect(useTabsStore.getState().tabs.get(PING_ID)?.bodyView).toBe(DEFAULT_BODY_VIEW);
+  });
+
+  it("givenTwoOpenTabs_whenOneSwitchesToPreview_thenTheOtherStaysInEdit", () => {
+    const tabs = useTabsStore.getState();
+    tabs.open({ id: PING_ID, name: "Ping", kind: "request" });
+    tabs.open({ id: PROFILE_ID, name: "Profile", kind: "request" });
+
+    useTabsStore.getState().setBodyView(PING_ID, "preview");
+
+    // The view is per tab because the switch is drawn per tab. A shared one would mean opening a
+    // second request showed a preview of a body nobody asked to resolve.
+    expect(useTabsStore.getState().tabs.get(PING_ID)?.bodyView).toBe("preview");
+    expect(useTabsStore.getState().tabs.get(PROFILE_ID)?.bodyView).toBe(DEFAULT_BODY_VIEW);
   });
 });
 

@@ -13,6 +13,7 @@ import type { SnapshotEnvironment } from "@preman/core/api/inspect.js";
 import type { GitFileStatus, GitStatus } from "@preman/core/api/git.js";
 import type { GrepMatch, GrepResult } from "@preman/core/api/grep.js";
 import type { FieldEdit, RequestKind } from "@preman/core/api/mutate.js";
+import type { TextPreview } from "@preman/core/api/preview.js";
 import type { VariableBinding, VariableLayer, VariableView } from "@preman/core/api/variables.js";
 import type { ExitCode } from "@preman/core/errors.js";
 import type { Scope } from "@preman/core/vars/store.js";
@@ -36,6 +37,7 @@ export type {
   RunEvent,
   Scope,
   SnapshotEnvironment,
+  TextPreview,
   VariableBinding,
   VariableLayer,
   VariableView,
@@ -173,6 +175,11 @@ export type EngineRequest =
   | { id: number; kind: "cancel"; runId: string }
   | { id: number; kind: "variables"; environment: string | null }
   | { id: number; kind: "write-variable"; write: VariableWrite }
+  /**
+   * What a text would become on the next run. Not a field on `variables`: one is a property
+   * of the workspace, the other is a function of a string that changes on every keystroke.
+   */
+  | { id: number; kind: "preview"; text: string; environment: string | null }
   | { id: number; kind: "run-report"; runId: string; format: ReportFormat }
   /**
    * Every method the workspace's declared protos offer. With a `nodeId` each choice also
@@ -213,6 +220,7 @@ export interface EngineResults {
   variables: VariableView;
   /** The re-read view, so one edit costs one round trip and cannot show a stale winner. */
   "write-variable": VariableView;
+  preview: TextPreview;
   "run-report": RunReportText;
   "list-methods": MethodChoices;
   /** The body text itself, ready to drop into `message.content`. */
@@ -280,6 +288,16 @@ export const EXIT_CODES = {
   BUSINESS: 3,
   TEST: 4,
 } as const satisfies Record<string, ExitCode>;
+
+/**
+ * The wire's own copy of core's token pattern, as a source string rather than a `RegExp`: a global
+ * regex carries `lastIndex`, so a shared instance is a bug two callers apart. Pinned to core's
+ * `TOKEN_SOURCE` by `test/desktop.protocol.test.ts`.
+ *
+ * Deliberately not `ui/template.ts`'s `MASK_PATTERN`, which is wider — it masks `{{}}` too, and it
+ * has no capture group, because the masker needs a length and not a name.
+ */
+export const VARIABLE_TOKEN_SOURCE = String.raw`\{\{\s*([^{}]+?)\s*\}\}`;
 
 /**
  * The gap left between siblings, and the stand-in for a sibling that declares no

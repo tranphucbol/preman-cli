@@ -13,3 +13,5 @@ values:
   - key: disabled_var
     value: nope
     enabled: false
+  - key: nested_token # a value that is itself a token: exercises recursive expansion
+    value: '{{greeting}} world'

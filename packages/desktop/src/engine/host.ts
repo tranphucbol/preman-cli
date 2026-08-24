@@ -30,6 +30,7 @@ import {
   replaceFileText,
 } from "@preman/core/api/mutate.js";
 import { writeEnvironmentValue } from "@preman/core/api/environments.js";
+import { previewText } from "@preman/core/api/preview.js";
 import { runSelection, type RunSelectionArgs, type RunSelectionResult } from "@preman/core/api/run.js";
 import { readVariables, type VariableView } from "@preman/core/api/variables.js";
 import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
@@ -549,6 +550,8 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         return readVariables(root, request.environment);
       case "write-variable":
         return writeVariable(request.write);
+      case "preview":
+        return previewText(root, request.environment, request.text);
       case "run-report":
         return runReport(request.runId, request.format);
       case "list-methods":

@@ -158,6 +158,17 @@ paints it with a decoration, and the audit holds it further from `string`, `numb
 than any two verbs have to be from each other, because it sits on the same line as all three.
 Decision 23 is why.
 
+`--syntax-template` is now the token for a `{{token}}` **wherever one is editable**, not only in the
+editor, and `ui/template.ts` exports it as `TOKEN_COLOR` so there is one declaration of it. A plain
+field cannot carry a decoration, so `ui/TokenOverlay.tsx` paints a pill behind the text instead: the
+same colour at 22% in OKLab, on a backdrop the input sits transparently on top of. A token is also
+clickable in both — the box that opens is `ui/TokenBox.tsx`, on `Menu.tsx`'s floating surface below.
+An unresolved name gets CodeMirror's own `linter()` underline rather than a colour of its own,
+because a warning squiggle is a shape the editor already speaks and a second red would have to be
+audited against the other 36. Decision 25 is why. The pill is opt-in per call site: `Field` and
+`CellField` paint one only where `onToken` is passed, because the search box and the rename dialog
+hold text nothing will ever interpolate.
+
 ## Floating surfaces
 
 Menus, select popups, dialogs and tooltips are one visual family, and they look alike because to
