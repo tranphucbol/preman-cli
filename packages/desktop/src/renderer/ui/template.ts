@@ -63,8 +63,11 @@ const MASK_DIGIT = "0";
  * Masking reads the whole document once per parse. That is free for a request body and not free for
  * a response, so past this size the text is handed to the grammar untouched — a document that big
  * is not one somebody typed a token into.
+ *
+ * Exported because the beautifier bounds itself by the same number: it validates through
+ * `maskTemplates`, so the size at which masking stops being free is the size at which it declines.
  */
-const MASK_LIMIT_CHARS = 256 * 1024;
+export const MASK_LIMIT_CHARS = 256 * 1024;
 
 /**
  * `--syntax-macro` was the obvious reuse — a macro is also a name expanded before anything evaluates

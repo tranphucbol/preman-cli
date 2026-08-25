@@ -154,6 +154,13 @@ lives, so the first one can be made from there too. The context menu on a reques
 comments, scripts and examples included — to `Foo copy` directly below the original and opens it.
 Duplicate copies what is on disk, so save an edited tab first.
 
+A raw HTTP body and a gRPC message can be re-indented from the **Beautify** glyph at the right of
+their toolbar. It rewrites whitespace and nothing else, so a bare `{{token}}`, `1e3`, `1.0` and a
+twenty-digit id all survive byte for byte — a body is bytes that go on the wire, and a formatter that
+reserialises them sends a different request. `Cmd+Z` reverts it, and a body it cannot read says so
+rather than being quietly changed. The response pane's pretty-print toggle is the same gesture on the
+other half of the app; that one does reserialise, because a response has already been sent.
+
 ```sh
 bun run desktop          # build the app and launch it
 bun run desktop:package  # build, then wrap it into packages/desktop/release

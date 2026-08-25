@@ -37,6 +37,7 @@ These are the decisions behind the desktop app. The CLI predates the practice.
 | [027](027-the-app-reports-its-own-phases.md)                        | The app reports its own phases                                       |
 | [028](028-the-create-dialog-asks-what-before-it-asks-name.md)       | The create dialog asks what before it asks name                      |
 | [029](029-the-engine-loads-the-send-path-on-demand.md)              | The engine loads the send path on demand                             |
+| [031](031-an-authored-body-is-re-indented-not-reserialised.md)      | An authored body is re-indented, not reserialised                    |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -65,5 +66,11 @@ defined to discard exactly the launch where that is visible. It is also the firs
 between modules for what the module's imports cost rather than for what the function does, and the
 first whose gate is a source-graph assertion instead of a number — because the number it would
 assert is only observable on a machine whose page cache has just been destroyed.
+
+031 is the second record to answer 023, and the first to refuse a shortcut on the grounds of what it
+would send: the app already had a JSON formatter, and reusing it on a body somebody is still writing
+turns a bare `{{token}}` into `0` and a twenty-digit id into a rounded one. It costs a hand-written
+scanner and inherits 023's two holes as two bodies that decline to format, and it says so in the
+record rather than only in the module.
 
 `TEMPLATE.md` is the shape of a new one.

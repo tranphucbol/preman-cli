@@ -45,7 +45,9 @@ import {
   readText,
 } from "@preman/desktop/renderer/model/request.js";
 import { listMethods, messageSkeleton, type Failure } from "@preman/desktop/renderer/actions.js";
+import { formatJsonTemplate } from "@preman/desktop/renderer/model/format.js";
 import type { PaletteItem } from "@preman/desktop/renderer/model/palette.js";
+import { flushPending } from "@preman/desktop/renderer/pending.js";
 import { useAncestors, useNode } from "@preman/desktop/renderer/stores/catalog.js";
 import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import {
@@ -79,6 +81,7 @@ import {
   CancelIcon,
   CaretRightIcon,
   CollectionIcon,
+  FormatIcon,
   GenerateIcon,
   GLYPH_CLASS,
   InsecureIcon,
@@ -154,6 +157,9 @@ const BODY_VIEW_LABELS: Record<BodyView, string> = {
  * disabled control says the state is reachable.
  */
 const PREVIEWABLE_BODY_TYPES: ReadonlySet<BodyType> = new Set<BodyType>(["raw", "graphql"]);
+
+/** The one body type that is a single authored document, and so the only one Beautify acts on. */
+const RAW_BODY: BodyType = "raw";
 
 /**
  * What each script phase is called in the interface. The `scripts` entry's `type` is what the file
@@ -405,7 +411,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
               onFail={onFail}
             />
           ) : (
-            <BodyPane nodeId={tab.nodeId} view={tab.bodyView} data={data} apply={apply} />
+            <BodyPane nodeId={tab.nodeId} view={tab.bodyView} data={data} apply={apply} onFail={onFail} />
           )}
         </Pane>
 
@@ -749,6 +755,9 @@ function FieldRows({
  * A nested `Tabs.Root` rather than a pair of buttons, so the underline that says which one is
  * current is the app's one way of saying that, and so the two triggers are one arrow-key group.
  * No new row: a bar sized by a two-item switch is a tier `docs/design-system.md` does not have.
+ *
+ * It sets no alignment of its own. It used to pin itself right with `ml-auto`, which made it the
+ * row's spacer and left no way to put an action group after it; where it sits is the caller's.
  */
 function ViewSwitch({ nodeId, view }: { readonly nodeId: string; readonly view: BodyView }) {
   /* Its own identity, not the section tabs': one `layoutId` across both lists would send the
@@ -756,7 +765,6 @@ function ViewSwitch({ nodeId, view }: { readonly nodeId: string; readonly view: 
   const underline = useTabUnderline();
   return (
     <Tabs.Root
-      className="ml-auto"
       value={view}
       onValueChange={(next) => {
         useTabsStore.getState().setBodyView(nodeId, next as BodyView);
@@ -844,7 +852,70 @@ function TemplateEditor({
   );
 }
 
+/**
+ * The right-hand end of a toolbar that has actions in it.
+ *
+ * `gap-1` for adjacent glyphs inside the row's own `gap-2`, matching the pinned group in
+ * `App.tsx`. `ml-auto` is here rather than on any one control so the row has exactly one spacer.
+ */
+const ACTION_GROUP_CLASS = "ml-auto flex shrink-0 items-center gap-1";
+
+const BEAUTIFY_LABEL = "Beautify";
+const BEAUTIFY_REFUSED = "Beautify left this body as it is.";
+
+/**
+ * Re-indent the text one of these editors is holding.
+ *
+ * Never `disabled`: a disabled button emits no pointer events, so it could not tell you why
+ * (`docs/design-system.md:125-128`), and "not valid JSON" is a thing the author wants told rather
+ * than greyed out. It is absent in `Preview`, where there is nothing to edit.
+ *
+ * The write goes through the store like every other edit, so it arrives as the whole-document
+ * replacement in `CodeEditor` — which means `Cmd+Z` reverts a reformat, and which also means the
+ * editor scrolls to the top. That trade is ADR 031's.
+ */
+function BeautifyButton({
+  nodeId,
+  path,
+  onFail,
+}: {
+  readonly nodeId: string;
+  readonly path: readonly string[];
+  readonly onFail: (failure: Failure | null) => void;
+}) {
+  return (
+    <IconButton
+      label={BEAUTIFY_LABEL}
+      onClick={() => {
+        // The store is not the newest text while the caret is in the editor: `CodeEditor` commits
+        // on blur and after a debounce. Asking for that commit now is the seam `Cmd+S` uses;
+        // trusting mousedown to blur, blur to commit and React to flush before `click` is three
+        // assumptions deep, and being wrong means dropping the last keystrokes.
+        flushPending();
+        const store = useTabsStore.getState();
+        const tab = store.tabs.get(nodeId);
+        if (tab === undefined) return;
+
+        const current = readText(project(tab.saved?.data, tab.edits), path);
+        const outcome = formatJsonTemplate(current);
+        if (!outcome.ok) {
+          onFail({ message: BEAUTIFY_REFUSED, details: [outcome.reason] });
+          return;
+        }
+        // The same guard the commit callbacks use: reformatting formatted text is not an edit, and
+        // should not dirty the tab.
+        if (outcome.text !== current) store.setField(nodeId, path, outcome.text);
+      }}
+    >
+      <FormatIcon />
+    </IconButton>
+  );
+}
+
 const MESSAGE_HINT = "The request message, as JSON. {{tokens}} interpolate before the call.";
+const GENERATE_LABEL = "Generate example";
+/** A span rather than the glyph's tooltip: a disabled button never opens one. */
+const METHOD_PATH_HINT = "Set a method path first: the example comes from its proto.";
 const REPLACE_MESSAGE_WARNING =
   "The example is generated from the proto, so whatever is in the message now is replaced. Nothing is written to disk until you save.";
 
@@ -858,6 +929,13 @@ const REPLACE_MESSAGE_WARNING =
  *
  * Replacing a non-empty message asks first. It is the one destructive edit this pane makes, and
  * the message is often the only hand-written part of a request.
+ *
+ * That button is a glyph, in the action group at the row's right beside Beautify, so the switch
+ * that says which view you are looking at can sit next to the pane it labels. The cost is real and
+ * was accepted: generating is most valuable to whoever has never seen it, who is exactly the person
+ * a tooltip does not reach. Restoring the label is one word of JSX. The method-path hint moved into
+ * that group too — once the button is a glyph, the sentence explaining why it cannot be pressed has
+ * to sit next to it rather than at the row's other end.
  */
 function MessagePane({
   nodeId,
@@ -887,30 +965,30 @@ function MessagePane({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
-        <Button
-          tier="chrome"
-          disabled={methodPath.length === 0}
-          onClick={() => {
-            if (message.trim().length === 0) {
-              generate();
-              return;
-            }
-            onAsk({
-              kind: "confirm",
-              title: "Replace the message with an example?",
-              body: REPLACE_MESSAGE_WARNING,
-              submit: "Replace",
-              onConfirm: generate,
-            });
-          }}
-        >
-          <GenerateIcon />
-          Generate example
-        </Button>
-        {methodPath.length === 0 && (
-          <span className="text-2xs text-ink-faint">Set a method path first: the example comes from its proto.</span>
-        )}
         <ViewSwitch nodeId={nodeId} view={view} />
+        <div className={ACTION_GROUP_CLASS}>
+          {methodPath.length === 0 && <span className="text-2xs text-ink-faint">{METHOD_PATH_HINT}</span>}
+          <IconButton
+            label={GENERATE_LABEL}
+            disabled={methodPath.length === 0}
+            onClick={() => {
+              if (message.trim().length === 0) {
+                generate();
+                return;
+              }
+              onAsk({
+                kind: "confirm",
+                title: "Replace the message with an example?",
+                body: REPLACE_MESSAGE_WARNING,
+                submit: "Replace",
+                onConfirm: generate,
+              });
+            }}
+          >
+            <GenerateIcon />
+          </IconButton>
+          {view !== "preview" && <BeautifyButton nodeId={nodeId} path={FIELD.message} onFail={onFail} />}
+        </div>
       </div>
       <TemplateEditor
         view={view}
@@ -929,14 +1007,19 @@ function BodyPane({
   view,
   data,
   apply,
+  onFail,
 }: {
   readonly nodeId: string;
   readonly view: BodyView;
   readonly data: unknown;
   readonly apply: Apply;
+  readonly onFail: (failure: Failure | null) => void;
 }) {
   const type = readBodyType(data);
   const previewable = PREVIEWABLE_BODY_TYPES.has(type);
+  // Raw only. `graphql`'s toolbar sits above two editors, so one button here could not say which
+  // of them it formats; the pair grids have no whitespace to fix.
+  const beautifiable = type === RAW_BODY && view !== "preview";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -957,6 +1040,11 @@ function BodyPane({
           ))}
         </Select>
         {previewable && <ViewSwitch nodeId={nodeId} view={view} />}
+        {beautifiable && (
+          <div className={ACTION_GROUP_CLASS}>
+            <BeautifyButton nodeId={nodeId} path={FIELD.bodyContent} onFail={onFail} />
+          </div>
+        )}
       </div>
       {/* A body type without text to preview falls back to `Edit` rather than showing an empty
           preview: the switch it was set from is not on screen any more. */}

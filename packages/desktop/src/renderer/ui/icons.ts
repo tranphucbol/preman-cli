@@ -33,10 +33,12 @@ export {
   GitBranch as BranchIcon,
   Globe as EnvironmentIcon,
   Key as AuthIcon,
-  Lightning as GenerateIcon,
   ListMagnifyingGlass as PaletteIcon,
   LockSimple as SecureIcon,
   LockSimpleOpen as InsecureIcon,
+  // A bolt with no label, in a pane whose primary action is Send, reads as "run this"; a wand
+  // reads as "make one for me", which is what generating an example does.
+  MagicWand as GenerateIcon,
   MagnifyingGlass as SearchIcon,
   PencilSimple as RenameIcon,
   Play as SendIcon,
