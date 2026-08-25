@@ -5,7 +5,9 @@
  *
  * The theme reads the same CSS variables as the rest of the app rather than restating
  * hex values, so retuning a token retunes the editor with it. That is the whole reason
- * this is a `EditorView.theme` over variables and not a stock CodeMirror theme package.
+ * this is a `EditorView.theme` over variables and not a stock CodeMirror theme package. It lives
+ * in `editorTheme.ts`, which reaches nothing, so the two rules in it that are claims about
+ * CodeMirror's cascade can be asserted without a window.
  *
  * Uncontrolled, like every other input here: the caller passes `value` for the *document
  * it wants loaded* and gets `onCommit` on blur. Pushing a new document into a live editor
@@ -33,9 +35,9 @@ import {
   placeholder as placeholderExtension,
 } from "@codemirror/view";
 import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
-import type { Variant } from "@preman/desktop/renderer/appearance/theme.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { SELECTING_ATTRIBUTE, THEMES } from "@preman/desktop/renderer/ui/editorTheme.js";
 import { HIGHLIGHT_STYLE } from "@preman/desktop/renderer/ui/highlight.js";
 import {
   NOTHING_ASKED,
@@ -66,101 +68,6 @@ const LANGUAGE_EXTENSION: Record<CodeLanguage, (unresolved?: StateField<Unresolv
   javascript: () => javascript(),
   xml: () => xml(),
   text: () => [],
-};
-
-/**
- * The document's size is a reading preference the settings pane writes; the find panel's is not.
- * A find panel that grew to 20px because someone wanted a bigger document would be a control
- * sized by the wrong question, so it stays on the density scale like every other control.
- */
-const FONT_SIZE = "var(--editor-font-size)";
-const PANEL_FONT_SIZE = "var(--text-xs)";
-const PANEL_LABEL_SIZE = "var(--text-2xs)";
-const LINE_HEIGHT = "1.55";
-const GUTTER_MIN_WIDTH = "2.25rem";
-
-/**
- * Kept as one object so the whole editor's chrome is legible in one place. Colours are
- * `var(--color-*)` because the palette was contrast-audited once and must not be forked.
- */
-const THEME_SPEC = {
-  "&": {
-    backgroundColor: "transparent",
-    color: "var(--color-ink)",
-    fontSize: FONT_SIZE,
-    height: "100%",
-  },
-  ".cm-scroller": {
-    fontFamily: "var(--font-mono)",
-    lineHeight: LINE_HEIGHT,
-    overflow: "auto",
-  },
-  ".cm-content": { padding: "6px 0", caretColor: "var(--color-accent)" },
-  ".cm-line": { padding: "0 10px" },
-  "&.cm-focused": { outline: "none" },
-  ".cm-gutters": {
-    backgroundColor: "transparent",
-    color: "var(--color-ink-faint)",
-    border: "none",
-    minWidth: GUTTER_MIN_WIDTH,
-  },
-  ".cm-gutterElement": { padding: "0 6px 0 8px" },
-  ".cm-activeLine": { backgroundColor: "var(--color-hover)" },
-  ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--color-ink-dim)" },
-  ".cm-foldPlaceholder": {
-    backgroundColor: "var(--color-control)",
-    border: "1px solid var(--color-line-strong)",
-    color: "var(--color-ink-dim)",
-    padding: "0 4px",
-    borderRadius: "var(--radius-xs)",
-  },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
-    backgroundColor: "var(--color-selected)",
-  },
-  ".cm-cursor": { borderLeftColor: "var(--color-accent)" },
-  ".cm-matchingBracket, &.cm-focused .cm-matchingBracket": {
-    backgroundColor: "var(--color-control)",
-    outline: "1px solid var(--color-line-strong)",
-  },
-  ".cm-selectionMatch": { backgroundColor: "var(--color-control)" },
-  ".cm-placeholder": { color: "var(--color-ink-faint)" },
-  // The find widget ships as a browser-styled form. Retuned here for the same reason
-  // Radix is retuned: a stock panel in a dense tool reads as somebody else's software.
-  ".cm-panels": { backgroundColor: "var(--color-panel)", color: "var(--color-ink)" },
-  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--color-line)" },
-  ".cm-search": { display: "flex", alignItems: "center", gap: "6px", padding: "5px 8px" },
-  ".cm-search label": { display: "inline-flex", alignItems: "center", gap: "4px", fontSize: PANEL_LABEL_SIZE },
-  ".cm-textfield": {
-    backgroundColor: "var(--color-control)",
-    border: "1px solid var(--color-line-strong)",
-    borderRadius: "var(--radius-sm)",
-    color: "var(--color-ink)",
-    fontSize: PANEL_FONT_SIZE,
-    padding: "2px 6px",
-  },
-  ".cm-button": {
-    backgroundColor: "var(--color-control)",
-    backgroundImage: "none",
-    border: "1px solid var(--color-line-strong)",
-    borderRadius: "var(--radius-sm)",
-    color: "var(--color-ink)",
-    fontSize: PANEL_LABEL_SIZE,
-    padding: "2px 8px",
-  },
-};
-
-/**
- * Two themes over one spec, differing only in the flag.
- *
- * Nothing in the rules above depends on the variant — they are all `var(--color-*)`, and those are
- * rewritten by `apply.ts` — but `dark` is not a colour. It decides which of CodeMirror's own
- * built-in styles apply and it puts `cm-dark` on the element, which is what a future extension
- * shipping its own light and dark rules will look at. It is the one thing about the editor a
- * custom property cannot express, and therefore the one thing that needs a compartment.
- */
-const THEMES: Readonly<Record<Variant, Extension>> = {
-  dark: EditorView.theme(THEME_SPEC, { dark: true }),
-  light: EditorView.theme(THEME_SPEC, { dark: false }),
 };
 
 /**
@@ -199,6 +106,7 @@ function baseExtensions(
     bracketMatching(),
     closeBrackets(),
     highlightActiveLine(),
+    SELECTING_ATTRIBUTE,
     highlightSelectionMatches(),
     syntaxHighlighting(HIGHLIGHT_STYLE, { fallback: true }),
     // An editor showing one window of a much larger document must not offer to search it:

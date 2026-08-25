@@ -64,7 +64,8 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
     stores/                      catalog, tabs, runs, session, appearance - one per subscription
     model/                       pure, no React: request fields, drop plans, body windows, responses
     ui/                          cn, icons, Menu, Controls, Banner, Dialog, CodeEditor, highlight,
-                                 template (the {{token}}-aware JSON language)
+                                 editorTheme (the editor's chrome, reaching nothing so it is
+                                 testable), template (the {{token}}-aware JSON language)
     panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid, ResponsePane,
                                  BodyViewer, ResponseFailure, ConsoleDrawer, SettingsPane
   scripts/                       run by hand, never at build time

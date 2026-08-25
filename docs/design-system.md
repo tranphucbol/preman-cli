@@ -130,6 +130,14 @@ Five surfaces, darkest to lightest, and each has one job.
 | `bg-hover`    | pointer hover, and a highlighted menu item                           |
 | `bg-selected` | the selected row — tinted toward the accent, not a lighter grey      |
 
+`bg-selected` is a **row** tint and stops there. It sits at hover luminance so that a 5,000-row tree
+does not shimmer, which costs it contrast — about 1.2:1 against the panel — and a row can afford
+that because it is full-width and carries its own text. A band drawn behind four characters cannot:
+it is the only indicator there is, and 1.4.11 asks 3:1 of exactly that. So the editor's selection
+band is the accent mixed down instead (`ui/editorTheme.ts`), which is the one colour every palette is
+already audited readable on canvas and panel, and therefore an answer for all forty-three rather
+than a forty-fourth token to generate. Reach for `bg-selected` for a row; never for a highlight.
+
 Three ink tiers, all of which clear 4.5:1 on all five surfaces. `text-ink` is content,
 `text-ink-dim` is a label, `text-ink-faint` is metadata you still have to read: durations, byte
 counts, paths.
