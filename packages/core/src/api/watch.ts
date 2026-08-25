@@ -21,10 +21,17 @@ export interface WatchOptions {
 /**
  * Watch a workspace for external edits, coalescing bursts into one call.
  *
- * Recursive watching is native on macOS and Windows. Where it is not — Linux — Node
- * rejects `recursive: true`, and rather than build a per-directory watcher tree that
- * silently misses new subdirectories, this reports the degradation and watches the
+ * Recursive watching is native on macOS and Windows, and since Node 20.13 it is accepted on
+ * Linux too — so the fallback below now fires only where `watch` throws outright, not on Linux
+ * as an earlier version of this comment claimed. Rather than build a per-directory watcher tree
+ * that silently misses new subdirectories, the fallback reports the degradation and watches the
  * top level only. The caller decides what to tell the user.
+ *
+ * Being accepted on Linux is not the same as being equivalent there. Node backs recursion with
+ * one inotify watch per file, and a `rename` over a watched file drops its watch for good, so
+ * every external edit to a file the app has already saved — and `workspace/atomic.ts` saves by
+ * temp-plus-rename — is missed. Nothing here detects that, so nothing reports it: on Linux this
+ * watcher is silently partial, which `docs/decisions/032` records rather than fixes.
  */
 export function watchWorkspace(
   root: string,

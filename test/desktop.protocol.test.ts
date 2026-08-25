@@ -65,6 +65,16 @@ const ECHO_SPEC_LABEL = "src/main/proto/echo/echo.proto";
 /** Exactly what `Ping.request.yaml` already carries, which is the point of the assertion. */
 const PING_LOCATION = "../../../src/main/proto/echo/echo.proto";
 const GIT_SETTLE_MS = 10_000;
+/**
+ * Node's recursive `fs.watch` on Linux holds one inotify watch per file, and a `rename` over that
+ * file drops it for good. Every workspace write is a temp-plus-rename (`workspace/atomic.ts`), so
+ * an external edit that *follows* the app's own save is undetectable there however long we poke.
+ * Reproduced outside preman: replace a file via temp+rename, then write it in place, and node
+ * reports nothing where bun reports the write. macOS keeps delivering because FSEvents watches
+ * paths rather than inodes. The two sibling cases below still cover the watcher on Linux; only the
+ * one that needs a second event *after* a save cannot pass. See `docs/decisions/032`.
+ */
+const WATCH_SURVIVES_OWN_SAVE = process.platform !== "linux";
 
 const SUITE_ID = "postman/collections/admin/suite";
 const QC_ENV_PATH = "postman/environments/QC.environment.yaml";
@@ -660,7 +670,7 @@ describe("the engine host protocol", () => {
       TIMEOUT_MS,
     );
 
-    it(
+    it.skipIf(!WATCH_SURVIVES_OWN_SAVE)(
       "givenAppWroteFileThenSomeoneElseDid_whenWatcherFires_thenExternalChangeIsPublished",
       async () => {
         const repo = cloneFixtureWorkspace();
@@ -672,10 +682,10 @@ describe("the engine host protocol", () => {
           // Let the app's own write settle first, so the next report the watcher makes is
           // unambiguously about someone else's edit.
           const settledAt = app.pushesOf("git-status").length;
-          // Awaited, not `void`: an in-flight app write that lands after the external one below
+          // Awaited, not `void`: an app write still in flight during the external edit below
           // rewrites the file to the app's own bytes and re-arms the host's `written` map, so the
-          // external edit is filtered as ours and the poke can never recover. That is what made
-          // this the only watcher case to fail on a slow CI runner.
+          // edit would be filtered as ours. Serialising the phases removes that race — it is not
+          // why Linux fails, which is the watcher itself and is why this case is skipped there.
           await pokeUntil(
             async () => {
               await app.send("write-node", {

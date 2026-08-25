@@ -7,39 +7,40 @@ something to point at.
 These are the decisions behind the desktop app, and from 030 the pipeline that ships both of them.
 The CLI's own design predates the practice.
 
-| #                                                                   | Decision                                                             |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| [001](001-electron-not-tauri.md)                                    | Electron, not Tauri                                                  |
-| [002](002-three-processes-and-a-direct-port.md)                     | Three processes, and a direct port between renderer and engine       |
-| [003](003-core-stays-synchronous.md)                                | Core stays synchronous                                               |
-| [004](004-the-app-authors-the-workspace.md)                         | The app authors the workspace, so core gains write responsibility    |
-| [005](005-yaml-document-api-and-atomic-writes.md)                   | Writes go through the YAML Document API, atomically                  |
-| [006](006-never-regenerate-methoddescriptor.md)                     | The app never regenerates `methodDescriptor`                         |
-| [007](007-postman-information-architecture.md)                      | Postman's information architecture, our own visual system            |
-| [008](008-react-and-zustand.md)                                     | React 19 with Zustand                                                |
-| [009](009-radix-fenced-and-density-retuned.md)                      | shadcn on Radix, fenced — and density retuned first                  |
-| [010](010-explicit-save-and-app-state.md)                           | Explicit save, and app state never enters the workspace              |
-| [011](011-a-watcher-reconciles-external-edits.md)                   | A file watcher reconciles external edits                             |
-| [012](012-one-window-many-workspaces.md)                            | One window, many workspaces, one engine host each                    |
-| [013](013-response-bodies-stay-in-the-engine.md)                    | Response bodies stay in the engine host                              |
-| [014](014-codemirror-everywhere.md)                                 | CodeMirror 6 everywhere, no Monaco                                   |
-| [015](015-what-v1-ships.md)                                         | What v1 ships                                                        |
-| [016](016-the-performance-budget-is-asserted.md)                    | The performance budget is an assertion, not an aspiration            |
-| [017](017-interaction-budgets-measure-blocking-at-the-median.md)    | Interaction budgets measure blocking time, attributed, at the median |
-| [018](018-what-goes-in-the-packaged-bundle.md)                      | What goes in the packaged bundle                                     |
-| [019](019-the-failure-crosses-the-wire.md)                          | The failure crosses the wire                                         |
-| [020](020-themes-are-generated-audited-data.md)                     | Themes are generated, audited data                                   |
-| [021](021-density-is-a-preset-and-typescript-owns-the-token.md)     | Density is a preset, and TypeScript owns the token                   |
-| [022](022-preferences-are-global-and-synchronous-at-first-paint.md) | Preferences are global, and read synchronously at first paint        |
-| [023](023-the-parser-is-fed-a-masked-document.md)                   | The parser is fed a masked document                                  |
-| [024](024-the-console-repeats-the-response-pane.md)                 | The console repeats the response pane                                |
-| [025](025-variable-resolution-stays-in-the-engine.md)               | Variable resolution stays in the engine                              |
-| [026](026-the-app-is-allowed-to-move.md)                            | The app is allowed to move                                           |
-| [027](027-the-app-reports-its-own-phases.md)                        | The app reports its own phases                                       |
-| [028](028-the-create-dialog-asks-what-before-it-asks-name.md)       | The create dialog asks what before it asks name                      |
-| [029](029-the-engine-loads-the-send-path-on-demand.md)              | The engine loads the send path on demand                             |
-| [030](030-ci-asserts-everything-but-the-clock.md)                   | CI asserts everything but the clock, and the tag is the version      |
-| [031](031-an-authored-body-is-re-indented-not-reserialised.md)      | An authored body is re-indented, not reserialised                    |
+| #                                                                   | Decision                                                               |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [001](001-electron-not-tauri.md)                                    | Electron, not Tauri                                                    |
+| [002](002-three-processes-and-a-direct-port.md)                     | Three processes, and a direct port between renderer and engine         |
+| [003](003-core-stays-synchronous.md)                                | Core stays synchronous                                                 |
+| [004](004-the-app-authors-the-workspace.md)                         | The app authors the workspace, so core gains write responsibility      |
+| [005](005-yaml-document-api-and-atomic-writes.md)                   | Writes go through the YAML Document API, atomically                    |
+| [006](006-never-regenerate-methoddescriptor.md)                     | The app never regenerates `methodDescriptor`                           |
+| [007](007-postman-information-architecture.md)                      | Postman's information architecture, our own visual system              |
+| [008](008-react-and-zustand.md)                                     | React 19 with Zustand                                                  |
+| [009](009-radix-fenced-and-density-retuned.md)                      | shadcn on Radix, fenced — and density retuned first                    |
+| [010](010-explicit-save-and-app-state.md)                           | Explicit save, and app state never enters the workspace                |
+| [011](011-a-watcher-reconciles-external-edits.md)                   | A file watcher reconciles external edits                               |
+| [012](012-one-window-many-workspaces.md)                            | One window, many workspaces, one engine host each                      |
+| [013](013-response-bodies-stay-in-the-engine.md)                    | Response bodies stay in the engine host                                |
+| [014](014-codemirror-everywhere.md)                                 | CodeMirror 6 everywhere, no Monaco                                     |
+| [015](015-what-v1-ships.md)                                         | What v1 ships                                                          |
+| [016](016-the-performance-budget-is-asserted.md)                    | The performance budget is an assertion, not an aspiration              |
+| [017](017-interaction-budgets-measure-blocking-at-the-median.md)    | Interaction budgets measure blocking time, attributed, at the median   |
+| [018](018-what-goes-in-the-packaged-bundle.md)                      | What goes in the packaged bundle                                       |
+| [019](019-the-failure-crosses-the-wire.md)                          | The failure crosses the wire                                           |
+| [020](020-themes-are-generated-audited-data.md)                     | Themes are generated, audited data                                     |
+| [021](021-density-is-a-preset-and-typescript-owns-the-token.md)     | Density is a preset, and TypeScript owns the token                     |
+| [022](022-preferences-are-global-and-synchronous-at-first-paint.md) | Preferences are global, and read synchronously at first paint          |
+| [023](023-the-parser-is-fed-a-masked-document.md)                   | The parser is fed a masked document                                    |
+| [024](024-the-console-repeats-the-response-pane.md)                 | The console repeats the response pane                                  |
+| [025](025-variable-resolution-stays-in-the-engine.md)               | Variable resolution stays in the engine                                |
+| [026](026-the-app-is-allowed-to-move.md)                            | The app is allowed to move                                             |
+| [027](027-the-app-reports-its-own-phases.md)                        | The app reports its own phases                                         |
+| [028](028-the-create-dialog-asks-what-before-it-asks-name.md)       | The create dialog asks what before it asks name                        |
+| [029](029-the-engine-loads-the-send-path-on-demand.md)              | The engine loads the send path on demand                               |
+| [030](030-ci-asserts-everything-but-the-clock.md)                   | CI asserts everything but the clock, and the tag is the version        |
+| [031](031-an-authored-body-is-re-indented-not-reserialised.md)      | An authored body is re-indented, not reserialised                      |
+| [032](032-the-linux-watcher-is-partial-and-said-so.md)              | The Linux watcher is partial, and says so in prose rather than in code |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -80,5 +81,13 @@ would send: the app already had a JSON formatter, and reusing it on a body someb
 turns a bare `{{token}}` into `0` and a twenty-digit id into a rounded one. It costs a hand-written
 scanner and inherits 023's two holes as two bodies that decline to format, and it says so in the
 record rather than only in the module.
+
+032 is the first record written because a pipeline found something. 030's second run failed on ubuntu
+and not on macOS, and underneath was a watcher that Node accepts recursively on Linux and then backs
+with one inotify watch per file, so the atomic save in `workspace/atomic.ts` quietly drops the watch
+on everything the app has touched. It is not fixed, because every fix costs either the perf budget
+or the design 016 and this function's own docblock already settled, and 018 does not ship the app
+there. What is fixed is the comment that claimed the opposite, which is the part that could have
+cost someone a day.
 
 `TEMPLATE.md` is the shape of a new one.
