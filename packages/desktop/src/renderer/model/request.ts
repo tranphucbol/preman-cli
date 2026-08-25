@@ -173,6 +173,15 @@ export interface Pair {
   readonly disabled: boolean;
   /** Where this pair lives: the map key, or the array index. */
   readonly at: string | number;
+  /**
+   * The entry this pair was read from, when the field is array-shaped.
+   *
+   * The grid models three fields, and a `body.formdata` entry has six: `type`, `src` and
+   * `contentType` decide whether the row is a file upload at all. Every edit below rewrites the
+   * whole array, so without the original entry in hand a checkbox would quietly turn a file
+   * field into an empty text one.
+   */
+  readonly source?: Readonly<Record<string, unknown>>;
 }
 
 export interface PairList {
@@ -190,6 +199,7 @@ export function readPairs(data: unknown, field: string): PairList {
         value: text(holder?.["value"]),
         disabled: holder?.["disabled"] === true,
         at: index,
+        ...(holder === null ? {} : { source: holder }),
       };
     });
     return { shape: "array", pairs };
@@ -266,11 +276,13 @@ export function editPairAdded(field: string, list: PairList, key: string, value:
  * caller warns first; this only performs it.
  */
 export function editPairEnabled(field: string, list: PairList, pair: Pair, disabled: boolean): FieldEdit[] {
-  const entries = list.pairs.map((candidate) => {
-    const entry = asEntry(candidate);
-    const flagged = candidate.at === pair.at ? disabled : candidate.disabled;
-    return flagged ? { ...entry, disabled: true } : entry;
-  });
+  // Re-read the flag through `asEntry` rather than patching the entry it returns: `asEntry`
+  // decides whether `disabled` is written at all, and a version of this that only ever added the
+  // key could switch a row off but never back on. The edit came out identical to what was already
+  // in `tab.edits`, so the projection did not change and the controlled checkbox snapped back.
+  const entries = list.pairs.map((candidate) =>
+    asEntry({ ...candidate, disabled: candidate.at === pair.at ? disabled : candidate.disabled }),
+  );
   return [edit([field], entries)];
 }
 
@@ -278,10 +290,21 @@ interface PairEntry {
   key: string;
   value: string;
   disabled?: boolean;
+  /** What `Pair.source` carries through. Declared members win, so `disabled` stays a boolean. */
+  readonly [extra: string]: unknown;
 }
 
+/** The three keys the grid owns; anything else on the source entry is the file's to keep. */
+const MODELLED_KEYS: ReadonlySet<string> = new Set(["key", "value", "disabled"]);
+
 function asEntry(pair: Pair): PairEntry {
-  return pair.disabled ? { key: pair.key, value: pair.value, disabled: true } : { key: pair.key, value: pair.value };
+  const carried: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(pair.source ?? {})) {
+    if (!MODELLED_KEYS.has(name)) carried[name] = value;
+  }
+  return pair.disabled
+    ? { ...carried, key: pair.key, value: pair.value, disabled: true }
+    : { ...carried, key: pair.key, value: pair.value };
 }
 
 /** `key: value` per line, the text form of a grid. Blank lines and `#` comments are skipped. */

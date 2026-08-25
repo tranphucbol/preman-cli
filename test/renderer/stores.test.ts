@@ -37,6 +37,7 @@ import type { TestResult } from "@preman/desktop/renderer/model/response.js";
 import {
   FIELD,
   edit,
+  editPairEnabled,
   editPairKey,
   editPairValue,
   pairsToText,
@@ -67,6 +68,8 @@ const PAYMENT_ID = "postman/collections/payment";
 const ADMIN_ID = "postman/collections/admin";
 const PROFILE_ID = "postman/collections/admin/Profile.request.yaml";
 const HEADERS_FIELD = "headers";
+/** Nested under `body` in a real file; the pair edits are written against the leaf name. */
+const FORMDATA_FIELD = "formdata";
 const EMPTY_VALUE = "";
 
 /** Workspace creation: the name asked for, where main says it went, and why it might refuse. */
@@ -640,6 +643,40 @@ describe("the bulk header editor", () => {
     const valued = editPairValue(HEADERS_FIELD, list, list.pairs[0]!, "text/plain");
 
     expect(valued).toStrictEqual({ path: [HEADERS_FIELD, "Accept"], value: "text/plain" });
+  });
+
+  /**
+   * The checkbox is controlled by the projection, so an edit that comes out identical to what is
+   * already in `tab.edits` is a checkbox that visibly snaps back. `editPairEnabled` used to patch
+   * `disabled: true` onto an entry that already carried it, which made switching a row off work
+   * and switching it back on do nothing at all - in every grid, not only form data.
+   */
+  it("givenADisabledPair_whenSwitchedBackOn_thenTheEntryLosesTheDisabledFlag", () => {
+    const list = readPairs({ formdata: [{ key: "note", value: "hi", disabled: true }] }, FORMDATA_FIELD);
+
+    const [enabled] = editPairEnabled(FORMDATA_FIELD, list, list.pairs[0]!, false);
+    const [disabled] = editPairEnabled(FORMDATA_FIELD, list, list.pairs[0]!, true);
+
+    expect(enabled).toStrictEqual({ path: [FORMDATA_FIELD], value: [{ key: "note", value: "hi" }] });
+    expect(disabled).toStrictEqual({ path: [FORMDATA_FIELD], value: [{ key: "note", value: "hi", disabled: true }] });
+    // The round trip the grid actually performs: what it writes is what it reads back.
+    expect(readPairs(project({}, [enabled!]), FORMDATA_FIELD).pairs[0]?.disabled).toBe(false);
+  });
+
+  /**
+   * The grid models three fields and a form-data entry has six. Every pair edit rewrites the whole
+   * array, so anything the grid does not model has to be carried through: rebuilding the entry
+   * from `key`/`value`/`disabled` alone turned a file upload into an empty text field, and core
+   * then refused the run with `formdata field "avatar" has no file source`.
+   */
+  it("givenAFormDataFileField_whenAnotherRowIsToggled_thenItsSourceSurvives", () => {
+    const file = { key: "avatar", type: "file", src: "upload/a.png", contentType: "image/png" };
+    const list = readPairs({ formdata: [{ key: "note", value: "hi" }, file] }, FORMDATA_FIELD);
+
+    const [change] = editPairEnabled(FORMDATA_FIELD, list, list.pairs[0]!, true);
+    const carried = readPairs(project({}, [change!]), FORMDATA_FIELD).pairs[1]?.source;
+
+    expect(carried).toMatchObject({ type: "file", src: "upload/a.png", contentType: "image/png" });
   });
 
   it("givenTextWithBlankLinesAndComments_whenParsed_thenTheyAreSkipped", () => {

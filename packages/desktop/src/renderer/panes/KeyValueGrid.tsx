@@ -11,7 +11,7 @@
  * retyped one character at a time has no stable identity to key on.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CellField, IconButton, type FieldTone } from "@preman/desktop/renderer/ui/Controls.js";
 import { AddIcon, DeleteIcon, FilterIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { type Pair, type PairList, pairsToText, textToPairs } from "@preman/desktop/renderer/model/request.js";
@@ -169,9 +169,15 @@ function GridPane({ list, noun, onToggle, onKeyChange, onValueChange, onRemove, 
  * A cell that fires on blur *and* on a debounce, so a value pasted and then sent with
  * Cmd+Enter without leaving the field is still in the store when the send happens.
  *
- * `key={value}` remounts the input when the stored value changes from outside, which is
- * how an external edit or a take-theirs conflict resolution reaches a cell the user is
- * not currently typing in. Cheap here because a grid is tens of rows, not thousands.
+ * The input is remounted when the stored value changes from outside, which is how an
+ * external edit or a take-theirs conflict resolution reaches a cell the user is not
+ * currently typing in. Cheap here because a grid is tens of rows, not thousands.
+ *
+ * "From outside" is the whole subtlety, and keying on `value` did not say it. The debounce
+ * commits mid-word, the store hands the same text straight back, and the key changed: the
+ * input the caret was in was unmounted and replaced 150ms after the user stopped moving.
+ * Typing a third character into a form-data field put it nowhere. So the cell remembers what
+ * it last sent, and only a `value` that is *not* its own commit coming home bumps the key.
  */
 function DebouncedCell({
   value,
@@ -187,29 +193,44 @@ function DebouncedCell({
   readonly onToken?: TokenReporter;
   readonly onCommit: (value: string) => void;
 }) {
-  const [timer, setTimer] = useState<number | null>(null);
+  // A ref and not state: the pending timer is not on screen, and re-rendering the cell on every
+  // keystroke to store it is the per-keystroke render this whole file exists to avoid.
+  const timer = useRef<number | null>(null);
+  const [sent, setSent] = useState<string | null>(null);
+  const [seen, setSeen] = useState(value);
+  const [generation, setGeneration] = useState(0);
+
+  if (value !== seen) {
+    setSeen(value);
+    // A counter rather than the text itself, so an outside edit that restores exactly what this
+    // cell last sent still remounts it.
+    if (value !== sent) setGeneration((current) => current + 1);
+  }
+
+  const commit = (next: string) => {
+    setSent(next);
+    onCommit(next);
+  };
 
   return (
     <CellField
-      key={value}
+      key={generation}
       defaultValue={value}
       placeholder={placeholder}
       tone={disabled ? DISABLED_TONE : PLAIN_TONE}
       onToken={onToken}
       onChange={(event) => {
         const next = event.currentTarget.value;
-        if (timer !== null) window.clearTimeout(timer);
-        setTimer(
-          window.setTimeout(() => {
-            onCommit(next);
-          }, COMMIT_DEBOUNCE_MS),
-        );
+        if (timer.current !== null) window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => {
+          commit(next);
+        }, COMMIT_DEBOUNCE_MS);
       }}
       onBlur={(event) => {
-        if (timer !== null) window.clearTimeout(timer);
-        setTimer(null);
+        if (timer.current !== null) window.clearTimeout(timer.current);
+        timer.current = null;
         const next = event.currentTarget.value;
-        if (next !== value) onCommit(next);
+        if (next !== value) commit(next);
       }}
     />
   );
