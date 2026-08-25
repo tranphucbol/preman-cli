@@ -18,9 +18,10 @@ import {
 } from "./helpers.js";
 
 /**
- * Golden-output characterization of the renderers. `picocolors` disables itself when
- * stdout is not a TTY, and a vitest run is not one, so every paint call here is the
- * identity function and the expected strings are plain text.
+ * Golden-output characterization of the renderers. Every paint call here is the identity
+ * function and the expected strings are plain text, because `vitest.config.ts` sets `NO_COLOR`
+ * for the worker. Not being a TTY is not enough on its own: picocolors also enables colour when
+ * `CI` is set, which is why these cases only ever failed on a runner.
  */
 
 interface EchoRequest {

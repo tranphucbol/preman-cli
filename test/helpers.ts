@@ -93,11 +93,19 @@ const POKE_INTERVAL_MS = 1_000;
  * therefore fails a few runs in a hundred for a reason that has nothing to do with the code under
  * test, while "keep touching it until the watcher notices" asserts the same property and cannot
  * pass if the watcher is genuinely broken — it still fails at the deadline.
+ *
+ * `poke` may be async, and a poke that writes through the engine must be: an unawaited
+ * `send` outlives the loop, and a write that lands after the assertion has moved on is a write
+ * attributed to the wrong phase of the test. Awaiting keeps at most one in flight.
  */
-export async function pokeUntil(poke: () => void, ready: () => boolean, timeoutMs: number): Promise<void> {
+export async function pokeUntil(
+  poke: () => void | Promise<void>,
+  ready: () => boolean,
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    poke();
+    await poke();
     await new Promise((done) => setTimeout(done, POKE_INTERVAL_MS));
     if (ready()) return;
     if (Date.now() >= deadline) throw new Error("the watcher never reported the change");

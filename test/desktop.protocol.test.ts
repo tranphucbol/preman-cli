@@ -641,8 +641,8 @@ describe("the engine host protocol", () => {
           // Repeated because the very first write can land in the gap `docs/decisions/011`
           // describes; each retry writes the same bytes, so it stays our own write throughout.
           await pokeUntil(
-            () => {
-              void app.send("write-node", {
+            async () => {
+              await app.send("write-node", {
                 nodeId: PING_ID,
                 edits: [{ path: ["description"], value: "written by the app" }],
               });
@@ -672,9 +672,13 @@ describe("the engine host protocol", () => {
           // Let the app's own write settle first, so the next report the watcher makes is
           // unambiguously about someone else's edit.
           const settledAt = app.pushesOf("git-status").length;
+          // Awaited, not `void`: an in-flight app write that lands after the external one below
+          // rewrites the file to the app's own bytes and re-arms the host's `written` map, so the
+          // external edit is filtered as ours and the poke can never recover. That is what made
+          // this the only watcher case to fail on a slow CI runner.
           await pokeUntil(
-            () => {
-              void app.send("write-node", {
+            async () => {
+              await app.send("write-node", {
                 nodeId: PING_ID,
                 edits: [{ path: ["description"], value: "written by the app" }],
               });
@@ -716,8 +720,8 @@ describe("the engine host protocol", () => {
           // must still move a renamed row, and the git overlay must still follow the save that
           // caused it, for our own writes exactly as for anyone else's.
           await pokeUntil(
-            () => {
-              void app.send("write-node", {
+            async () => {
+              await app.send("write-node", {
                 nodeId: PING_ID,
                 edits: [{ path: ["description"], value: "written by the app" }],
               });
