@@ -1,0 +1,164 @@
+name: release
+
+# The tag is the version. Nothing in the repository carries it between releases: the manifests sit
+# at whatever they were last set to, and the two jobs that build something write `${tag#v}` into the
+# one manifest they need first. `@preman/core` is private and is inlined into both, so it is never
+# written. See ADR 030.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  PREMAN_SKIP_PERF: "1"
+
+jobs:
+  # Read once, so a malformed tag fails in six seconds rather than after a DMG.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+    steps:
+      - id: derive
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::tag '$TAG' is not v<semver>; it names both the npm version and the DMG"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # The same gate `ci.yml` runs. A tag can be pushed at a commit CI never saw.
+  verify:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run typecheck:core
+      - run: bun run build
+      - run: bun run test
+
+  # macOS, because electron-builder cannot produce a DMG anywhere else. `macos-latest` is arm64,
+  # so this is an arm64 DMG; an Intel or universal build is a `--x64` / `--universal` away and a
+  # second artifact, not a change to this file's shape.
+  desktop:
+    needs: [version, verify]
+    runs-on: macos-latest
+    env:
+      # `electron-builder.yml` signs ad hoc (`identity: null`). Without this the packer spends a
+      # minute searching a keychain that holds no Developer ID, then falls back to the same thing.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      # No `ELECTRON_SKIP_BINARY_DOWNLOAD` here: this is the one job that packs a runtime.
+      - run: bun install --frozen-lockfile
+
+      # The DMG's filename and the packaged app's version both read this manifest.
+      - name: Write the tag's version into the desktop manifest
+        working-directory: packages/desktop
+        run: npm pkg set version="${{ needs.version.outputs.version }}"
+
+      # `desktop:package` is these two commands. They are spelled out so `--publish never` can
+      # be: electron-builder publishes on its own when it sees a tag and a token, and the release
+      # job below owns that.
+      - run: bun run --filter '@preman/desktop' build
+      - run: bunx electron-builder --publish never
+        working-directory: packages/desktop
+
+      # Only the DMG. electron-builder also writes `latest-mac.yml` and a `.blockmap`, which are
+      # auto-update metadata; the app has no updater, so shipping them advertises nothing real.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg
+          path: packages/desktop/release/*.dmg
+          if-no-files-found: error
+
+  # Before npm, so that everything up to the irreversible step can be undone by deleting a release.
+  release:
+    needs: [version, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: dmg
+          path: dmg
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag dmg/*.dmg
+
+  # Last, because it is the only step here that cannot be taken back.
+  npm:
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm provenance: the attestation is signed with this job's OIDC identity.
+      id-token: write
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+
+      # `vite.config.ts` falls back to this manifest for `__PREMAN_VERSION__`, and `npm publish`
+      # reads it for the version it uploads. One value, written once.
+      - name: Write the tag's version into the CLI manifest
+        working-directory: packages/cli
+        run: npm pkg set version="$VERSION"
+
+      # npm renders the package's own README and honours the LICENSE beside its own manifest; it
+      # will not look up a directory for either. `files` does not need to name them — npm always
+      # includes a README and a LICENSE next to the manifest — but they do have to be there.
+      - run: cp README.md LICENSE packages/cli/
+
+      - run: bun run --filter preman build
+
+      # `dist/preman.js` externalises grpc-js, the prompts and the sandbox packages, so this also
+      # proves the artifact resolves them rather than only that it parses.
+      - name: Smoke-test the built artifact
+        run: |
+          built=$(node packages/cli/dist/preman.js --version)
+          if [ "$built" != "$VERSION" ]; then
+            echo "::error::built CLI reports '$built', tag says '$VERSION'"
+            exit 1
+          fi
+
+      # Deliberately after the install: this writes an `.npmrc` whose auth token is
+      # `${NODE_AUTH_TOKEN}`, and `bun install` would read it with that variable unset and send an
+      # empty credential to the registry. Bun installs, then npm publishes.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish to npm
+        working-directory: packages/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public

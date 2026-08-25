@@ -4,7 +4,8 @@ Architecture decision records. One file per decision, numbered, never renumbered
 is later reversed keeps its file and gains a status, so that the reasoning behind the reversal has
 something to point at.
 
-These are the decisions behind the desktop app. The CLI predates the practice.
+These are the decisions behind the desktop app, and from 030 the pipeline that ships both of them.
+The CLI's own design predates the practice.
 
 | #                                                                   | Decision                                                             |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -37,6 +38,7 @@ These are the decisions behind the desktop app. The CLI predates the practice.
 | [027](027-the-app-reports-its-own-phases.md)                        | The app reports its own phases                                       |
 | [028](028-the-create-dialog-asks-what-before-it-asks-name.md)       | The create dialog asks what before it asks name                      |
 | [029](029-the-engine-loads-the-send-path-on-demand.md)              | The engine loads the send path on demand                             |
+| [030](030-ci-asserts-everything-but-the-clock.md)                   | CI asserts everything but the clock, and the tag is the version      |
 | [031](031-an-authored-body-is-re-indented-not-reserialised.md)      | An authored body is re-indented, not reserialised                    |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
@@ -65,7 +67,13 @@ grpc-js and chai before it could answer a question about YAML files, and 016's c
 defined to discard exactly the launch where that is visible. It is also the first to move a function
 between modules for what the module's imports cost rather than for what the function does, and the
 first whose gate is a source-graph assertion instead of a number — because the number it would
-assert is only observable on a machine whose page cache has just been destroyed.
+assert is only observable on a machine whose page cache has just been destroyed. 030 is the first to
+take something away: 016 said every budget row is a test that fails, and it turns out a shared
+two-core runner cannot hold a row with 26% of headroom, so the three clock budgets are skipped in CI
+and the only perf gate that survives there is 029's import graph — the one 029 built to be
+machine-independent for a different reason. It is also the first record about how the repository
+leaves the repository, and it answers that with the tag: nothing is committed between releases,
+because a bump that can be committed is a bump that can disagree with the tag it was released under.
 
 031 is the second record to answer 023, and the first to refuse a shortcut on the grounds of what it
 would send: the app already had a JSON formatter, and reusing it on a body somebody is still writing

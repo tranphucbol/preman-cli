@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Desktop app for a Postman filesystem workspace",
+  "license": "MIT",
   "type": "module",
   "main": "dist/main/main.js",
   "engines": {

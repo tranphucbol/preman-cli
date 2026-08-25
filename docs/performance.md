@@ -13,11 +13,15 @@ bun run test                                        # the half that needs no win
 bun run build && PREMAN_PERF=1 bunx vitest run test/renderer/perf.app.test.ts
 ```
 
-`test/perf.test.ts` runs with the normal suite. The gated half launches Electron twelve times and
-writes five thousand request files, so it is a minute rather than a second and is skipped unless
-`PREMAN_PERF=1` — a perf test that makes `bun run test` slow gets deleted within a month. It needs
-a built `packages/desktop/dist` and, today, macOS: it finds the Electron binary at
-`node_modules/electron/dist/Electron.app`.
+`test/perf.test.ts` runs with the normal suite — on a developer's machine. `ci.yml` sets
+`PREMAN_SKIP_PERF=1`, which skips its three clock budgets and keeps `engine boot graph`, because a
+two-core shared runner cannot hold a row whose headroom is 26%. The gate below is therefore yours to
+run: CI will not catch a regression in it. See ADR 030.
+
+The gated half launches Electron twelve times and writes five thousand request files, so it is a
+minute rather than a second and is skipped unless `PREMAN_PERF=1` — a perf test that makes
+`bun run test` slow gets deleted within a month. It needs a built `packages/desktop/dist` and,
+today, macOS: it finds the Electron binary at `node_modules/electron/dist/Electron.app`.
 
 ## The budget
 

@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer worthless, so it is cancelled.
+# `main` is excluded from that by the ref being part of the group: two pushes to main are two
+# things to know about, not one.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  # A 100MB download that nothing here needs: every desktop Vite config externalises `electron`
+  # (`SHELL_EXTERNALS` in `vite.shared.ts`), the typings ship with the package rather than the
+  # binary, and the only test that spawns a window is skipped without `PREMAN_PERF=1`.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  # The clock budgets in `test/perf.test.ts`. See ADR 030.
+  PREMAN_SKIP_PERF: "1"
+
+jobs:
+  # Prettier, ESLint and tsc read the same bytes on every operating system, so paying macOS
+  # minutes to hear the same answer twice buys nothing. They run once, here.
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Cache bun's global module cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run format:check
+      - run: bun run lint
+      # Three tsc programs: the root, the renderer's DOM program, and the renderer tests'.
+      - run: bun run typecheck
+      # The engine alone, proving it still compiles with no CLI and no window in front of it.
+      - run: bun run typecheck:core
+
+  # The suite touches the filesystem, binds local ports and reads certificates, all of which
+  # behave differently on macOS. `bun run build` runs first because `test/perf.test.ts` is not
+  # the only thing that would notice a broken bundle, and it costs about a second.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Cache bun's global module cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+      - run: bun run test

@@ -2,6 +2,7 @@
   "name": "preman-workspace",
   "private": true,
   "description": "Workspace root for @preman/core, the preman CLI and the desktop app",
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "packages/*"

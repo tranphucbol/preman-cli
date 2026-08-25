@@ -75,6 +75,9 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
   resources/                     the app icon; macOS masks nothing, so the rounding is in the art
     generate.swift               icon.source.png -> icon.png on Apple's grid; regenerate by hand
   electron-builder.yml           packs the built dist/ into release/; compiles nothing
+.github/workflows/               ci.yml gates every push; release.yml turns a `v*` tag into an
+                                 npm publish and a DMG. The tag is the only version; see ADR 030
+.bun-version                     the bun the workflows install; the one place it is pinned
 vitest.config.ts                 the one test project, shared by every package
 packages/*/vite.*.config.ts      per-package build; the desktop has one config per process
 eslint.config.js                 lint, import layering, and the two purity fences
@@ -127,9 +130,11 @@ test/renderer/perf.app.test.ts   the budgets that need a window; gated behind PR
   assert the exact 5-request list and its group statuses.
 - Use `cloneFixtureWorkspace()` before anything that writes to the workspace.
 - Performance budgets live in `docs/performance.md`. `test/perf.test.ts` holds the ones that
-  are a function call, and takes the best of three runs rather than the first. The ones that need a
-  real window are `test/renderer/perf.app.test.ts`, gated behind `PREMAN_PERF=1` because it launches
-  Electron twelve times against a built `dist/`; run it with
+  are a function call, and takes the best of three runs rather than the first. Its three clock
+  budgets are skipped when `PREMAN_SKIP_PERF=1`, which `ci.yml` sets — CI cannot hold them, so a
+  regression there is yours to catch locally (ADR 030). The ones that need a real window are
+  `test/renderer/perf.app.test.ts`, gated behind `PREMAN_PERF=1` because it launches Electron
+  twelve times against a built `dist/`; run it with
   `bun run build && PREMAN_PERF=1 bunx vitest run test/renderer/perf.app.test.ts`.
 - The interaction budgets there are blocking time, attributed to the interaction that caused it,
   and asserted against the median rather than the worst: the idle app blocks its own main thread

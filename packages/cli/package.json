@@ -2,7 +2,13 @@
   "name": "preman",
   "version": "0.1.0",
   "description": "Run Postman-format (filesystem) gRPC and HTTP requests from the CLI",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tranphucbol/preman-cli.git"
+  },
+  "homepage": "https://github.com/tranphucbol/preman-cli#readme",
   "bin": {
     "preman": "dist/preman.js"
   },

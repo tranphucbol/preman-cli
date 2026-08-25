@@ -13,6 +13,12 @@
  *
  * The start-up, RSS and frame-rate numbers need a real window, so they live in
  * `test/renderer/perf.app.test.ts` behind `PREMAN_PERF=1`.
+ *
+ * The three clock budgets below are skipped when `PREMAN_SKIP_PERF=1`, which `ci.yml` sets. A
+ * two-core shared runner cannot hold a 50ms gate, and best-of-three only narrows that noise
+ * rather than removing it; a gate that fails for the runner it landed on stops being read. The
+ * enforcement point is therefore the developer machine. See ADR 030. `engine boot graph` is not
+ * gated: it reads the import graph off disk and its answer is the same on every machine.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
@@ -36,6 +42,9 @@ const WARM_SWITCH_BUDGET_MS = 100;
  * fifth would buy no confidence the fourth did not already.
  */
 const ATTEMPTS = 3;
+/** Set by `ci.yml`: the clock budgets measure the runner's other tenants, not this code. */
+const SKIP_ENV_VAR = "PREMAN_SKIP_PERF";
+const CLOCK_SKIPPED = process.env[SKIP_ENV_VAR] === "1";
 const FIRST_ID = 1;
 /** `CONSOLE_MAX_LINES` in each of the three streams: the most the drawer can ever hold. */
 const MERGE_ROWS = 5000;
@@ -73,7 +82,7 @@ async function best(run: () => Promise<unknown>): Promise<number> {
   return shortest;
 }
 
-describe("buildCatalog budget", () => {
+describe.skipIf(CLOCK_SKIPPED)("buildCatalog budget", () => {
   it("givenRealSizedWorkspace_whenBuildCatalog_thenUnderFiftyMs", async () => {
     generated = writeBigWorkspace(REAL_WORKSPACE_REQUESTS);
     const root = generated.root;
@@ -102,7 +111,7 @@ describe("buildCatalog budget", () => {
  * long run. It is a three-finger merge rather than a concat and a sort for exactly that reason,
  * and this is the case that fails if somebody replaces it with the obvious one-liner.
  */
-describe("console merge budget", () => {
+describe.skipIf(CLOCK_SKIPPED)("console merge budget", () => {
   it("givenFiveThousandRowsInThreeStreams_whenMerged_thenItStaysWithinBudget", async () => {
     // Round-robin seqs, so no finger is ever exhausted early and every comparison is paid for.
     const lines: MergeArgs[0] = Array.from({ length: MERGE_ROWS }, (_, index) => ({
@@ -140,7 +149,7 @@ describe("console merge budget", () => {
   });
 });
 
-describe("warm host budget", () => {
+describe.skipIf(CLOCK_SKIPPED)("warm host budget", () => {
   /**
    * What switching back to an already-open workspace costs the engine. The host holds its
    * catalog, so the answer should be the price of one message and nothing else — this is the

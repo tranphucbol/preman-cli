@@ -6,6 +6,11 @@ release/
 .DS_Store
 .idea/
 
+# Copied from the root by `release.yml` so npm has a page to render and a licence to name; npm
+# looks for both beside the manifest and never a directory up. Never authored here.
+packages/cli/README.md
+packages/cli/LICENSE
+
 # Plans are working documents; only the template is tracked.
 docs/plans/*
 !docs/plans/TEMPLATE.md
