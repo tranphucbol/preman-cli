@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ORDER_ABSENT, ORDER_STEP, type CatalogNode, type MutateOp } from "@preman/desktop/engine/protocol.js";
-import { orderBetween, resolveDrop } from "@preman/desktop/renderer/model/order.js";
+import { orderBetween, planDuplicate, resolveDrop } from "@preman/desktop/renderer/model/order.js";
 
 const ROOT_DEPTH = 0;
 const CHILD_DEPTH = 1;
@@ -242,5 +242,66 @@ describe("resolveDrop across parents", () => {
     const plan = resolveDrop(nodes, "alpha/outer", { overId: "alpha/outer/inner/leaf", side: "before" });
 
     expect(plan.ops).toStrictEqual([]);
+  });
+});
+
+/**
+ * Duplicate placement. Unlike a drop this never refuses, so every case here asserts an answer:
+ * the interesting axis is how many files the answer rewrites.
+ */
+describe("planDuplicate", () => {
+  it("givenGapBelowTheOriginal_whenPlanDuplicate_thenOneOrderAndNoReorder", () => {
+    const plan = planDuplicate(threeInARow(), "alpha/one");
+
+    expect(plan.order).toBe(ORDER_STEP + ORDER_STEP / 2);
+    expect(plan.reorderOps).toStrictEqual([]);
+  });
+
+  it("givenAdjacentOrders_whenPlanDuplicate_thenTheSiblingsAreRenumberedFirst", () => {
+    const nodes = [collection("alpha", ORDER_STEP), request("alpha/one", "alpha", 7), request("alpha/two", "alpha", 8)];
+
+    const plan = planDuplicate(nodes, "alpha/one");
+
+    // The hole is slot 2, so the original keeps slot 1 and the sibling below it steps down to 3.
+    expect(reorderOf(plan.reorderOps[0])).toStrictEqual({ "alpha/one": ORDER_STEP, "alpha/two": ORDER_STEP * 3 });
+    expect(plan.order).toBe(ORDER_STEP * 2);
+  });
+
+  it("givenLastSibling_whenPlanDuplicate_thenTheCopyGoesAfterIt", () => {
+    const plan = planDuplicate(threeInARow(), "alpha/three");
+
+    expect(plan.order).toBe(ORDER_STEP * 4);
+    expect(plan.reorderOps).toStrictEqual([]);
+  });
+
+  it("givenSiblingWithNoDeclaredOrder_whenPlanDuplicate_thenTheCopyStillLandsBelowTheOriginal", () => {
+    // `ORDER_ABSENT` below the insertion point constrains nothing, so the gap is still one write.
+    const nodes = [
+      collection("alpha", ORDER_STEP),
+      request("alpha/one", "alpha", ORDER_STEP),
+      request("alpha/two", "alpha", ORDER_ABSENT),
+    ];
+
+    const plan = planDuplicate(nodes, "alpha/one");
+
+    expect(plan.order).toBe(ORDER_STEP * 2);
+    expect(plan.reorderOps).toStrictEqual([]);
+  });
+
+  it("givenTheOriginalItselfDeclaresNoOrder_whenPlanDuplicate_thenTheSiblingsAreRenumbered", () => {
+    // Nothing sorts after an absent order, so the only way below it is to give it a number.
+    const nodes = [collection("alpha", ORDER_STEP), request("alpha/one", "alpha", ORDER_ABSENT)];
+
+    const plan = planDuplicate(nodes, "alpha/one");
+
+    expect(reorderOf(plan.reorderOps[0])).toStrictEqual({ "alpha/one": ORDER_STEP });
+    expect(plan.order).toBe(ORDER_STEP * 2);
+  });
+
+  it("givenAnUnknownTarget_whenPlanDuplicate_thenNoOrderLeavesItToCore", () => {
+    const plan = planDuplicate(threeInARow(), "alpha/nope");
+
+    expect(plan.order).toBeUndefined();
+    expect(plan.reorderOps).toStrictEqual([]);
   });
 });

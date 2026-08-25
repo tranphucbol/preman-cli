@@ -105,9 +105,18 @@ leaves the list at the old height until something else invalidates it.
 A vertical list with one current entry takes the **row** tier and the sidebar's paint —
 `bg-selected` for the current one, `bg-hover` under the pointer — and not the horizontal sub-tab's
 accent underline. The Scripts phase rail (`ScriptsPane` in `RequestEditor.tsx`) is a Radix tab list
-and still follows this rule, because it is read as a list. Two visual languages for "this is the
+and still follows this rule, because it is read as a list. The create dialog's type list
+(`ui/Dialog.tsx`) is three native radios and follows it too, and adds the one glyph the rule does not
+name: `SelectOption`'s tick, on the right, in the accent. Two visual languages for "this is the
 current one" inside one pane is the confusion; picking by orientation rather than by widget is what
 stops it.
+
+A radio group in a **grid** is the other shape, and it is a card: `rounded-md border p-2`,
+`border-accent bg-selected` when on, `border-line-strong bg-control hover:bg-hover` when off — the
+`Choice` in `panes/SettingsPane.tsx`. Both are a native `<input type="radio">` inside a `<label>`
+with `sr-only` on the input and `has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-accent` on the
+label, because that is what buys arrow keys and the roving tab stop for free. Share the mechanism,
+not the markup: one component with a layout prop puts "which one" back in the caller's hands.
 
 ## Ink and surfaces
 

@@ -62,6 +62,7 @@ import {
 import {
   CaretRightIcon,
   CollectionIcon,
+  CopyIcon,
   DeleteIcon,
   FolderIcon,
   FolderOpenIcon,
@@ -186,6 +187,8 @@ export interface SidebarProps {
   readonly onRun: (node: CatalogNode) => void;
   readonly onCreateRequest: (parentId: string, kind: RequestKind) => void;
   readonly onCreateFolder: (parentId: string) => void;
+  /** Requests only: the menu item is absent on a group, and core refuses one anyway. */
+  readonly onDuplicate: (node: CatalogNode) => void;
   readonly onRename: (node: CatalogNode) => void;
   readonly onDelete: (node: CatalogNode) => void;
   readonly onReveal: (node: CatalogNode) => void;
@@ -703,6 +706,17 @@ function SidebarContextMenu({ targetId, ...props }: { readonly targetId: string 
           </ContextItem>
           <ContextSeparator />
         </>
+      )}
+      {/*
+        Absent on a group rather than disabled: duplicating a folder is not supported, and there is
+        nothing a user could do to make the row work, so a permanently greyed item would be a
+        question this menu cannot answer. It sits with Rename because a copy is a variant of the
+        thing you are pointing at, not another way to create something in it.
+      */}
+      {!group && (
+        <ContextItem icon={<CopyIcon />} onSelect={() => props.onDuplicate(node)}>
+          Duplicate
+        </ContextItem>
       )}
       <ContextItem icon={<RenameIcon />} onSelect={() => props.onRename(node)}>
         Rename

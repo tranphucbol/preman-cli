@@ -431,6 +431,23 @@ describe("the engine host protocol", () => {
       expect((document.data as { name: string }).name).toBe("Health");
     });
 
+    it("givenRequestNodeId_whenDuplicateOpApplied_thenCatalogShowsTheCopyBelowIt", async () => {
+      const app = open();
+      const result = await app.send("mutate", { op: { op: "duplicate", targetId: PING_ID, order: 15 } });
+
+      expect(result.nodeId).toBe("postman/collections/payment/Ping copy.request.yaml");
+      const catalog = await app.send("catalog", {});
+      const names = catalog.nodes.filter((node) => node.kind === "request").map((node) => node.name);
+      expect(names[names.indexOf("Ping") + 1]).toBe("Ping copy");
+    });
+
+    it("givenGroupNodeId_whenDuplicateOpApplied_thenTheHostReportsAUsageError", async () => {
+      const error = await open().fail("mutate", { op: { op: "duplicate", targetId: PAYMENT_ID } });
+
+      expect(error.exitCode).toBe(EXIT.CLI);
+      expect(error.details.join(" ")).toContain("duplicating a collection or folder is not supported");
+    });
+
     it("givenRename_whenApplied_thenFileAndNameFieldMoveTogether", async () => {
       const app = open();
       const result = await app.send("mutate", { op: { op: "rename", targetId: PING_ID, name: "Pong" } });

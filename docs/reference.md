@@ -700,7 +700,7 @@ rather than written twice.
 | `read-node`                                              | `NodeDocument`      | One request, group, or environment file, raw text and parsed   |
 | `write-node`                                             | `NodeDocument`      | Apply `FieldEdit[]`; comments and key order survive            |
 | `write-text`                                             | `NodeDocument`      | Replace the file from the raw YAML tab                         |
-| `mutate`                                                 | `MutateResult`      | Create, rename, move, delete, reorder                          |
+| `mutate`                                                 | `MutateResult`      | Create, duplicate, rename, move, delete, reorder               |
 | `run`                                                    | `{ runId }`         | Acknowledged before it starts; results arrive as pushes        |
 | `cancel`                                                 | `null`              | Cancel a run by `runId`                                        |
 | `variables`, `write-variable`                            | `VariableView`      | The resolved layers, and a write that returns the re-read view |

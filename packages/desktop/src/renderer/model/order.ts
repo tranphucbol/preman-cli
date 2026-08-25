@@ -102,6 +102,43 @@ export function orderBetween(prev: number | undefined, next: number | undefined)
   return gap > MIN_GAP ? prev + Math.floor(gap / HALF) : null;
 }
 
+export interface DuplicatePlan {
+  /** Written into the copy. `undefined` means "last", which core resolves with `nextOrder`. */
+  readonly order: number | undefined;
+  /** Run before the duplicate, and only when the gap below the original was exhausted. */
+  readonly reorderOps: readonly MutateOp[];
+}
+
+/**
+ * Where a copy of `targetId` lands: directly below the original.
+ *
+ * Unlike {@link resolveDrop} this never refuses, which is worth saying given rule 2 above. A drop
+ * can name a position that cannot be expressed; a duplicate cannot, because the worst case is
+ * still a legitimate answer — no `order` at all, which core reads as last.
+ *
+ * The order is computed here rather than in the engine because it needs the sorted sibling list
+ * the catalog already holds, and the engine would have to re-derive it. Same division `resolveDrop`
+ * uses.
+ */
+export function planDuplicate(nodes: readonly CatalogNode[], targetId: string): DuplicatePlan {
+  const target = index(nodes).get(targetId);
+  if (target === undefined) return { order: undefined, reorderOps: NO_OPS };
+
+  const siblings = nodes.filter((node) => node.parentId === target.parentId);
+  const targetAt = siblings.findIndex((node) => node.id === targetId);
+  if (targetAt === NOT_FOUND) return { order: undefined, reorderOps: NO_OPS };
+
+  const slot = orderBetween(target.order, siblings[targetAt + 1]?.order);
+  if (slot !== null) return { order: slot, reorderOps: NO_OPS };
+
+  // No room below the original, so renumber the siblings to open a hole and put the copy in it.
+  const orderById: Record<string, number> = {};
+  siblings.forEach((node, position) => {
+    orderById[node.id] = slotAt(position <= targetAt ? position : position + 1);
+  });
+  return { order: slotAt(targetAt + 1), reorderOps: [{ op: "reorder", orderById }] };
+}
+
 /**
  * The mutations a drop produces, or none when it cannot be expressed.
  *

@@ -72,6 +72,8 @@ export type MutateOp =
   | { op: "create-folder"; parentId: string; name: string; order?: number }
   | { op: "create-collection"; name: string; order?: number }
   | { op: "create-environment"; name: string }
+  /** Requests only, and `order` omitted lands the copy last. See `duplicateRequestFile`. */
+  | { op: "duplicate"; targetId: string; order?: number }
   | { op: "rename"; targetId: string; name: string }
   | { op: "move"; targetId: string; parentId: string; order?: number }
   | { op: "delete"; targetId: string }

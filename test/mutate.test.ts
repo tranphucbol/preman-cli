@@ -8,6 +8,7 @@ import {
   createFolder,
   createRequestFile,
   deleteNode,
+  duplicateRequestFile,
   editRequestFile,
   moveNode,
   renameNode,
@@ -32,6 +33,22 @@ headers:
   # why this header exists
   X-Trace: abc
 order: 15
+`;
+
+/** The reason to press duplicate: a script and the comment explaining it. */
+const SCRIPTED_REQUEST = `$kind: http-request
+name: Scripted
+url: http://127.0.0.1:1/thing
+method: GET
+scripts:
+  # the assertion this request exists to make
+  - type: test
+    language: javascript
+    code: |-
+      pm.test("ok", function () {
+        pm.response.to.have.status(200);
+      });
+order: 25
 `;
 
 let clone: ClonedWorkspace | undefined;
@@ -192,6 +209,67 @@ describe("createRequestFile", () => {
 
   it("givenMissingParent_whenCreateRequestFile_thenUsageError", async () => {
     await expectUsageError(() => createRequestFile({ parentDir: payment("nope"), name: "X", kind: "http-request" }));
+  });
+});
+
+describe("duplicateRequestFile", () => {
+  it("givenRequestWithCommentsAndScripts_whenDuplicated_thenBothSurviveByteForByte", async () => {
+    const file = payment("Scripted.request.yaml");
+    writeFileSync(file, SCRIPTED_REQUEST);
+
+    const copy = await duplicateRequestFile({ target: file });
+    const after = readFileSync(copy, "utf8");
+
+    expect(after).toContain("# the assertion this request exists to make");
+    expect(after).toContain('pm.test("ok", function () {');
+    expect(after).toContain("    pm.response.to.have.status(200);");
+    // The source is untouched: duplicate writes one new file and nothing else.
+    expect(readFileSync(file, "utf8")).toBe(SCRIPTED_REQUEST);
+  });
+
+  it("givenRequest_whenDuplicated_thenNameAndFilenameBothSayCopy", async () => {
+    const copy = await duplicateRequestFile({ target: payment("Ping.request.yaml") });
+
+    // Asserted together: separately, either passes while the pair drifts.
+    expect(basename(copy)).toBe("Ping copy.request.yaml");
+    expect(readFileSync(copy, "utf8")).toContain("name: Ping copy");
+  });
+
+  it("givenExistingCopy_whenDuplicatedAgain_thenNameAndFilenameBothSayCopy2", async () => {
+    const target = payment("Ping.request.yaml");
+    await duplicateRequestFile({ target });
+
+    const second = await duplicateRequestFile({ target });
+
+    expect(basename(second)).toBe("Ping copy 2.request.yaml");
+    expect(readFileSync(second, "utf8")).toContain("name: Ping copy 2");
+  });
+
+  it("givenGroup_whenDuplicated_thenUsageErrorSaysFoldersAreNotSupported", async () => {
+    const error = await expectUsageError(() => duplicateRequestFile({ target: payment("nested") }));
+
+    expect(error.details.join(" ")).toContain("duplicating a collection or folder is not supported");
+  });
+
+  it("givenMissingTarget_whenDuplicated_thenUsageError", async () => {
+    const error = await expectUsageError(() => duplicateRequestFile({ target: payment("Nope.request.yaml") }));
+
+    expect(error.message).toContain("does not exist");
+  });
+
+  it("givenNoOrder_whenDuplicated_thenItSortsAfterEveryOrderedSibling", async () => {
+    const created = await duplicateRequestFile({ target: payment("Ping.request.yaml") });
+    const catalog = await buildCatalog(ws().root);
+
+    const names = catalog.nodes.map((node) => node.name);
+    expect(names.indexOf("Ping copy")).toBeGreaterThan(names.indexOf("Descriptor Only"));
+    expect(catalog.nodes.find((node) => node.file === created)).toMatchObject({ protocol: "grpc", order: 1040 });
+  });
+
+  it("givenExplicitOrder_whenDuplicated_thenTheCopyCarriesIt", async () => {
+    const created = await duplicateRequestFile({ target: payment("Ping.request.yaml"), order: 42 });
+
+    expect(readFileSync(created, "utf8")).toContain("order: 42");
   });
 });
 

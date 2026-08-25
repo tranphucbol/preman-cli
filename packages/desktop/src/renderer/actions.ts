@@ -17,6 +17,7 @@ import type {
   VariableWrite,
 } from "@preman/desktop/engine/protocol.js";
 
+import { planDuplicate } from "@preman/desktop/renderer/model/order.js";
 import { flushPending } from "@preman/desktop/renderer/pending.js";
 import { loadTab, toEngineError, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
@@ -163,6 +164,26 @@ export async function applyPlan(ops: readonly MutateOp[]): Promise<Failure | nul
     if (failed !== null) return failed;
   }
   return null;
+}
+
+/**
+ * Copy a request, landing the copy directly below the original and opening it.
+ *
+ * What is copied is the file on disk, not the tab's draft: under decision 010 a draft is not the
+ * request yet, so there is nothing else this could honestly copy. Save first if you meant the
+ * edits.
+ *
+ * Two round trips in the renumber case, because `applyPlan` discards every `nodeId` and only the
+ * single-op `mutate` can open what it made. Reaching that case needs a folder with no gap left
+ * below the original, so the common duplicate is still one call.
+ */
+export async function duplicateNode(nodeId: string): Promise<Failure | null> {
+  const { order, reorderOps } = planDuplicate(useCatalogStore.getState().nodes, nodeId);
+  if (reorderOps.length > 0) {
+    const failed = await applyPlan(reorderOps);
+    if (failed !== null) return failed;
+  }
+  return mutate({ op: "duplicate", targetId: nodeId, ...(order === undefined ? {} : { order }) }, { open: true });
 }
 
 /**

@@ -20,6 +20,7 @@ const DECLARED_SURFACE = [
   "createRequestFile",
   "deleteNode",
   "describeWorkspace",
+  "duplicateRequestFile",
   "editDefinitionFile",
   "editRequestFile",
   "failOnAmbiguity",

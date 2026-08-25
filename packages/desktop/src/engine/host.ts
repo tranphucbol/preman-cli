@@ -22,6 +22,7 @@ import {
   createFolder,
   createRequestFile,
   deleteNode,
+  duplicateRequestFile,
   editDefinitionFile,
   editRequestFile,
   moveNode,
@@ -341,6 +342,14 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         return createCollection({ root, name: op.name, ...(op.order === undefined ? {} : { order: op.order }) });
       case "create-environment":
         return createEnvironmentFile({ root, name: op.name });
+      // Not `requireDirectory`'s opposite number: the target is a file, and the refusal for a
+      // group belongs in core, where the message can say duplicating a folder is unsupported
+      // rather than that the path is wrong.
+      case "duplicate":
+        return duplicateRequestFile({
+          target: resolveWithinRoot(root, op.targetId),
+          ...(op.order === undefined ? {} : { order: op.order }),
+        });
       case "rename":
         return renameNode({ target: resolveWithinRoot(root, op.targetId), name: op.name });
       case "move":

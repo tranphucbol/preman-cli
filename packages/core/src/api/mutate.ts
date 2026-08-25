@@ -233,6 +233,85 @@ function writeDefinition(dir: string, name: string, order: number): void {
   writeFileAtomic(definitionPathFor(dir), stringify({ $kind: COLLECTION_KIND, [NAME_KEY]: name, [ORDER_KEY]: order }));
 }
 
+/** The word appended to the source's display name to make the copy's. */
+const COPY_SUFFIX = "copy";
+/** The first numbered copy is 2: `Foo copy`, `Foo copy 2`. There is no `Foo copy 1`. */
+const FIRST_NUMBERED_COPY = 2;
+/** The same bound `resolveCollision` uses, for the same reason: a loop that cannot run away. */
+const COPY_LIMIT = 100;
+
+/**
+ * The first free `Foo copy`, `Foo copy 2`, … in `dir`.
+ *
+ * Deliberately not `resolveCollision`: that function's contract is a *path* with
+ * Postman's ` (2)` convention, and it lets the filename diverge from the display
+ * name on purpose. A copy generates its own name, so the two must agree — see
+ * `duplicateRequestFile`.
+ */
+function freeCopyName(dir: string, base: string): string {
+  let name = `${base} ${COPY_SUFFIX}`;
+  for (let n = FIRST_NUMBERED_COPY; existsSync(join(dir, `${name}${REQUEST_SUFFIX}`)); n += 1) {
+    if (n > COPY_LIMIT) {
+      throw usage(`cannot find a free name for a copy of "${base}" in ${dir}`, [
+        `tried up to "${base} ${COPY_SUFFIX} ${COPY_LIMIT}"`,
+      ]);
+    }
+    name = `${base} ${COPY_SUFFIX} ${n}`;
+  }
+  return name;
+}
+
+/** The display name a request file declares, falling back to what its filename says. */
+function displayNameOf(file: string, doc: Document): string {
+  const declared = (doc.toJS() as { name?: unknown } | null)?.name;
+  if (typeof declared === "string" && declared.trim().length > 0) return declared;
+  return basename(file).slice(0, -REQUEST_SUFFIX.length);
+}
+
+export interface DuplicateRequestArgs {
+  /** The request file to copy. A group is refused. */
+  target: string;
+  /** Omitted means "last", derived from the highest declared sibling order. */
+  order?: number;
+}
+
+/**
+ * Copy a request file into its own folder as `Foo copy`, returning the new path.
+ *
+ * The copy's display name and its filename are both `Foo copy`, which is the
+ * opposite of `createRequestFile`, where `requestPathFor` resolves `Foo` to
+ * `Foo (2).request.yaml` while the file keeps saying `Foo`. That divergence is
+ * right for a name a human typed twice and wrong here: this name is generated, so
+ * two nodes both reading `Foo copy` would be indistinguishable in the tab strip
+ * and ambiguous to a CLI selector. Do not unify the two.
+ *
+ * Goes through `parseDocument` rather than `parse` + `stringify` because the
+ * comments, `pm` scripts and examples in the source are the reason to duplicate it
+ * at all. A source that no longer validates therefore cannot be duplicated, which
+ * is correct: the copy would be a second unreadable file.
+ */
+export function duplicateRequestFile(args: DuplicateRequestArgs): Promise<string> {
+  const { target } = args;
+  if (!existsSync(target)) throw usage(`${target} does not exist`, ["it may have been deleted outside the app"]);
+  if (!isRequestFile(target)) {
+    throw usage(`${basename(target)} is not a request`, [
+      "duplicating a collection or folder is not supported",
+      "copy the requests inside it one at a time",
+    ]);
+  }
+
+  const dir = dirname(target);
+  const doc = readDocument(target);
+  // The name resolves before the path, from the same string, so they cannot drift.
+  const name = freeCopyName(dir, sanitiseSegment(displayNameOf(target, doc)));
+  const file = join(dir, `${name}${REQUEST_SUFFIX}`);
+  doc.setIn([NAME_KEY], name);
+  doc.setIn([ORDER_KEY], args.order ?? nextOrder(siblingOrders(dir)));
+  validateRequest(target, doc);
+  writeFileAtomic(file, doc.toString());
+  return Promise.resolve(file);
+}
+
 export interface CreateGroupArgs {
   parentDir: string;
   name: string;

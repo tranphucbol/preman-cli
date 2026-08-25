@@ -324,7 +324,7 @@ export function CellField({ mono = true, tone = "normal", onToken, ...rest }: Fi
 
 /** Colour only, for the same reason as `FIELD_INK`: this is a field-shaped control, not a button. */
 const SELECT_TRIGGER_CLASS =
-  "inline-flex w-fit cursor-default select-none items-center gap-1 rounded-sm border border-line-strong bg-control pr-1 pl-2 text-xs text-ink outline-none transition-[color,background-color,border-color] duration-(--duration-press) ease-out data-placeholder:text-ink-faint data-disabled:text-ink-faint";
+  "inline-flex cursor-default select-none items-center gap-1 rounded-sm border border-line-strong bg-control pr-1 pl-2 text-xs text-ink outline-none transition-[color,background-color,border-color] duration-(--duration-press) ease-out data-placeholder:text-ink-faint data-disabled:text-ink-faint";
 
 /**
  * The popup is a menu, because to the user it is one.
@@ -358,6 +358,17 @@ export interface SelectProps {
   /** A select is the control that turns up in both tiers most often, so it always declares one. */
   readonly tier?: ControlTier;
   readonly disabled?: boolean;
+  /**
+   * Lands on the trigger, which is a `<button>` and therefore a labelable element. Without it a
+   * `Labelled` cannot point at a select, and the caller ends up writing its own label markup — which
+   * is how the app grew a second label language once already.
+   */
+  readonly id?: string;
+  /**
+   * Fills its parent instead of sizing to its value. For a picker in a form column, where the field
+   * above it is full width and a trigger that resizes as the value changes reads as a bug.
+   */
+  readonly full?: boolean;
   /** Required, not optional, for the same reason `IconButton` requires one: there is no label. */
   readonly "aria-label": string;
 }
@@ -370,8 +381,9 @@ export interface SelectProps {
  * `Field` is not - a text input's "popup" is the caret, and the OS draws that fine.
  *
  * Sizes to its content rather than filling its parent: a picker holding the word `GET` has
- * no business being as wide as the URL beside it. Callers that need a different width wrap
- * it, which is also why `className` is not accepted here.
+ * no business being as wide as the URL beside it. `full` is the one other answer, because `w-fit`
+ * on the trigger is not something a wrapper can talk it out of; any width between the two is the
+ * caller's wrapper, which is why `className` is not accepted here.
  */
 export function Select({
   value,
@@ -380,13 +392,19 @@ export function Select({
   mono = false,
   tier = "content",
   disabled = false,
+  id,
+  full = false,
   "aria-label": label,
 }: SelectProps) {
   return (
     <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
       <SelectPrimitive.Trigger
+        id={id}
         aria-label={label}
-        className={cn(SELECT_TRIGGER_CLASS, TIER_CLASS[tier], mono && "font-mono")}
+        // A branch rather than `w-fit` plus an override, because `cn` concatenates and does not
+        // merge: which of two width utilities won would be decided by their order in the generated
+        // stylesheet, which is not a thing this call site can see.
+        className={cn(SELECT_TRIGGER_CLASS, TIER_CLASS[tier], mono && "font-mono", full ? "w-full" : "w-fit")}
       >
         <SelectPrimitive.Value />
         <SelectPrimitive.Icon className={GLYPH_CLASS}>
@@ -435,6 +453,13 @@ export function SelectOption({ value, children, disabled = false }: SelectOption
 }
 
 /**
+ * What a form label looks like, exported so that a group of controls with no single labelable
+ * element — a radio group, which is labelled by `aria-label` on the group rather than by `for` —
+ * can wear the same one without `Labelled` growing an arm for it.
+ */
+export const LABEL_CLASS = "text-2xs text-ink-dim";
+
+/**
  * A labelled block. Label above, helper below, per the form rules: a placeholder is not a label,
  * because it disappears exactly when the user needs to check what they typed.
  */
@@ -451,7 +476,7 @@ export function Labelled({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={htmlFor} className="text-2xs text-ink-dim">
+      <label htmlFor={htmlFor} className={LABEL_CLASS}>
         {label}
       </label>
       {children}

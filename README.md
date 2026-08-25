@@ -144,6 +144,16 @@ It can also create an empty workspace, named from the workspace dropdown, the Fi
 command palette, always under `~/.local/share/preman/workspace`; `Open workspace…` remains the way
 to a workspace that already exists anywhere else.
 
+A new request comes from either end of the window. The sidebar's context menu on a collection or a
+folder offers **New HTTP request**, **New gRPC request** and **New folder**, which put one inside it;
+the `+` in the tab row, beside the environment picker, asks the same three as one form — the
+protocol, a name, and which collection or folder it goes in, with **New folder** beside its
+**Create**. That form's destination list starts at the workspace root, which is where a collection
+lives, so the first one can be made from there too. The context menu on a request itself offers
+**Duplicate**, which copies the file —
+comments, scripts and examples included — to `Foo copy` directly below the original and opens it.
+Duplicate copies what is on disk, so save an edited tab first.
+
 ```sh
 bun run desktop          # build the app and launch it
 bun run desktop:package  # build, then wrap it into packages/desktop/release

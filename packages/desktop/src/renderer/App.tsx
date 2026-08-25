@@ -12,7 +12,7 @@ import { Group, Panel, Separator, useDefaultLayout, usePanelCallbackRef } from "
 
 import type { CatalogNode, GrepMatch } from "@preman/desktop/engine/protocol.js";
 
-import { AskDialog, type Ask } from "@preman/desktop/renderer/ui/Dialog.js";
+import { AskDialog, type Ask, type CreateTarget } from "@preman/desktop/renderer/ui/Dialog.js";
 import { Button, IconButton, Select, SelectOption, TooltipProvider } from "@preman/desktop/renderer/ui/Controls.js";
 import {
   DropdownContent,
@@ -23,6 +23,7 @@ import {
   DropdownTrigger,
 } from "@preman/desktop/renderer/ui/Menu.js";
 import {
+  AddIcon,
   BranchIcon,
   CollectionIcon,
   ConsoleIcon,
@@ -47,6 +48,11 @@ import { SettingsPane } from "@preman/desktop/renderer/panes/SettingsPane.js";
 import { Sidebar } from "@preman/desktop/renderer/panes/Sidebar.js";
 import { TabStrip } from "@preman/desktop/renderer/panes/TabStrip.js";
 import { VariablesPane } from "@preman/desktop/renderer/panes/VariablesPane.js";
+import {
+  defaultDestination,
+  groupDestinations,
+  ROOT_DESTINATION_ID,
+} from "@preman/desktop/renderer/model/destination.js";
 import { paletteItems, type PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { skeletonWidths } from "@preman/desktop/renderer/model/opening.js";
 import { sectionFor } from "@preman/desktop/renderer/model/search.js";
@@ -56,6 +62,7 @@ import {
   cancelRun,
   closeTab,
   discardAndClose,
+  duplicateNode,
   mutate,
   saveTab,
   sendNode,
@@ -477,16 +484,97 @@ function TitleBar({ onCreateWorkspace }: { readonly onCreateWorkspace: () => voi
  *
  * `h-tab`, because everything in the row is a 26px chrome control: the picker asks for the chrome
  * tier, and a select is the one control that has to say which tier it is in.
+ *
+ * The `+` is pinned here beside the picker for the same reason the picker is: a button inside the
+ * scrolling strip scrolls away with the fortieth tab, and "new request" is not something you should
+ * have to scroll to. It also has to be present when no request is open, which the strip is not.
  */
-function TabBar({ onClose }: { readonly onClose: (nodeId: string) => void }): React.JSX.Element {
+function TabBar({
+  onClose,
+  onAsk,
+  onFail,
+}: {
+  readonly onClose: (nodeId: string) => void;
+  readonly onAsk: (ask: Ask) => void;
+  readonly onFail: Fail;
+}): React.JSX.Element {
   return (
     <div className="flex h-tab shrink-0 items-stretch border-b border-line bg-canvas">
       <TabStrip onClose={onClose} />
       <div className="ml-auto flex shrink-0 items-center gap-1 px-2">
+        <CreateButton onAsk={onAsk} onFail={onFail} />
         <EnvironmentPicker />
       </div>
     </div>
   );
+}
+
+/**
+ * The `+`.
+ *
+ * Gated on there being a workspace at all, which is the same gate the sidebar's own header buttons
+ * take, and no longer on the workspace having a collection: the picker now offers the root, so an
+ * empty workspace can make its first collection from here. A button that can only fail at the
+ * engine is a button that lies about being pressable, and this one no longer can.
+ *
+ * The one thing it subscribes to is that gate, and the picker's contents are built in the click
+ * handler from the stores as they are then. This row re-renders on every tab switch, and mapping
+ * five thousand nodes into labels there would spend the tab-switch budget on a list nobody has
+ * asked to see.
+ */
+function CreateButton({
+  onAsk,
+  onFail,
+}: {
+  readonly onAsk: (ask: Ask) => void;
+  readonly onFail: Fail;
+}): React.JSX.Element {
+  const open = useCatalogStore((state) => state.root !== null);
+
+  return (
+    <IconButton
+      label={open ? "New request or folder" : "Open a workspace first"}
+      disabled={!open}
+      onClick={() => {
+        const { nodes, selectedId } = useCatalogStore.getState();
+        onAsk({
+          kind: "create",
+          title: "New request or folder",
+          initial: "",
+          // The common case by a wide margin, and the one the dialog is pre-set to so that the
+          // keyboard path stays name-then-Enter for it.
+          initialTarget: "http-request",
+          destinations: groupDestinations(nodes),
+          initialDestinationId: defaultDestination(nodes, useTabsStore.getState().activeId, selectedId),
+          rootDestinationId: ROOT_DESTINATION_ID,
+          onConfirm: (name, parentId, target) => {
+            // The same three calls the sidebar already makes — from its menu for the two inside a
+            // group, from its header for the collection — reported through the same banner. The `+`
+            // is a second way in, not a second creation path.
+            //
+            // A group is never opened afterwards, because there is nothing in it to open. A
+            // request at the root is not a case: the dialog refuses it, since core would write a
+            // request file where only collections may sit.
+            void createAt(parentId, name, target).then(onFail);
+          },
+        });
+      }}
+    >
+      <AddIcon />
+    </IconButton>
+  );
+}
+
+/** Which of the three creations the dialog's answer names. Split out so the branch is readable. */
+function createAt(parentId: string, name: string, target: CreateTarget): Promise<Failure | null> {
+  if (target !== "folder") {
+    return mutate({ op: "create-request", parentId, name, kind: target }, { open: true });
+  }
+  // A group at the root is a collection, which is a different op rather than a `create-folder` with
+  // an empty parent: the root is the directory node ids are relative to, so it has no id to pass.
+  return parentId === ROOT_DESTINATION_ID
+    ? mutate({ op: "create-collection", name })
+    : mutate({ op: "create-folder", parentId, name });
 }
 
 function WorkspacePicker({ onCreateWorkspace }: { readonly onCreateWorkspace: () => void }): React.JSX.Element {
@@ -664,6 +752,12 @@ function WorkspaceTree({
               void mutate({ op: "create-folder", parentId, name }).then(onFail);
             });
           }}
+          onDuplicate={(node) => {
+            // The file is copied, not the draft. Under decision 010 a draft is not the request
+            // yet, so a dirty tab has nothing this could honestly copy — and a modal saying so on
+            // every duplicate would tax the common case, where nothing is dirty.
+            void duplicateNode(node.id).then(onFail);
+          }}
           onRename={(node) => {
             askName(`Rename ${node.name}`, "Rename", node.name, (name) => {
               void mutate({ op: "rename", targetId: node.id, name }).then(onFail);
@@ -794,7 +888,7 @@ function EditorPane({
   if (overlay !== null) {
     return (
       <>
-        <TabBar onClose={closeTabOrAsk(onAsk)} />
+        <TabBar onClose={closeTabOrAsk(onAsk)} onAsk={onAsk} onFail={onFail} />
         {/*
           `mode="wait"` so the two panes never overlap: a settings pane cross-dissolved over a
           runner pane is a double exposure, and here it would also mean two CodeMirror instances
@@ -821,7 +915,7 @@ function EditorPane({
 
   return (
     <>
-      <TabBar onClose={closeTabOrAsk(onAsk)} />
+      <TabBar onClose={closeTabOrAsk(onAsk)} onAsk={onAsk} onFail={onFail} />
       {tab === undefined ? (
         <VacantEditor />
       ) : (
