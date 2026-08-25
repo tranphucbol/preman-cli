@@ -70,10 +70,54 @@ Current assignment, which is the audit as much as the rule:
 That `h-bar` has one caller is the rule working, not a token going spare: a pane toolbar that
 wanted `h-bar` was a toolbar that had not been asked which tier its buttons were in.
 
-One row is neither, on purpose: the request bar (`RequestEditor.tsx:142`) is `px-gutter py-2`
-around a 30px field, so 46px. It is the only row in the app that is the subject of its pane rather
-than chrome around one, and it is allowed the extra 6px for exactly that reason. Do not add a
-second exception without deciding it is one.
+One row is neither, on purpose: the request bar (`RequestEditor.tsx`, the `px-gutter py-2` strip) is
+`px-gutter py-2` around a 30px field, so 46px. It is the only row in the app that is the subject of
+its pane rather than chrome around one, and it is allowed the extra 6px for exactly that reason. Do
+not add a second exception without deciding it is one.
+
+Its order is left to right the order the request is read: where it goes, then what it calls. The
+gRPC method path sits to the _right_ of the url rather than left of it — the url is the address and
+the method path is what is asked of it, and a bar that put the question before the address read
+backwards. The method path still takes the flexible width, because it is the longer string and the
+identity of the request.
+
+## A field's lead
+
+`Field` takes a `lead`: one control drawn **inside** the field's box, against its left edge. There
+is one, the url bar's TLS lock, and the rule that put it there is worth stating because it decides
+the next one too. An affordance that is a property _of_ the value goes inside the field; an action
+_on_ the value is a button beside it. The lock edits the url's scheme, so beside the field it was a
+third button in a row that already had a method picker and a Send, and it read as another thing to
+press rather than as the first segment of the address.
+
+The geometry is three constants in `Controls.tsx` and they are one budget: the lead is inset 2px,
+may be 24px square, and `FIELD_LEAD_PAD` pads the text to 32px to clear it. 24px because that is
+WCAG 2.5.8's minimum target — and it is why a lead is not an `IconButton`, which is 26px and does
+not fit inside a 30px field. A lead that outgrows the budget does not clip; it slides under the
+text.
+
+Two things hold that arrangement together, and both are load-bearing:
+
+- **The padding is one string.** `FIELD_PAD` and `FIELD_LEAD_PAD` are exclusive, not a base plus an
+  override, because `cn` joins and does not merge — `px-2` beside `pl-8` would leave the winner to
+  the order Tailwind emitted them in, and losing that puts the text under the lock. The same string
+  is handed to `TokenOverlay`, so the `{{token}}` pills move with the text by construction.
+- **The lead renders after the input.** `follow()` in `TokenOverlay.tsx` reaches the backdrop as the
+  input's `previousElementSibling`. Anything inserted ahead of the input silently breaks the
+  horizontal scroll sync on a long value. The input also keeps its own border and rounding, so the
+  `:focus-visible` ring still hugs the whole field, lead included.
+
+The lock is also the one place a status colour lands on an icon instead of a tag. Locked is
+`text-ok`, not `text-accent`: the accent is a fill exactly once per pane and that is Send. Unlocked
+is `text-ink-dim`, because an unlocked url is a choice and not a fault — `text-warn` there would nag
+on every localhost request. `FIELD_LEAD_BUTTON_CLASS` carries no ink at all, for the reason
+`FIELD_METRICS` carries no fill: a lead's colour is what it is saying, so the caller declares it and
+there is exactly one declaration.
+
+The third state, where the scheme lives in a `{{token}}` and is neither readable nor safely
+writable, is a labelled `text-glyph` span rather than a disabled button. A disabled `<button>` emits
+no pointer events, so the one state whose whole content is the explanation would be the one state
+whose tooltip never opens.
 
 ## Virtualized rows
 
@@ -208,6 +252,20 @@ obvious next thing and it should not be invented at 10 by hand.
 Tooltips clear menus because a tooltip explaining a menu item has to. The drag preview sits _below_
 menus because the two are never on screen at once: a drag begins on pointer-down, which closes any
 open menu.
+
+**Every pane boundary is `ui/Handle.tsx`**, and it is one element a pixel across. Reach for it;
+never write a `Separator` at a call site. It paints `bg-line` at rest, `bg-glyph` under the pointer
+and `bg-accent` while being dragged, off `react-resizable-panels`' own `data-separator` attribute
+rather than CSS `:hover` — the library widens the grab to a 9px band and is the only thing that
+knows it. Each boundary used to carry an absolutely-positioned child spanning `-inset-y-1` in the
+belief that the child _was_ the hit area. Measured, it was not: the pointer 4px clear of the line
+reports `data-separator="hover"` with the child deleted. All the child ever did was make `:hover`
+match across the band, and it painted `bg-accent/40` while doing so, which put a full-width
+nine-pixel translucent accent bar directly under the code editor — read by everyone who saw it as
+that editor's horizontal scrollbar. It is the sharpest illustration in this document of why the
+accent has no dimmed variant and is a fill exactly once per pane. The markup it replaced also
+tested `data-[state=drag]`, which this library never sets, so the drag feedback had been dead for
+as long as the hover band had been loud. Those two facts are probably the same fact.
 
 ## Saying something went wrong
 

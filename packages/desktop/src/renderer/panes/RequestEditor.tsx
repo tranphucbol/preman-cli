@@ -24,6 +24,7 @@ import {
   type Pair,
   type PairList,
   type ScriptSlot,
+  type UrlSecurity,
   edit,
   editPairAdded,
   editPairEnabled,
@@ -31,6 +32,7 @@ import {
   editPairRemoved,
   editPairValue,
   editScript,
+  editSecurity,
   hasDescriptor,
   isGrpc,
   project,
@@ -38,6 +40,7 @@ import {
   readMethod,
   readPairs,
   readScripts,
+  readSecurity,
   readSettings,
   readText,
 } from "@preman/desktop/renderer/model/request.js";
@@ -48,6 +51,7 @@ import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import {
   BODY_VIEWS,
   DEFAULT_BODY_VIEW,
+  DEFAULT_SUB_TAB,
   type BodyView,
   type SubTab,
   type Tab,
@@ -62,10 +66,12 @@ import {
   Button,
   CellField,
   Field,
+  FIELD_LEAD_BUTTON_CLASS,
   IconButton,
   Labelled,
   Select,
   SelectOption,
+  Tooltip,
 } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
@@ -75,8 +81,10 @@ import {
   CollectionIcon,
   GenerateIcon,
   GLYPH_CLASS,
+  InsecureIcon,
   PickerIcon,
   SaveIcon,
+  SecureIcon,
   SendIcon,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
@@ -92,12 +100,40 @@ const PARAMS_FIELD = "queryParams";
 const METADATA_FIELD = "metadata";
 const URLENCODED_FIELD = "body";
 
+interface SubTabEntry {
+  readonly id: SubTab;
+  readonly label: string;
+}
+
 /** Sub-tab order matches Postman's, so muscle memory lands on the right one. */
-const SUB_TABS: readonly { readonly id: SubTab; readonly label: string }[] = [
+const HTTP_SUB_TABS: readonly SubTabEntry[] = [
   { id: "params", label: "Params" },
   { id: "auth", label: "Auth" },
   { id: "headers", label: "Headers" },
   { id: "body", label: "Body" },
+  { id: "scripts", label: "Scripts" },
+  { id: "settings", label: "Settings" },
+  { id: "yaml", label: "YAML" },
+];
+
+/**
+ * gRPC's list: fewer tabs, and the two it shares are called what the format calls them.
+ *
+ * `Headers` used to be here and rendered a notice pointing at `Params` - a tab whose whole content
+ * was the news that it was the wrong tab. Calling the pair list `Metadata` is what removes the
+ * need for the signpost, so those two changes are one change. `Body` is `Message` because the field
+ * is `message.content` and the pane is `MessagePane`; "body" was the HTTP word leaking across.
+ *
+ * The ids are unchanged - `params`, `body` - because they are what `main/store.ts` has already
+ * persisted for every open tab, and a label is not an identity.
+ *
+ * `Auth` is gone, and unlike Headers it was not dead: `core/src/grpc/auth.ts` renders an `auth:`
+ * block into the metadata map and `runner.ts` calls it. So gRPC auth still runs, and is now
+ * editable only as YAML. That is a deliberate trade, not an oversight.
+ */
+const GRPC_SUB_TABS: readonly SubTabEntry[] = [
+  { id: "params", label: "Metadata" },
+  { id: "body", label: "Message" },
   { id: "scripts", label: "Scripts" },
   { id: "settings", label: "Settings" },
   { id: "yaml", label: "YAML" },
@@ -149,6 +185,26 @@ const PHASE_LABEL_CLASS = "truncate group-hover:text-ink group-data-[state=activ
 const FIRST_SLOT = 0;
 const EMPTY_SCRIPT = "";
 
+/**
+ * What the lock inside the url field says in each state it can be in.
+ *
+ * Four strings rather than a `Record<UrlSecurity, string>` per protocol, because gRPC has no
+ * `unknown` and HTTP's `insecure` is a fact where gRPC's is a default. A total record would need
+ * an entry for a state that cannot happen, and a dead entry in a lookup table is how the table
+ * stops being the answer to "what can this control say".
+ */
+const GRPC_SECURE_LABEL = "TLS, pinned by grpcs://. Click to hand the choice back to the target.";
+const GRPC_INSECURE_LABEL = "TLS decided by the target: :443 or a known TLS host. Click to pin it on.";
+const HTTP_SECURE_LABEL = "https://. Click for http://.";
+const HTTP_INSECURE_LABEL = "http://. Click for https://.";
+const UNKNOWN_SECURE_LABEL = "The scheme comes from the url's {{token}}, so it is set with the variable, not here.";
+
+function secureLabel(grpc: boolean, security: UrlSecurity): string {
+  if (security === "unknown") return UNKNOWN_SECURE_LABEL;
+  if (security === "secure") return grpc ? GRPC_SECURE_LABEL : HTTP_SECURE_LABEL;
+  return grpc ? GRPC_INSECURE_LABEL : HTTP_INSECURE_LABEL;
+}
+
 export interface RequestEditorProps {
   readonly tab: Tab;
   readonly running: boolean;
@@ -198,6 +254,13 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
   if (tab.error !== null) return <Failure title={tab.error.message} details={tab.error.details} />;
   if (saved === null) return <Notice message="Nothing loaded." />;
 
+  const subTabs = grpc ? GRPC_SUB_TABS : HTTP_SUB_TABS;
+  // A sub-tab remembered from the other protocol - or from before gRPC lost its Headers tab -
+  // names a tab this request does not have, so it is resolved against the list rather than
+  // trusted, exactly as `ScriptsPane` resolves the script phase. Nothing is written back: the
+  // stale id costs a render, and correcting it here would be a store write during a render.
+  const subTab = subTabs.some((entry) => entry.id === tab.subTab) ? tab.subTab : DEFAULT_SUB_TAB;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Breadcrumb nodeId={tab.nodeId} />
@@ -209,6 +272,45 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
       </AnimatePresence>
 
       <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-gutter py-2">
+        {grpc ? null : (
+          <Select
+            mono
+            value={readMethod(data)}
+            aria-label="Method"
+            onValueChange={(next) => {
+              apply([edit(FIELD.method, next)]);
+            }}
+          >
+            {/* Coloured in the option, not on the trigger: Radix portals an `ItemText`'s children
+                into the closed control, so one span paints the list and the trigger the same
+                green the sidebar and the tab strip use. */}
+            {HTTP_METHODS.map((verb) => (
+              <SelectOption key={verb} value={verb}>
+                <span className={methodClass(verb)}>{verb}</span>
+              </SelectOption>
+            ))}
+          </Select>
+        )}
+        {/* The target is secondary for gRPC, where the method path is the identity, and primary
+            for HTTP, where the URL is. Hence the two widths rather than one shared bar. It still
+            comes first in both: it is what the request is addressed to, and reading "where" before
+            "what" is the order the two fields are actually filled in. */}
+        <div className={grpc ? "w-72 shrink-0" : "min-w-0 flex-1"}>
+          <Field
+            key={readText(data, FIELD.url)}
+            mono
+            defaultValue={readText(data, FIELD.url)}
+            placeholder={grpc ? "{{grpc_host}}" : "{{base_url}}/path"}
+            aria-label="URL"
+            onToken={box.report}
+            // Inside the box, not beside it: the lock is the url's leading segment, which is
+            // literally the field it edits.
+            lead={<SecureToggle data={data} grpc={grpc} apply={apply} />}
+            onBlur={(event) => {
+              commit(FIELD.url, readText(data, FIELD.url), event.currentTarget.value);
+            }}
+          />
+        </div>
         {grpc ? (
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <div className="min-w-0 flex-1">
@@ -230,40 +332,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
               <PickerIcon />
             </IconButton>
           </div>
-        ) : (
-          <Select
-            mono
-            value={readMethod(data)}
-            aria-label="Method"
-            onValueChange={(next) => {
-              apply([edit(FIELD.method, next)]);
-            }}
-          >
-            {/* Coloured in the option, not on the trigger: Radix portals an `ItemText`'s children
-                into the closed control, so one span paints the list and the trigger the same
-                green the sidebar and the tab strip use. */}
-            {HTTP_METHODS.map((verb) => (
-              <SelectOption key={verb} value={verb}>
-                <span className={methodClass(verb)}>{verb}</span>
-              </SelectOption>
-            ))}
-          </Select>
-        )}
-        {/* The target is secondary for gRPC, where the method path is the identity, and primary
-            for HTTP, where the URL is. Hence the two widths rather than one shared bar. */}
-        <div className={grpc ? "w-72 shrink-0" : "min-w-0 flex-1"}>
-          <Field
-            key={readText(data, FIELD.url)}
-            mono
-            defaultValue={readText(data, FIELD.url)}
-            placeholder={grpc ? "{{grpc_host}}" : "{{base_url}}/path"}
-            aria-label="URL"
-            onToken={box.report}
-            onBlur={(event) => {
-              commit(FIELD.url, readText(data, FIELD.url), event.currentTarget.value);
-            }}
-          />
-        </div>
+        ) : null}
         {running ? (
           <Button variant="danger" onClick={onCancel}>
             <CancelIcon />
@@ -281,15 +350,15 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
       </div>
 
       <Tabs.Root
-        value={tab.subTab}
+        value={subTab}
         onValueChange={(next) => {
           useTabsStore.getState().setSubTab(tab.nodeId, next as SubTab);
         }}
         className="flex min-h-0 flex-1 flex-col"
       >
         <Tabs.List className="flex shrink-0 items-center border-b border-line px-gutter" aria-label="Request sections">
-          {SUB_TABS.map((entry) => (
-            <TabTrigger key={entry.id} value={entry.id} active={entry.id === tab.subTab} underline={sectionUnderline}>
+          {subTabs.map((entry) => (
+            <TabTrigger key={entry.id} value={entry.id} active={entry.id === subTab} underline={sectionUnderline}>
               {entry.label}
             </TabTrigger>
           ))}
@@ -303,17 +372,21 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
           )}
         </Pane>
 
-        <Pane value="auth">
-          <AuthPane data={data} apply={apply} />
-        </Pane>
+        {/* Same rule as Headers below: no trigger, so no content. gRPC's `auth:` block still runs,
+            it is just YAML-only now. */}
+        {grpc ? null : (
+          <Pane value="auth">
+            <AuthPane data={data} apply={apply} />
+          </Pane>
+        )}
 
-        <Pane value="headers">
-          {grpc ? (
-            <Notice message="gRPC calls carry metadata, not headers. Edit it under Params." />
-          ) : (
+        {/* Not rendered at all for gRPC rather than rendered empty: a `Tabs.Content` with no
+            trigger is a pane nothing can reach, and the trigger it used to have was a signpost. */}
+        {grpc ? null : (
+          <Pane value="headers">
             <PairPane field={HEADERS_FIELD} noun="header" data={data} apply={apply} />
-          )}
-        </Pane>
+          </Pane>
+        )}
 
         <Pane value="body">
           {grpc ? (
@@ -366,6 +439,69 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
 }
 
 type Apply = (edits: readonly FieldEdit[]) => void;
+
+/**
+ * The lock's three inks, as a closed set because `FIELD_LEAD_BUTTON_CLASS` carries none.
+ *
+ * Locked reads as a status, not as the thing you came here to press - that is Send, and the accent
+ * is a fill exactly once per pane. Unlocked takes the ordinary affordance tone: an unlocked url is
+ * a choice, not a fault, and `text-warn` there would nag on every localhost request.
+ */
+const SECURE_INK = "text-ok";
+const INSECURE_INK = "text-ink-dim hover:text-ink";
+
+/**
+ * The lock, drawn inside the url field as its `lead`.
+ *
+ * It writes the url's scheme, because that is the only place either protocol's TLS decision is
+ * recorded (see `readSecurity`). Inside the box rather than beside it because that is what it edits:
+ * beside the field it was a third button in a row that already has a picker and a Send, and it read
+ * as another action on the request instead of as the first segment of its address.
+ *
+ * Two shapes, not one disabled button: a disabled `<button>` emits no pointer events in Chromium,
+ * so the state whose entire content is the *explanation* is the one state whose tooltip would never
+ * open. The `unknown` state is therefore a labelled glyph - `text-glyph` is the tier for a non-text
+ * affordance - and the other two are a real toggle.
+ */
+function SecureToggle({
+  data,
+  grpc,
+  apply,
+}: {
+  readonly data: unknown;
+  readonly grpc: boolean;
+  readonly apply: Apply;
+}) {
+  const security = readSecurity(data);
+  const label = secureLabel(grpc, security);
+
+  if (security === "unknown") {
+    return (
+      <Tooltip content={label}>
+        <span role="img" aria-label={label} className={cn(FIELD_LEAD_BUTTON_CLASS, GLYPH_CLASS)}>
+          <InsecureIcon />
+        </span>
+      </Tooltip>
+    );
+  }
+
+  const secure = security === "secure";
+  return (
+    <Tooltip content={label}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={secure}
+        className={cn(FIELD_LEAD_BUTTON_CLASS, secure ? SECURE_INK : INSECURE_INK)}
+        onClick={() => {
+          apply(editSecurity(data, !secure));
+        }}
+      >
+        {secure ? <SecureIcon /> : <InsecureIcon />}
+      </button>
+    </Tooltip>
+  );
+}
 
 /**
  * Where this request lives, above the bar that sends it.

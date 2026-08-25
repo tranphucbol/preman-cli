@@ -163,12 +163,42 @@ export function Tooltip({
  * search box and its toggle - and 26px beside 30px reads as one of them being broken. 26px stays
  * the height of the chrome tier: icon buttons, quiet buttons, menu items.
  *
- * Split in three because the token backdrop sits behind the input and has to agree with it about
- * where a character lands. `METRICS` is the half that decides that and is handed to the overlay
- * verbatim; `FILL` moves to the wrapper when there is a backdrop, because an opaque input has
- * nothing behind it; `INK` is the input's alone.
+ * Split up because the token backdrop sits behind the input and has to agree with it about where a
+ * character lands. `METRICS` plus one of the two `PAD`s is the half that decides that, and the join
+ * of them is handed to the overlay verbatim; `FILL` moves to the wrapper when there is a backdrop
+ * or a lead, because an opaque input has nothing behind it; `INK` is the input's alone.
  */
-const FIELD_METRICS = "h-control-lg w-full min-w-0 border px-2 text-xs";
+const FIELD_METRICS = "h-control-lg w-full min-w-0 border text-xs";
+/**
+ * The horizontal padding, separate from the rest of the metrics because a `lead` changes it.
+ *
+ * Two exclusive classes rather than one plus an override: `cn` is a join and not a merge, so
+ * `px-2` and `pl-8` in the same string would leave which of the two wins to the order Tailwind
+ * happened to emit them in - and getting that wrong puts the text under the lead.
+ */
+const FIELD_PAD = "px-2";
+/** `pl-8` is 32px: the 2px the lead is inset by, its 24px square, and 6px of air before the text. */
+const FIELD_LEAD_PAD = "pl-8 pr-2";
+/** Where a `lead` sits: inside the input's border, vertically centred, hard against its left edge. */
+const FIELD_LEAD_CLASS = "absolute inset-y-0 left-0 flex items-center pl-0.5";
+
+/**
+ * What a `lead` may be, if it is a button.
+ *
+ * 24px square: WCAG 2.5.8's minimum target, and the widest thing `FIELD_LEAD_PAD` reserves room
+ * for. Exported so the budget and the padding that reserves it cannot drift apart in two files -
+ * a lead that outgrows this does not clip, it slides under the text.
+ *
+ * Not `IconButton`: that is `size-control`, 26px, which does not fit inside a 30px field and is
+ * the chrome tier - a thing that acts *on* the pane. A lead acts on the field it is drawn in.
+ *
+ * Carries no ink, deliberately, the same way `FIELD_METRICS` carries no fill: a lead's colour is
+ * what it is *saying*, so the caller declares it and there is only ever one declaration. A
+ * `text-*` in here would be a second one, and `cn` joins rather than merges - which of the two won
+ * would be decided by the order Tailwind emitted them in.
+ */
+export const FIELD_LEAD_BUTTON_CLASS =
+  "inline-flex size-6 shrink-0 items-center justify-center rounded-sm transition-[color,background-color] duration-(--duration-press) ease-out hover:bg-hover";
 const FIELD_FILL = "rounded-sm bg-control";
 /**
  * Colour only, and deliberately no `active:scale-*` like `BASE_CONTROL` has: a text field that
@@ -215,10 +245,22 @@ export interface FieldProps extends Omit<ComponentProps<"input">, "className"> {
    * as it was, which is what the rename dialog and the search box want.
    */
   readonly onToken?: TokenReporter;
+  /**
+   * A control drawn inside the field's own box, against its left edge.
+   *
+   * For the affordance that is a property *of* the value rather than an action *on* it - the url
+   * bar's TLS lock. Beside the field it read as a third control in a row that already has a method
+   * picker and a Send; inside it, it reads as the scheme, which is what it edits. The text is
+   * padded clear of it, so nothing here overlaps.
+   *
+   * One 24px square fits, and `FIELD_LEAD_BUTTON_CLASS` is that size. There is no width
+   * negotiation: `FIELD_LEAD_PAD` is a constant, so a wider lead slides under the text.
+   */
+  readonly lead?: ReactNode;
 }
 
 /** Uncontrolled by convention: pass `defaultValue` and commit on blur, never `value` per keystroke. */
-export function Field({ mono = false, ref, onFocus, onBlur, tone = "normal", onToken, ...rest }: FieldProps) {
+export function Field({ mono = false, ref, onFocus, onBlur, tone = "normal", onToken, lead, ...rest }: FieldProps) {
   const node = useRef<HTMLInputElement | null>(null);
   const setRef = useCallback(
     (element: HTMLInputElement | null) => {
@@ -256,12 +298,15 @@ export function Field({ mono = false, ref, onFocus, onBlur, tone = "normal", onT
   useEffect(() => () => clearFlush(flush), [flush]);
 
   const pills = useTokenPills(initialText(rest.defaultValue), onToken);
-  const metrics = cn(FIELD_METRICS, mono && "font-mono");
+  // One string, handed to both the input and the backdrop, so the lead's inset moves the pills with
+  // the text by construction rather than by two call sites agreeing about a number.
+  const metrics = cn(FIELD_METRICS, lead === undefined ? FIELD_PAD : FIELD_LEAD_PAD, mono && "font-mono");
+  const boxed = onToken !== undefined || lead !== undefined;
 
   const input = (
     <input
       ref={setRef}
-      className={cn(metrics, FIELD_INK, TONE_CLASS[tone], onToken === undefined ? FIELD_FILL : "bg-transparent")}
+      className={cn(metrics, FIELD_INK, TONE_CLASS[tone], boxed ? "bg-transparent" : FIELD_FILL)}
       spellCheck={false}
       onFocus={(event) => {
         registerFlush(flush);
@@ -278,15 +323,24 @@ export function Field({ mono = false, ref, onFocus, onBlur, tone = "normal", onT
     />
   );
 
-  if (onToken === undefined) return input;
+  if (!boxed) return input;
 
   // The fill moves out here so the backdrop has somewhere to be seen from. `border-transparent` on
   // the overlay rather than no border at all: the input's 1px border insets its text by 1px, and a
   // backdrop that skips it is a backdrop one pixel to the left.
+  //
+  // The input keeps its own border, rounding and therefore its `:focus-visible` outline, so the
+  // ring still hugs the whole field including the lead. And the lead is rendered *after* the input,
+  // never before: `follow()` in `TokenOverlay.tsx` reaches the backdrop as the input's
+  // `previousElementSibling`, so anything inserted ahead of the input silently breaks the
+  // horizontal scroll sync on a long value.
   return (
     <span className={cn("relative block w-full min-w-0", FIELD_FILL)}>
-      <TokenOverlay value={pills.value} className={cn(metrics, "border-transparent")} />
+      {onToken === undefined ? null : (
+        <TokenOverlay value={pills.value} className={cn(metrics, "border-transparent")} />
+      )}
       {input}
+      {lead === undefined ? null : <span className={FIELD_LEAD_CLASS}>{lead}</span>}
     </span>
   );
 }

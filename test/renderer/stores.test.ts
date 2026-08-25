@@ -40,9 +40,11 @@ import {
   editPairEnabled,
   editPairKey,
   editPairValue,
+  editSecurity,
   pairsToText,
   project,
   readPairs,
+  readSecurity,
   textToPairs,
 } from "@preman/desktop/renderer/model/request.js";
 import { saveTab } from "@preman/desktop/renderer/actions.js";
@@ -696,6 +698,52 @@ describe("the bulk header editor", () => {
  * the dialog honest. A refusal has to come back as a value and change nothing — not open a host,
  * not reorder Recents — because the dialog is still on screen showing the name that caused it.
  */
+/**
+ * The lock left of the url.
+ *
+ * There is no TLS field in the request format, so what these assert is the *scheme* the toggle
+ * writes - the only thing either protocol's target resolver reads to decide.
+ */
+describe("the secure toggle beside the url", () => {
+  const HTTP = { $kind: "http-request" };
+  const GRPC = { $kind: "grpc-request" };
+
+  // `{{http_url}}` conventionally carries the scheme, so there is nothing to read here and
+  // nothing safe to write: prefixing would produce `https://https://api.example`.
+  it("givenHttpUrlBehindAToken_whenReadingSecurity_thenUnknown", () => {
+    expect(readSecurity({ ...HTTP, url: "{{http_url}}/profile" })).toBe("unknown");
+  });
+
+  it("givenHttpsUrl_whenUnlocking_thenWritesHttp", () => {
+    const data = { ...HTTP, url: "https://api.example/profile" };
+    expect(readSecurity(data)).toBe("secure");
+    expect(editSecurity(data, false)).toEqual([edit(FIELD.url, "http://api.example/profile")]);
+  });
+
+  it("givenHttpUrl_whenLocking_thenWritesHttps", () => {
+    const data = { ...HTTP, url: "http://api.example/profile" };
+    expect(readSecurity(data)).toBe("insecure");
+    expect(editSecurity(data, true)).toEqual([edit(FIELD.url, "https://api.example/profile")]);
+  });
+
+  // A gRPC url is an authority, not a URL: `parseAuthority` strips any scheme and keeps it only
+  // as a TLS hint. So "no scheme" is a state the toggle can put the url back into, which is what
+  // makes this a two-state control rather than an unknown.
+  it("givenGrpcAuthorityBehindAToken_whenLocking_thenPinsGrpcs", () => {
+    const data = { ...GRPC, url: "{{grpc_url}}" };
+    expect(readSecurity(data)).toBe("insecure");
+    expect(editSecurity(data, true)).toEqual([edit(FIELD.url, "grpcs://{{grpc_url}}")]);
+  });
+
+  // Not `grpc://`: core strips it and `shouldUseTls` still turns TLS on for `:443`, so writing it
+  // would be the editor claiming a plaintext call it cannot deliver.
+  it("givenPinnedGrpcAuthority_whenUnlocking_thenDropsTheSchemeRatherThanWritingGrpc", () => {
+    const data = { ...GRPC, url: "grpcs://api.example:443" };
+    expect(readSecurity(data)).toBe("secure");
+    expect(editSecurity(data, false)).toEqual([edit(FIELD.url, "api.example:443")]);
+  });
+});
+
 describe("creating a workspace from the window", () => {
   let bridge: FakeBridge;
 

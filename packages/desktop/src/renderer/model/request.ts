@@ -145,6 +145,59 @@ export function readMethod(data: unknown): string {
   return raw === EMPTY ? DEFAULT_METHOD : raw.toUpperCase();
 }
 
+/**
+ * Whether this request's target is TLS, as far as the *file* can say.
+ *
+ * There is no TLS field in the request format. Core derives it from the url and nothing else -
+ * `http/target.ts` reads `url.protocol`, `grpc/target.ts` reads the scheme, then `:443`, then a
+ * known TLS-terminated host suffix - and the only override is the CLI's `--tls`/`--plaintext`,
+ * which is an argument and not a document. So the lock beside the url edits the one thing that is
+ * both persisted and read: the scheme.
+ *
+ * `unknown` is the state where the scheme is not the url's to give. `{{http_url}}` conventionally
+ * already carries `https://`, so there is nothing to read and nothing safe to write - prefixing
+ * would produce `https://https://api.example`.
+ */
+export type UrlSecurity = "secure" | "insecure" | "unknown";
+
+const SCHEME_PATTERN = /^([a-z][a-z0-9+.-]*):\/\//i;
+const SECURE_HTTP_SCHEME = "https";
+const INSECURE_HTTP_SCHEME = "http";
+const SECURE_GRPC_SCHEME = "grpcs";
+/** The schemes `grpc/target.ts:shouldUseTls` treats as "TLS, decided". */
+const SECURE_GRPC_SCHEMES: ReadonlySet<string> = new Set([SECURE_GRPC_SCHEME, SECURE_HTTP_SCHEME]);
+
+function urlScheme(data: unknown): string | undefined {
+  return SCHEME_PATTERN.exec(readText(data, FIELD.url).trim())?.[1]?.toLowerCase();
+}
+
+export function readSecurity(data: unknown): UrlSecurity {
+  const scheme = urlScheme(data);
+  // A gRPC `url` is an authority, not a URL: `parseAuthority` strips the scheme and keeps it only
+  // as a TLS hint, so "no scheme" is a state the toggle can put the url back into rather than an
+  // unknown. An HTTP url with no scheme is genuinely unreadable here.
+  if (isGrpc(data)) return scheme !== undefined && SECURE_GRPC_SCHEMES.has(scheme) ? "secure" : "insecure";
+  if (scheme === SECURE_HTTP_SCHEME) return "secure";
+  if (scheme === INSECURE_HTTP_SCHEME) return "insecure";
+  return "unknown";
+}
+
+/**
+ * Flip the url's scheme.
+ *
+ * Unlocking a gRPC url *removes* the scheme rather than writing `grpc://`: core would strip that
+ * and still turn TLS on for `:443` or a `.zalopay.vn` host, so writing it would be the editor
+ * claiming plaintext it cannot deliver. Removing it hands the decision back to the heuristic,
+ * which is the truthful other half of a two-state control here.
+ */
+export function editSecurity(data: unknown, secure: boolean): FieldEdit[] {
+  const url = readText(data, FIELD.url).trim();
+  const match = SCHEME_PATTERN.exec(url);
+  const authority = match === null ? url : url.slice(match[0].length);
+  if (isGrpc(data)) return [edit(FIELD.url, secure ? `${SECURE_GRPC_SCHEME}://${authority}` : authority)];
+  return [edit(FIELD.url, `${secure ? SECURE_HTTP_SCHEME : INSECURE_HTTP_SCHEME}://${authority}`)];
+}
+
 export function readBodyType(data: unknown): BodyType {
   const raw = readText(data, FIELD.bodyType);
   const known = BODY_TYPES.find((candidate) => candidate === raw);

@@ -35,6 +35,8 @@ export {
   Key as AuthIcon,
   Lightning as GenerateIcon,
   ListMagnifyingGlass as PaletteIcon,
+  LockSimple as SecureIcon,
+  LockSimpleOpen as InsecureIcon,
   MagnifyingGlass as SearchIcon,
   PencilSimple as RenameIcon,
   Play as SendIcon,
