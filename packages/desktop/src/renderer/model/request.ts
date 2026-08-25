@@ -146,56 +146,66 @@ export function readMethod(data: unknown): string {
 }
 
 /**
- * Whether this request's target is TLS, as far as the *file* can say.
+ * A gRPC `url` read as the two things the request bar edits separately.
  *
- * There is no TLS field in the request format. Core derives it from the url and nothing else -
- * `http/target.ts` reads `url.protocol`, `grpc/target.ts` reads the scheme, then `:443`, then a
- * known TLS-terminated host suffix - and the only override is the CLI's `--tls`/`--plaintext`,
- * which is an argument and not a document. So the lock beside the url edits the one thing that is
- * both persisted and read: the scheme.
+ * There is no TLS field in the request format. `grpc/target.ts` derives it from the url: the
+ * scheme first, then `:443`, then a known TLS-terminated host suffix. So `grpcs://` is the one
+ * place a request can *say* TLS, and the lock in the bar is that scheme - which is why the field
+ * beside it shows the authority alone. A gRPC url is an authority anyway (`parseAuthority` strips
+ * the scheme and keeps it only as this hint), so nothing is hidden that the field was ever for.
  *
- * `unknown` is the state where the scheme is not the url's to give. `{{http_url}}` conventionally
- * already carries `https://`, so there is nothing to read and nothing safe to write - prefixing
- * would produce `https://https://api.example`.
+ * HTTP has no such split and no lock: there `http://` and `https://` *are* the url, `tls` is
+ * exactly `url.protocol === "https:"`, and the text already says which.
  */
-export type UrlSecurity = "secure" | "insecure" | "unknown";
-
-const SCHEME_PATTERN = /^([a-z][a-z0-9+.-]*):\/\//i;
-const SECURE_HTTP_SCHEME = "https";
-const INSECURE_HTTP_SCHEME = "http";
-const SECURE_GRPC_SCHEME = "grpcs";
-/** The schemes `grpc/target.ts:shouldUseTls` treats as "TLS, decided". */
-const SECURE_GRPC_SCHEMES: ReadonlySet<string> = new Set([SECURE_GRPC_SCHEME, SECURE_HTTP_SCHEME]);
-
-function urlScheme(data: unknown): string | undefined {
-  return SCHEME_PATTERN.exec(readText(data, FIELD.url).trim())?.[1]?.toLowerCase();
+export interface GrpcUrl {
+  /** `grpcs://` is present, pinning TLS on regardless of port or host. */
+  readonly tls: boolean;
+  /** Everything after the scheme: `host:port`, or the `{{token}}` that resolves to one. */
+  readonly authority: string;
 }
 
-export function readSecurity(data: unknown): UrlSecurity {
-  const scheme = urlScheme(data);
-  // A gRPC `url` is an authority, not a URL: `parseAuthority` strips the scheme and keeps it only
-  // as a TLS hint, so "no scheme" is a state the toggle can put the url back into rather than an
-  // unknown. An HTTP url with no scheme is genuinely unreadable here.
-  if (isGrpc(data)) return scheme !== undefined && SECURE_GRPC_SCHEMES.has(scheme) ? "secure" : "insecure";
-  if (scheme === SECURE_HTTP_SCHEME) return "secure";
-  if (scheme === INSECURE_HTTP_SCHEME) return "insecure";
-  return "unknown";
+const SCHEME_PATTERN = /^([a-z][a-z0-9+.-]*):\/\//i;
+const SECURE_GRPC_SCHEME = "grpcs";
+/** The schemes `grpc/target.ts:shouldUseTls` treats as "TLS, decided". */
+const SECURE_GRPC_SCHEMES: ReadonlySet<string> = new Set([SECURE_GRPC_SCHEME, "https"]);
+
+export function parseGrpcUrl(raw: string): GrpcUrl {
+  const trimmed = raw.trim();
+  const match = SCHEME_PATTERN.exec(trimmed);
+  if (match === null) return { tls: false, authority: trimmed };
+  const scheme = match[1]?.toLowerCase() ?? EMPTY;
+  return { tls: SECURE_GRPC_SCHEMES.has(scheme), authority: trimmed.slice(match[0].length) };
+}
+
+export function readGrpcUrl(data: unknown): GrpcUrl {
+  return parseGrpcUrl(readText(data, FIELD.url));
 }
 
 /**
- * Flip the url's scheme.
- *
- * Unlocking a gRPC url *removes* the scheme rather than writing `grpc://`: core would strip that
- * and still turn TLS on for `:443` or a `.zalopay.vn` host, so writing it would be the editor
- * claiming plaintext it cannot deliver. Removing it hands the decision back to the heuristic,
- * which is the truthful other half of a two-state control here.
+ * Unlocking drops the scheme rather than writing `grpc://`: core would strip that and still turn
+ * TLS on for `:443` or a known TLS host, so writing it would be the editor claiming a plaintext
+ * call it cannot deliver. Absent means "the target decides", which is the truthful other state.
  */
-export function editSecurity(data: unknown, secure: boolean): FieldEdit[] {
-  const url = readText(data, FIELD.url).trim();
-  const match = SCHEME_PATTERN.exec(url);
-  const authority = match === null ? url : url.slice(match[0].length);
-  if (isGrpc(data)) return [edit(FIELD.url, secure ? `${SECURE_GRPC_SCHEME}://${authority}` : authority)];
-  return [edit(FIELD.url, `${secure ? SECURE_HTTP_SCHEME : INSECURE_HTTP_SCHEME}://${authority}`)];
+export function formatGrpcUrl({ tls, authority }: GrpcUrl): string {
+  return tls ? `${SECURE_GRPC_SCHEME}://${authority}` : authority;
+}
+
+export function editGrpcTls(data: unknown, tls: boolean): FieldEdit[] {
+  return [edit(FIELD.url, formatGrpcUrl({ tls, authority: readGrpcUrl(data).authority }))];
+}
+
+/**
+ * Commit what was typed into the authority field.
+ *
+ * A scheme typed or pasted into the field moves the *lock* rather than being kept as text - the
+ * field has one job and the scheme is not it. Without a scheme the lock is left alone, which is
+ * the case that matters: the field shows no scheme when TLS is pinned, so treating "no scheme
+ * typed" as "no TLS" would silently unlock the request on any edit to its host.
+ */
+export function editGrpcAuthority(data: unknown, typed: string): FieldEdit[] {
+  const parsed = parseGrpcUrl(typed);
+  const tls = SCHEME_PATTERN.test(typed.trim()) ? parsed.tls : readGrpcUrl(data).tls;
+  return [edit(FIELD.url, formatGrpcUrl({ tls, authority: parsed.authority }))];
 }
 
 export function readBodyType(data: unknown): BodyType {

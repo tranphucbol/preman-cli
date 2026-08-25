@@ -24,23 +24,23 @@ import {
   type Pair,
   type PairList,
   type ScriptSlot,
-  type UrlSecurity,
   edit,
   editPairAdded,
   editPairEnabled,
   editPairKey,
   editPairRemoved,
   editPairValue,
+  editGrpcAuthority,
+  editGrpcTls,
   editScript,
-  editSecurity,
   hasDescriptor,
   isGrpc,
   project,
   readBodyType,
   readMethod,
   readPairs,
+  readGrpcUrl,
   readScripts,
-  readSecurity,
   readSettings,
   readText,
 } from "@preman/desktop/renderer/model/request.js";
@@ -186,24 +186,12 @@ const FIRST_SLOT = 0;
 const EMPTY_SCRIPT = "";
 
 /**
- * What the lock inside the url field says in each state it can be in.
- *
- * Four strings rather than a `Record<UrlSecurity, string>` per protocol, because gRPC has no
- * `unknown` and HTTP's `insecure` is a fact where gRPC's is a default. A total record would need
- * an entry for a state that cannot happen, and a dead entry in a lookup table is how the table
- * stops being the answer to "what can this control say".
+ * What the lock says in each of its two states. The lock *is* `grpcs://`, so both strings name the
+ * scheme rather than describing a mood: it is a segment of the url, and the field beside it no
+ * longer shows that segment.
  */
-const GRPC_SECURE_LABEL = "TLS, pinned by grpcs://. Click to hand the choice back to the target.";
-const GRPC_INSECURE_LABEL = "TLS decided by the target: :443 or a known TLS host. Click to pin it on.";
-const HTTP_SECURE_LABEL = "https://. Click for http://.";
-const HTTP_INSECURE_LABEL = "http://. Click for https://.";
-const UNKNOWN_SECURE_LABEL = "The scheme comes from the url's {{token}}, so it is set with the variable, not here.";
-
-function secureLabel(grpc: boolean, security: UrlSecurity): string {
-  if (security === "unknown") return UNKNOWN_SECURE_LABEL;
-  if (security === "secure") return grpc ? GRPC_SECURE_LABEL : HTTP_SECURE_LABEL;
-  return grpc ? GRPC_INSECURE_LABEL : HTTP_INSECURE_LABEL;
-}
+const TLS_PINNED_LABEL = "grpcs:// - TLS pinned on. Click to let the target decide.";
+const TLS_UNPINNED_LABEL = "No scheme - TLS decided by the target (:443, or a known TLS host). Click to pin grpcs://.";
 
 export interface RequestEditorProps {
   readonly tab: Tab;
@@ -296,20 +284,38 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
             comes first in both: it is what the request is addressed to, and reading "where" before
             "what" is the order the two fields are actually filled in. */}
         <div className={grpc ? "w-72 shrink-0" : "min-w-0 flex-1"}>
-          <Field
-            key={readText(data, FIELD.url)}
-            mono
-            defaultValue={readText(data, FIELD.url)}
-            placeholder={grpc ? "{{grpc_host}}" : "{{base_url}}/path"}
-            aria-label="URL"
-            onToken={box.report}
-            // Inside the box, not beside it: the lock is the url's leading segment, which is
-            // literally the field it edits.
-            lead={<SecureToggle data={data} grpc={grpc} apply={apply} />}
-            onBlur={(event) => {
-              commit(FIELD.url, readText(data, FIELD.url), event.currentTarget.value);
-            }}
-          />
+          {grpc ? (
+            <Field
+              // Keyed on the whole stored url, not the authority: the lock and the field write the
+              // same YAML string, so this is what has to remount the input when either of them,
+              // or a change on disk, moves it.
+              key={readText(data, FIELD.url)}
+              mono
+              defaultValue={readGrpcUrl(data).authority}
+              placeholder="{{grpc_host}}"
+              aria-label="Target authority"
+              onToken={box.report}
+              // The scheme is the lock's, so it is drawn inside the box and the field shows the
+              // authority alone - which is all a gRPC url ever is.
+              lead={<TlsToggle data={data} apply={apply} />}
+              onBlur={(event) => {
+                const typed = event.currentTarget.value;
+                if (typed !== readGrpcUrl(data).authority) apply(editGrpcAuthority(data, typed));
+              }}
+            />
+          ) : (
+            <Field
+              key={readText(data, FIELD.url)}
+              mono
+              defaultValue={readText(data, FIELD.url)}
+              placeholder="{{base_url}}/path"
+              aria-label="URL"
+              onToken={box.report}
+              onBlur={(event) => {
+                commit(FIELD.url, readText(data, FIELD.url), event.currentTarget.value);
+              }}
+            />
+          )}
         </div>
         {grpc ? (
           <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -441,63 +447,42 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
 type Apply = (edits: readonly FieldEdit[]) => void;
 
 /**
- * The lock's three inks, as a closed set because `FIELD_LEAD_BUTTON_CLASS` carries none.
+ * The lock's two inks, as a closed set because `FIELD_LEAD_BUTTON_CLASS` carries none.
  *
- * Locked reads as a status, not as the thing you came here to press - that is Send, and the accent
- * is a fill exactly once per pane. Unlocked takes the ordinary affordance tone: an unlocked url is
- * a choice, not a fault, and `text-warn` there would nag on every localhost request.
+ * Pinned reads as a status, not as the thing you came here to press - that is Send, and the accent
+ * is a fill exactly once per pane. Unpinned takes the ordinary affordance tone: letting the target
+ * decide is a choice, not a fault, and `text-warn` there would nag on every localhost request.
  */
-const SECURE_INK = "text-ok";
-const INSECURE_INK = "text-ink-dim hover:text-ink";
+const TLS_PINNED_INK = "text-ok";
+const TLS_UNPINNED_INK = "text-ink-dim hover:text-ink";
 
 /**
- * The lock, drawn inside the url field as its `lead`.
+ * The `grpcs://` scheme, drawn as a lock inside the authority field.
  *
- * It writes the url's scheme, because that is the only place either protocol's TLS decision is
- * recorded (see `readSecurity`). Inside the box rather than beside it because that is what it edits:
- * beside the field it was a third button in a row that already has a picker and a Send, and it read
- * as another action on the request instead of as the first segment of its address.
+ * The lock *is* the scheme - the one place a gRPC request can say TLS, since `grpc/target.ts`
+ * otherwise guesses from `:443` and a known host suffix. So it lives inside the field's box and the
+ * field shows the authority alone: two controls, one YAML string, and the segment each of them owns
+ * is the segment it draws.
  *
- * Two shapes, not one disabled button: a disabled `<button>` emits no pointer events in Chromium,
- * so the state whose entire content is the *explanation* is the one state whose tooltip would never
- * open. The `unknown` state is therefore a labelled glyph - `text-glyph` is the tier for a non-text
- * affordance - and the other two are a real toggle.
+ * gRPC only. HTTP has no lock because `http://` and `https://` are not a segment to hide - there
+ * `tls` is exactly `url.protocol === "https:"`, and the url text already says which.
  */
-function SecureToggle({
-  data,
-  grpc,
-  apply,
-}: {
-  readonly data: unknown;
-  readonly grpc: boolean;
-  readonly apply: Apply;
-}) {
-  const security = readSecurity(data);
-  const label = secureLabel(grpc, security);
+function TlsToggle({ data, apply }: { readonly data: unknown; readonly apply: Apply }) {
+  const { tls } = readGrpcUrl(data);
+  const label = tls ? TLS_PINNED_LABEL : TLS_UNPINNED_LABEL;
 
-  if (security === "unknown") {
-    return (
-      <Tooltip content={label}>
-        <span role="img" aria-label={label} className={cn(FIELD_LEAD_BUTTON_CLASS, GLYPH_CLASS)}>
-          <InsecureIcon />
-        </span>
-      </Tooltip>
-    );
-  }
-
-  const secure = security === "secure";
   return (
     <Tooltip content={label}>
       <button
         type="button"
         aria-label={label}
-        aria-pressed={secure}
-        className={cn(FIELD_LEAD_BUTTON_CLASS, secure ? SECURE_INK : INSECURE_INK)}
+        aria-pressed={tls}
+        className={cn(FIELD_LEAD_BUTTON_CLASS, tls ? TLS_PINNED_INK : TLS_UNPINNED_INK)}
         onClick={() => {
-          apply(editSecurity(data, !secure));
+          apply(editGrpcTls(data, !tls));
         }}
       >
-        {secure ? <SecureIcon /> : <InsecureIcon />}
+        {tls ? <SecureIcon /> : <InsecureIcon />}
       </button>
     </Tooltip>
   );

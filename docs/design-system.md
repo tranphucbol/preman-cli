@@ -84,11 +84,19 @@ identity of the request.
 ## A field's lead
 
 `Field` takes a `lead`: one control drawn **inside** the field's box, against its left edge. There
-is one, the url bar's TLS lock, and the rule that put it there is worth stating because it decides
-the next one too. An affordance that is a property _of_ the value goes inside the field; an action
-_on_ the value is a button beside it. The lock edits the url's scheme, so beside the field it was a
+is one, the gRPC url's TLS lock, and the rule that put it there is worth stating because it decides
+the next one too. A control that owns a _segment of the value_ goes inside the field; an action _on_
+the value is a button beside it. The lock owns the url's `grpcs://`, so beside the field it was a
 third button in a row that already had a method picker and a Send, and it read as another thing to
 press rather than as the first segment of the address.
+
+That ownership is literal: the lock draws the scheme and the field draws the authority, and the
+field's text does **not** repeat it. Two controls, one YAML string, and each shows only its own
+segment — which is why the gRPC field is keyed on the whole stored url rather than on what it
+displays, so a write from either side remounts it. Only gRPC has this. HTTP has no lock, because
+`http://` and `https://` are not a segment worth hiding: there `tls` is exactly
+`url.protocol === "https:"`, the url text already says which, and a lock would be a second way to
+say the same thing.
 
 The geometry is three constants in `Controls.tsx` and they are one budget: the lead is inset 2px,
 may be 24px square, and `FIELD_LEAD_PAD` pads the text to 32px to clear it. 24px because that is
@@ -107,17 +115,17 @@ Two things hold that arrangement together, and both are load-bearing:
   horizontal scroll sync on a long value. The input also keeps its own border and rounding, so the
   `:focus-visible` ring still hugs the whole field, lead included.
 
-The lock is also the one place a status colour lands on an icon instead of a tag. Locked is
-`text-ok`, not `text-accent`: the accent is a fill exactly once per pane and that is Send. Unlocked
-is `text-ink-dim`, because an unlocked url is a choice and not a fault — `text-warn` there would nag
-on every localhost request. `FIELD_LEAD_BUTTON_CLASS` carries no ink at all, for the reason
+The lock is also the one place a status colour lands on an icon instead of a tag. Pinned is
+`text-ok`, not `text-accent`: the accent is a fill exactly once per pane and that is Send. Unpinned
+is `text-ink-dim`, because letting the target decide is a choice and not a fault — `text-warn` there
+would nag on every localhost request. `FIELD_LEAD_BUTTON_CLASS` carries no ink at all, for the reason
 `FIELD_METRICS` carries no fill: a lead's colour is what it is saying, so the caller declares it and
 there is exactly one declaration.
 
-The third state, where the scheme lives in a `{{token}}` and is neither readable nor safely
-writable, is a labelled `text-glyph` span rather than a disabled button. A disabled `<button>` emits
-no pointer events, so the one state whose whole content is the explanation would be the one state
-whose tooltip never opens.
+Both states are a real `<button>`, and a lead should stay that way. A disabled `<button>` emits no
+pointer events in Chromium, so a lead whose whole content is an _explanation_ of why it cannot be
+pressed is a lead whose tooltip never opens. If a lead has a state it cannot act in, that state is a
+labelled `text-glyph` span — the tier for a non-text affordance — and not a disabled button.
 
 ## Virtualized rows
 
