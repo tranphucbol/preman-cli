@@ -375,6 +375,27 @@ them through `createRequire` on first use; only `chai` is eager, at 6ms. Making 
 cost 1281ms for cheerio alone, and 2.2s for the set — on every engine host, for scripts most
 workspaces never write.
 
+**The engine's own dependencies were not.** A cold first launch against a real 33-request workspace
+took 5.5s to the first sidebar row, of which 4.7s was the engine host evaluating `@faker-js/faker`,
+`@grpc/grpc-js`, `@grpc/proto-loader`, `chai` and `csv-parse` before `entry.ts` could mark
+`engine.start`. None of them is needed to read a catalog; faker alone was 2.0s cold and 9.7MB.
+`host.ts` now imports `api/run.js`, `api/preview.js` and `api/protos.js` at their use sites and
+prefetches them 250ms after the first catalog, and `main.ts` forks the host above `createWindow()`
+rather than below it. Measured against a `HEAD` build in a worktree, alternating, three rounds each,
+evicting the six packages and both builds' own `dist/` before every launch: median first row 5544ms
+to 1995ms, the engine's module evaluation 4651ms to 1152ms, and the gap the renderer spends waiting
+on it 3887ms to 285ms. Warm, 906ms and 82ms.
+[Decision 029](decisions/029-the-engine-loads-the-send-path-on-demand.md) has the per-package
+numbers and the reason this is guarded by a source-graph assertion in `test/perf.test.ts` rather
+than by a row in the table above: it is only measurable on a machine whose page cache has just been
+destroyed, and the cold-start row discards precisely that launch.
+
+**And most of faker's share was a barrel import.** `@faker-js/faker` loads all 71 locales plus
+`base` — 81 files, 3.8MB — to hand you the one bound to `en`. `vars/dynamic/faker.ts` now imports
+`@faker-js/faker/locale/en`, which is 4 files and 478KB: 3355 / 3403 / 5430ms drops to 83 / 99 /
+100ms cold, 65-102ms to 11-12ms warm. It is the same object either way, so nothing behaves
+differently; `test/perf.test.ts` fails if any source names the barrel again.
+
 ## Where the fixtures come from
 
 `test/support/big-workspace.ts` — `writeBigWorkspace(n)` writes an n-request workspace into a temp

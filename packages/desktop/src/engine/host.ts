@@ -15,7 +15,7 @@ import { buildCatalog, refreshCatalog, type Catalog, type CatalogNode } from "@p
 import type { RunEvent, RunEventSink } from "@preman/core/api/events.js";
 import { readGitStatus, type GitStatus } from "@preman/core/api/git.js";
 import { grepWorkspace, type GrepResult } from "@preman/core/api/grep.js";
-import { ProtoCache } from "@preman/core/api/protos.js";
+import type { ProtoCache } from "@preman/core/api/protos.js";
 import {
   createCollection,
   createEnvironmentFile,
@@ -31,8 +31,8 @@ import {
   replaceFileText,
 } from "@preman/core/api/mutate.js";
 import { writeEnvironmentValue } from "@preman/core/api/environments.js";
-import { previewText } from "@preman/core/api/preview.js";
-import { runSelection, type RunSelectionArgs, type RunSelectionResult } from "@preman/core/api/run.js";
+import type { TextPreview } from "@preman/core/api/preview.js";
+import type { RunSelectionArgs, RunSelectionResult } from "@preman/core/api/run.js";
 import { readVariables, type VariableView } from "@preman/core/api/variables.js";
 import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
 import { EXIT, PremanError } from "@preman/core/errors.js";
@@ -93,6 +93,29 @@ const UNSAFE_NAME_CHARACTERS = /[^A-Za-z0-9._-]+/g;
 const GIT_STATUS_DEBOUNCE_MS = 400;
 /** `schema.location` is posix in every workspace, whatever host wrote it. */
 const LOCATION_SEPARATOR = "/";
+/**
+ * How long after the first catalog the deferred send path is warmed.
+ *
+ * Long enough that the renderer has painted the rows that same catalog just gave it. The
+ * two processes share one disk, and the whole point of deferring was to stop a 16MB read
+ * from sitting in front of the tree; prefetching it immediately would put it back there.
+ */
+const SEND_PATH_PREFETCH_MS = 250;
+
+/*
+ * The three modules below are imported where they are used, not at the top of this file.
+ *
+ * `api/run.js`, `api/preview.js` and `api/protos.js` reach `@faker-js/faker`, `@grpc/grpc-js`,
+ * `@grpc/proto-loader`, `chai` and `csv-parse` — around 16MB across 640 files, none of which a
+ * sidebar needs. Statically imported they are evaluated before `entry.ts` can mark
+ * `engine.start`, so the renderer's very first `catalog` request waits behind all of them: on a
+ * cold page cache that measured 4.3s, two thirds of the time from asking for the tree to seeing
+ * a row. Everything the catalog does need — `yaml` and `zod` — stays static above.
+ *
+ * `EngineHost.handle` was already async, so this is a load order change and not an interface
+ * one, and `@preman/core` stays synchronous. `schedulePrefetch` pays the cost back once the
+ * tree is on screen, so the first Send is no slower than it was. Decision 029.
+ */
 
 export interface EngineHostOptions {
   /** The workspace root. Every node id in the protocol is relative to this. */
@@ -191,7 +214,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   const { root, post } = options;
   const bodies = new BodyStore();
   /** One per host, because the load is the expensive part and it only changes with a `.proto`. */
-  const protos = new ProtoCache(root);
+  let protos: ProtoCache | undefined;
   const runs = new Map<string, RunState>();
   /** Finished runs, oldest first, so a report can be exported after `run-done`. */
   const reports = new Map<string, RunReport>();
@@ -201,6 +224,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   /** Refreshes are serialised: two overlapping `refreshCatalog` calls would race on `catalog`. */
   let reconciling: Promise<void> = Promise.resolve();
   let gitTimer: ReturnType<typeof setTimeout> | undefined;
+  let prefetchTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   /**
    * The bytes this host last wrote to a path, so the watcher can tell our own write from
@@ -214,6 +238,38 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     catalog = next;
     post({ push: "catalog", catalog: next });
     return next;
+  }
+
+  /** The proto index, built on the first question that needs one rather than at boot. */
+  async function ensureProtos(): Promise<ProtoCache> {
+    if (protos === undefined) {
+      const protoApi = await import("@preman/core/api/protos.js");
+      // Re-checked: two concurrent callers both awaited, and the second must not
+      // replace a cache the first has already handed out.
+      protos ??= new protoApi.ProtoCache(root);
+    }
+    return protos;
+  }
+
+  /**
+   * Warm what the top of this file no longer imports, so the first Send pays nothing for
+   * the deferral. Failures are swallowed on purpose: this is a cache, and a real import
+   * error belongs to the request that actually needed the module, with its own id.
+   */
+  function schedulePrefetch(): void {
+    if (prefetchTimer !== undefined) return;
+    prefetchTimer = setTimeout(() => {
+      prefetchTimer = undefined;
+      if (disposed) return;
+      void Promise.all([
+        import("@preman/core/api/run.js"),
+        import("@preman/core/api/preview.js"),
+        import("@preman/core/api/protos.js"),
+      ]).catch(() => undefined);
+    }, SEND_PATH_PREFETCH_MS);
+    // The engine is kept alive by its port, never by this. A host disposed inside the
+    // window still clears it below; this is for the process that closes first.
+    prefetchTimer.unref();
   }
 
   /** True when `path`'s bytes on disk still match what this host last wrote there. */
@@ -258,6 +314,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     markPhase(PHASES.engineCatalogExit);
     catalog = built;
     if (watcher === undefined && !disposed) startWatching();
+    schedulePrefetch();
     return built;
   }
 
@@ -435,7 +492,9 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     // which is the only way it can correlate the events that follow.
     void (async () => {
       try {
-        const catalogNow = await ensureCatalog();
+        // In parallel: the catalog is usually already in hand, and the run path is usually
+        // already prefetched, so on the common path neither of these waits for anything.
+        const [{ runSelection }, catalogNow] = await Promise.all([import("@preman/core/api/run.js"), ensureCatalog()]);
         const selection: RunSelectionArgs = {
           dir: root,
           selector: selectorFor(catalogNow, args.nodeId),
@@ -495,8 +554,8 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
    * would need to reach each one. The relative path is computed from the request's own
    * directory, which is the only place that arithmetic can honestly happen.
    */
-  function listMethods(nodeId: string | undefined): MethodChoices {
-    const index = protos.index();
+  async function listMethods(nodeId: string | undefined): Promise<MethodChoices> {
+    const index = (await ensureProtos()).index();
     const from = nodeId === undefined ? undefined : dirname(fileFor(resolveWithinRoot(root, nodeId), "request"));
     const methods: MethodChoice[] = index.methods.map((method) => ({
       methodPath: method.methodPath,
@@ -519,9 +578,15 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
    * environment, shadowed ones included: a shadowed key still interpolates, so a field
    * named after it should still be written as `{{token}}`.
    */
-  function messageSkeleton(methodPath: string, environment: string | null): string {
+  async function messageSkeleton(methodPath: string, environment: string | null): Promise<string> {
     const tokens = new Set(readVariables(root, environment).bindings.map((binding) => binding.key));
-    return protos.skeleton(methodPath, tokens);
+    return (await ensureProtos()).skeleton(methodPath, tokens);
+  }
+
+  /** Interpolation without sending, so `{{token}}` can be shown resolved as it is typed. */
+  async function preview(environment: string | null, text: string): Promise<TextPreview> {
+    const { previewText } = await import("@preman/core/api/preview.js");
+    return previewText(root, environment, text);
   }
 
   async function grep(query: string, limit: number | undefined): Promise<GrepResult> {
@@ -576,7 +641,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       case "write-variable":
         return writeVariable(request.write);
       case "preview":
-        return previewText(root, request.environment, request.text);
+        return preview(request.environment, request.text);
       case "run-report":
         return runReport(request.runId, request.format);
       case "list-methods":
@@ -615,6 +680,8 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       watcher = undefined;
       if (gitTimer !== undefined) clearTimeout(gitTimer);
       gitTimer = undefined;
+      if (prefetchTimer !== undefined) clearTimeout(prefetchTimer);
+      prefetchTimer = undefined;
       for (const state of runs.values()) state.cancelled = true;
       runs.clear();
       reports.clear();

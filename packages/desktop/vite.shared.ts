@@ -5,7 +5,7 @@
  */
 import { builtinModules } from "node:module";
 import { resolve } from "node:path";
-import { SANDBOX_ALIASES, SANDBOX_PACKAGES } from "../core/src/scripts/module-names.js";
+import { FAKER_MODULE, SANDBOX_ALIASES, SANDBOX_PACKAGES } from "../core/src/scripts/module-names.js";
 
 export const BUILD_TARGET = "node20";
 export const PACKAGE_ROOT = import.meta.dirname;
@@ -33,7 +33,7 @@ const NODE_BUILTINS = builtinModules.flatMap((moduleName) => {
  * absent: the engine is inlined, the same way `dist/preman.js` inlines it.
  */
 const ENGINE_RUNTIME_PACKAGES = [
-  "@faker-js/faker",
+  FAKER_MODULE,
   "@grpc/grpc-js",
   "@grpc/proto-loader",
   "yaml",

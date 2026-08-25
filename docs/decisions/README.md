@@ -36,6 +36,7 @@ These are the decisions behind the desktop app. The CLI predates the practice.
 | [026](026-the-app-is-allowed-to-move.md)                            | The app is allowed to move                                           |
 | [027](027-the-app-reports-its-own-phases.md)                        | The app reports its own phases                                       |
 | [028](028-the-create-dialog-asks-what-before-it-asks-name.md)       | The create dialog asks what before it asks name                      |
+| [029](029-the-engine-loads-the-send-path-on-demand.md)              | The engine loads the send path on demand                             |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -57,6 +58,12 @@ own new budget row is gated well above its goal. 028 is the smallest of them and
 that was never written down as one: a `Do not simplify them into a toggle` comment held for exactly
 as long as the dialog had two answers, and a folder made it three. It is here rather than in a diff
 because the comment's own argument — that a protocol is not a setting you change later — survives the
-reversal and picks the new shape.
+reversal and picks the new shape. 029 is the first thing 027's instrument found that was worth
+fixing rather than explaining: the engine spent 4.8 seconds of a cold launch evaluating faker,
+grpc-js and chai before it could answer a question about YAML files, and 016's cold-start row is
+defined to discard exactly the launch where that is visible. It is also the first to move a function
+between modules for what the module's imports cost rather than for what the function does, and the
+first whose gate is a source-graph assertion instead of a number — because the number it would
+assert is only observable on a machine whose page cache has just been destroyed.
 
 `TEMPLATE.md` is the shape of a new one.

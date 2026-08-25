@@ -2,7 +2,7 @@ import { builtinModules } from "node:module";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import packageJson from "./package.json" with { type: "json" };
-import { SANDBOX_ALIASES, SANDBOX_PACKAGES } from "../core/src/scripts/module-names.js";
+import { FAKER_MODULE, SANDBOX_ALIASES, SANDBOX_PACKAGES } from "../core/src/scripts/module-names.js";
 
 const BUILD_TARGET = "node20";
 const OUT_FILE = "preman.js";
@@ -14,7 +14,7 @@ const ENTRY_FILE = resolve(SOURCE_ROOT, "bin.ts");
 const NODE_MAIN_FIELDS = ["module", "jsnext:main", "jsnext", "main"];
 const NODE_CONDITIONS = ["node"];
 const RUNTIME_PACKAGES = [
-  "@faker-js/faker",
+  FAKER_MODULE,
   "@grpc/grpc-js",
   "@grpc/proto-loader",
   "@inquirer/prompts",

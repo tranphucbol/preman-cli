@@ -1,4 +1,4 @@
-import { countTests } from "@preman/core/scripts/sandbox.js";
+import { countTests } from "@preman/core/scripts/tests.js";
 import type { GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
 
 /** `undefined` when the text is not JSON, so an error page survives as-is. */

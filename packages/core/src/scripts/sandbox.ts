@@ -10,6 +10,11 @@ import { expect, makeHeaderList, makeMessageList, type MessageList, type Respons
 import type { LiveRequest } from "./live-request.js";
 import { requireSandboxModule, sandboxGlobals } from "./modules.js";
 import { sendScriptRequest } from "./send-request.js";
+import type { TestResult } from "./tests.js";
+
+// Where a `pm.test` result is shaped and counted. Re-exported rather than defined here so that
+// counting one does not cost an importer this module's `node:vm` and chai graph; decision 029.
+export { countTests, type TestResult, type TestSummary } from "./tests.js";
 
 export interface ConsoleLine {
   level: "log" | "info" | "warn" | "error" | "debug";
@@ -54,31 +59,6 @@ export interface HttpScriptResponse {
 }
 
 export type ScriptResponseInfo = GrpcScriptResponse | HttpScriptResponse;
-
-export interface TestResult {
-  name: string;
-  status: "passed" | "failed" | "skipped";
-  /** Assertion message for `failed`, otherwise `undefined`. */
-  error: string | undefined;
-  /** Which collection / folder / request declared the script that ran this test. */
-  origin: ScriptOrigin;
-}
-
-export interface TestSummary {
-  total: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-}
-
-export function countTests(tests: TestResult[]): TestSummary {
-  return {
-    total: tests.length,
-    passed: tests.filter((test) => test.status === "passed").length,
-    failed: tests.filter((test) => test.status === "failed").length,
-    skipped: tests.filter((test) => test.status === "skipped").length,
-  };
-}
 
 /** One `pm.sendRequest` call, kept so the report can show what a script did. */
 export interface SideRequestRecord {

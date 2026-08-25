@@ -18,7 +18,7 @@
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useRef, useState } from "react";
-import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
+import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 
 import { REPORT_FORMATS, type ReportFormat } from "@preman/desktop/engine/protocol.js";
 
@@ -52,6 +52,7 @@ import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence } from "@preman/desktop/renderer/ui/motion.js";
 import { Button, Field, IconButton } from "@preman/desktop/renderer/ui/Controls.js";
+import { Handle } from "@preman/desktop/renderer/ui/Handle.js";
 import { CancelIcon, CloseIcon, ExportIcon, RunnerIcon, SendIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
 
@@ -356,9 +357,7 @@ function Exchange({ run }: { readonly run: Run }) {
       <Panel id={LIST_ID} defaultSize={LIST_DEFAULT} minSize={LIST_MIN} className="flex min-w-0 flex-col">
         <ItemList run={run} />
       </Panel>
-      <Separator className="group relative z-handle w-px shrink-0 cursor-col-resize bg-line data-[state=drag]:bg-accent">
-        <span className="absolute -inset-x-1 inset-y-0 group-hover:bg-accent/40" />
-      </Separator>
+      <Handle axis="vertical" />
       <Panel id={DETAIL_ID} minSize={DETAIL_MIN} className="flex min-w-0 flex-col">
         <ResponseView run={focused} />
       </Panel>

@@ -1,7 +1,7 @@
 import { builtinModules } from "node:module";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
-import { SANDBOX_ALIASES, SANDBOX_PACKAGES } from "./src/scripts/module-names.js";
+import { FAKER_MODULE, SANDBOX_ALIASES, SANDBOX_PACKAGES } from "./src/scripts/module-names.js";
 
 const BUILD_TARGET = "node20";
 const OUT_FILE = "core.js";
@@ -11,7 +11,7 @@ const ENTRY_FILE = resolve(SOURCE_ROOT, "index.ts");
 const NODE_MAIN_FIELDS = ["module", "jsnext:main", "jsnext", "main"];
 const NODE_CONDITIONS = ["node"];
 const RUNTIME_PACKAGES = [
-  "@faker-js/faker",
+  FAKER_MODULE,
   "@grpc/grpc-js",
   "@grpc/proto-loader",
   "yaml",

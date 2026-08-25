@@ -430,17 +430,22 @@ function start(): void {
 
   registerIpc();
   buildMenu();
-  window = createWindow();
 
   // Reopening the last workspace is why `activeRoot` is persisted at all. The port transfer waits
   // for `did-finish-load`, because a port sent to a document that has not run its script yet is a
   // port nobody is listening on — but the fork does not. Spawning the host here overlaps a Node
   // process starting with Chromium starting, which is a quarter of a second of the cold start that
   // was previously spent queueing behind the window.
+  //
+  // Above `createWindow` and not below it: reading the icon, constructing the BrowserWindow and
+  // `loadFile` measured 400-520ms on a cold start, and every one of those milliseconds was the
+  // engine not yet reading its own bundle off the same disk. Nothing here touches the window.
   const last = requireStore().read().activeRoot;
   reopening = last !== null && looksLikeWorkspace(last) ? last : null;
   if (reopening !== null) requireHosts().prewarm(reopening);
   markPhase(PHASES.mainPrewarm);
+
+  window = createWindow();
 
   window.webContents.once("did-finish-load", () => {
     if (reopening !== null) openWorkspace(reopening);

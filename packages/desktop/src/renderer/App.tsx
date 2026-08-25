@@ -8,12 +8,13 @@
  * page reads as a bug here.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Group, Panel, Separator, useDefaultLayout, usePanelCallbackRef } from "react-resizable-panels";
+import { Group, Panel, useDefaultLayout, usePanelCallbackRef } from "react-resizable-panels";
 
 import type { CatalogNode, GrepMatch } from "@preman/desktop/engine/protocol.js";
 
 import { AskDialog, type Ask, type CreateTarget } from "@preman/desktop/renderer/ui/Dialog.js";
 import { Button, IconButton, Select, SelectOption, TooltipProvider } from "@preman/desktop/renderer/ui/Controls.js";
+import { Handle } from "@preman/desktop/renderer/ui/Handle.js";
 import {
   DropdownContent,
   DropdownItem,
@@ -264,21 +265,13 @@ export function App(): React.JSX.Element {
                   >
                     <WorkspaceTree onAsk={setAsk} onFail={setFailure} />
                   </Panel>
-                  {/*
-                    One hairline, with the hit area spilling either side of it. A visible 4px gutter
-                    between two panes is 4px of nothing, fifty times a day.
-                  */}
-                  <Separator className="group relative z-handle w-px shrink-0 cursor-col-resize bg-line data-[state=drag]:bg-accent">
-                    <span className="absolute -inset-x-1 inset-y-0 group-hover:bg-accent/40" />
-                  </Separator>
+                  <Handle axis="vertical" />
                   <Panel id={EDITOR_ID} className="flex min-w-0 flex-col">
                     <EditorPane onAsk={setAsk} onFail={setFailure} />
                   </Panel>
                 </Group>
               </Panel>
-              <Separator className="group relative z-handle h-px shrink-0 cursor-row-resize bg-line data-[state=drag]:bg-accent">
-                <span className="absolute inset-x-0 -inset-y-1 group-hover:bg-accent/40" />
-              </Separator>
+              <Handle axis="horizontal" />
               <Panel
                 id={CONSOLE_ID}
                 collapsible
@@ -945,9 +938,7 @@ function EditorPane({
               onFail={onFail}
             />
           </Panel>
-          <Separator className="group relative z-handle h-px shrink-0 cursor-row-resize bg-line data-[state=drag]:bg-accent">
-            <span className="absolute inset-x-0 -inset-y-1 group-hover:bg-accent/40" />
-          </Separator>
+          <Handle axis="horizontal" />
           <Panel id={RESPONSE_ID} minSize={RESPONSE_MIN} className="flex min-h-0 flex-col">
             <ResponsePane nodeId={tab.nodeId} />
           </Panel>
