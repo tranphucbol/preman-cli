@@ -44,6 +44,12 @@ Deriving from the tag makes that disagreement unrepresentable. `PREMAN_VERSION`,
 `packages/cli/vite.config.ts` already honoured, is not used: the manifest is written first and the
 build's fallback reads it, so there is one value in one place rather than two that can drift.
 
+A hyphen in the tag makes the release a prerelease in both registries. npm infers nothing from
+semver — an unqualified `npm publish` moves the `latest` dist-tag whatever the version says — so a
+tag like `v0.1.0-rc.1` would otherwise become the thing `npm i preman` installs, and the GitHub
+Release would become the download the front of the repository offers. Both are derived from the one
+`case` on the version rather than from a second input, so they cannot disagree.
+
 npm publishes last because it is the only irreversible step. A DMG that fails to pack after the
 package is public cannot be undone; a GitHub Release created before a publish that fails is deleted
 in one click. The cost is that the pipeline is serial and a release takes minutes rather than

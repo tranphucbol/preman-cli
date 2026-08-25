@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.derive.outputs.version }}
+      dist_tag: ${{ steps.derive.outputs.dist_tag }}
+      prerelease: ${{ steps.derive.outputs.prerelease }}
     steps:
       - id: derive
         env:
@@ -31,6 +33,14 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # npm does not infer this from semver: an unqualified `npm publish` moves the `latest`
+          # dist-tag whatever the version says, so `v1.0.0-rc.1` would become the thing
+          # `npm i preman` installs. A hyphen means prerelease means `next`.
+          case "$version" in
+            *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT"; echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT"; echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
 
   # The same gate `ci.yml` runs. A tag can be pushed at a commit CI never saw.
   verify:
@@ -106,7 +116,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag dmg/*.dmg
+          # Same reason as npm's dist-tag: left alone, a release candidate becomes the download
+          # the front of the repository offers.
+          PRERELEASE: ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }}
+        run: |
+          # shellcheck disable=SC2086 # deliberate: unset must vanish, not become an empty argument
+          gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag $PRERELEASE dmg/*.dmg
 
   # Last, because it is the only step here that cannot be taken back.
   npm:
@@ -119,6 +134,7 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       VERSION: ${{ needs.version.outputs.version }}
+      DIST_TAG: ${{ needs.version.outputs.dist_tag }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -161,4 +177,4 @@ jobs:
         working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
