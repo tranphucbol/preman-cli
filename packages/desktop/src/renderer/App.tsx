@@ -48,7 +48,9 @@ import { Sidebar } from "@preman/desktop/renderer/panes/Sidebar.js";
 import { TabStrip } from "@preman/desktop/renderer/panes/TabStrip.js";
 import { VariablesPane } from "@preman/desktop/renderer/panes/VariablesPane.js";
 import { paletteItems, type PaletteItem } from "@preman/desktop/renderer/model/palette.js";
+import { skeletonWidths } from "@preman/desktop/renderer/model/opening.js";
 import { sectionFor } from "@preman/desktop/renderer/model/search.js";
+import { SkeletonBlock } from "@preman/desktop/renderer/ui/Skeleton.js";
 import {
   applyPlan,
   cancelRun,
@@ -66,6 +68,7 @@ import {
   openWorkspaceDialog,
   refreshWorkspaces,
   switchWorkspace,
+  useOpening,
   useSessionStore,
 } from "@preman/desktop/renderer/stores/session.js";
 import { useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
@@ -820,7 +823,7 @@ function EditorPane({
     <>
       <TabBar onClose={closeTabOrAsk(onAsk)} />
       {tab === undefined ? (
-        <EmptyEditor />
+        <VacantEditor />
       ) : (
         // The request above, what came back below. Split rather than tabbed because the whole
         // job is comparing the two, and a tab strip that hides one of them makes you click to
@@ -903,6 +906,54 @@ function closeTabOrAsk(onAsk: (ask: Ask) => void): (nodeId: string) => void {
       },
     });
   };
+}
+
+/**
+ * The editor area with no tab in it, which is three different situations wearing one face.
+ *
+ * A component and not a branch inside `EditorPane`, so that the delay timer behind `useOpening`
+ * exists only while there is genuinely nothing to edit. Exhaustive, for the reason `OverlayPane`
+ * is: a fourth state should be a type error and not a blank pane.
+ */
+function VacantEditor(): React.JSX.Element {
+  switch (useOpening()) {
+    case "opening":
+      return <SkeletonEditor />;
+    // Long enough to be worth a placeholder and no longer. The same two frames the sidebar
+    // declines to fill, declined here for the same reason.
+    case "quiet":
+      return <div className="flex-1" />;
+    case "idle":
+      return <EmptyEditor />;
+  }
+}
+
+/** Lines of body. Six is what fits above the fold at every density without ever filling it. */
+const EDITOR_SKELETON_LINES = 6;
+
+/**
+ * The shape of a request, without a request: one address row above a body.
+ *
+ * Not measured, unlike the sidebar's - the real editor's own layout is fixed, so there is nothing
+ * a resize would change. And no live region: the sidebar is already announcing the same wait, and
+ * two regions saying "Opening workspace" is one announcement too many. `aria-busy` alone is what
+ * this pane has to say.
+ */
+function SkeletonEditor(): React.JSX.Element {
+  return (
+    <div aria-busy="true" className="flex min-h-0 flex-1 flex-col">
+      <div aria-hidden="true" className="flex shrink-0 items-center gap-1.5 border-b border-line px-gutter py-2">
+        <SkeletonBlock className="h-control w-16 shrink-0" />
+        <SkeletonBlock className="h-control flex-1" />
+      </div>
+      <div aria-hidden="true" className="flex min-h-0 flex-1 flex-col gap-2 p-gutter">
+        {/* The index is the identity: these are positions in a placeholder, not things. */}
+        {skeletonWidths(EDITOR_SKELETON_LINES).map((width, index) => (
+          <SkeletonBlock key={index} width={width} className="h-2 shrink-0" />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function EmptyEditor(): React.JSX.Element {

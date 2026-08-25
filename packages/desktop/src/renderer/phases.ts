@@ -58,3 +58,24 @@ export function markRowsPainted(): void {
     markPhase(PHASES.rendererRowsPainted);
   });
 }
+
+/**
+ * Once per document, for the same reason and with a flag of its own: the two phases are separate
+ * facts about one open, and sharing a flag would let whichever happened first silence the other.
+ */
+let skeletonShown = false;
+
+/**
+ * The app admitted it is opening something.
+ *
+ * Marked from the sidebar's placeholder and not the editor's, because one open must produce one
+ * mark and both panes mount their own. Deferred a frame for `markRowsPainted`'s reason: what is
+ * being reported is a paint, and an effect runs before one.
+ */
+export function markSkeletonShown(): void {
+  if (skeletonShown) return;
+  skeletonShown = true;
+  requestAnimationFrame(() => {
+    markPhase(PHASES.rendererSkeletonShown);
+  });
+}

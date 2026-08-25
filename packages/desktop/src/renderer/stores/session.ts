@@ -5,6 +5,7 @@
  * the port; they subscribe to the store that this file writes into. That keeps "what happens when
  * a file changes on disk" answerable by reading one function instead of auditing every component.
  */
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 
 import {
@@ -18,9 +19,10 @@ import {
 import type { CreateWorkspaceResult, HostFailure, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
 
 import { EngineRequestError, onEngineClient, type EngineClient } from "@preman/desktop/renderer/client.js";
+import { openingState, openingTarget, type OpeningState } from "@preman/desktop/renderer/model/opening.js";
 import { publishPhaseReader } from "@preman/desktop/renderer/phases.js";
 import { readSession, restoreCollapse, restoreOpenState, startPersistence } from "@preman/desktop/renderer/persist.js";
-import { useCatalogStore } from "./catalog.js";
+import { useCatalogStore, type CatalogState } from "./catalog.js";
 import { useOverlayStore } from "./overlay.js";
 import { useRunsStore } from "./runs.js";
 import { useSearchStore } from "./search.js";
@@ -32,9 +34,27 @@ const SOLE_ENVIRONMENT = 1;
 const NO_VARIABLE_WRITES = 0;
 const ONE_VARIABLE_WRITE = 1;
 
+/**
+ * How long a workspace may take to open before the app admits it is opening one.
+ *
+ * Long enough that the committed fixture - and any workspace of a normal size - is simply on
+ * screen, and no placeholder is ever painted. Short enough that a workspace which is genuinely
+ * slow says so before the user has decided the app is broken. Below the shortest interval a
+ * flash reads as intentional at, which is the number this is really guarding.
+ */
+const SKELETON_DELAY_MS = 150;
+
 export interface SessionState {
   client: EngineClient | null;
   root: string | null;
+  /**
+   * The workspace the main process is already loading when the window appears, if there is one.
+   *
+   * The only fact about a workspace that is known before any engine port exists, and therefore the
+   * only thing that can stop the first frame after a cold start from claiming no workspace is open.
+   * Cleared the moment a client arrives, because from then on `root` is the better answer.
+   */
+  reopening: string | null;
   workspaces: WorkspaceHandle[];
   /** Set when the fs watcher could not start. External edits will be missed until restart. */
   degraded: string | null;
@@ -59,6 +79,7 @@ export interface SessionState {
   // Function properties rather than method signatures: these are read off the state object and
   // handed to event handlers, and none of them uses `this`.
   setClient: (client: EngineClient | null, root: string | null) => void;
+  setReopening: (root: string | null) => void;
   setWorkspaces: (workspaces: WorkspaceHandle[]) => void;
   setDegraded: (message: string | null) => void;
   setHostFailure: (failure: HostFailure | null) => void;
@@ -70,6 +91,7 @@ export interface SessionState {
 export const useSessionStore = create<SessionState>((set) => ({
   client: NO_CLIENT,
   root: null,
+  reopening: null,
   workspaces: [],
   degraded: null,
   hostFailure: null,
@@ -78,6 +100,9 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   setClient(client, root) {
     set({ client, root });
+  },
+  setReopening(reopening) {
+    set({ reopening });
   },
   setWorkspaces(workspaces) {
     set({ workspaces });
@@ -95,6 +120,51 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) => ({ variableWrites: state.variableWrites + ONE_VARIABLE_WRITE }));
   },
 }));
+
+// Hoisted so each subscription compares by reference and never re-runs on an unrelated write.
+const selectReopening = (state: SessionState): string | null => state.reopening;
+const selectRoot = (state: SessionState): string | null => state.root;
+const selectFailed = (state: SessionState): boolean => state.hostFailure !== null;
+const selectCatalogRoot = (state: CatalogState): string | null => state.root;
+
+/**
+ * Whether the pane calling this should draw a placeholder, and whether it has waited long enough
+ * to be allowed to.
+ *
+ * A hook and not a store field, because the delay is per-pane state and the inputs live in two
+ * different stores. Both panes that call it therefore run their own timer, which is correct rather
+ * than merely tolerable: each one starts counting when it mounts, and a pane that appeared late
+ * should not inherit a delay that has already expired somewhere else.
+ *
+ * The decision itself is `openingTarget`/`openingState` in `model/opening.ts`. What is here is the
+ * clock and nothing else.
+ */
+export function useOpening(): OpeningState {
+  const reopening = useSessionStore(selectReopening);
+  const sessionRoot = useSessionStore(selectRoot);
+  const failed = useSessionStore(selectFailed);
+  const catalogRoot = useCatalogStore(selectCatalogRoot);
+  /**
+   * Which workspace is on its way in, and also the identity of this wait - which is why the
+   * elapsed delay below is remembered as a root and not as a flag. A flag would have to be
+   * cleared, and the only place left to clear it is synchronously inside the effect, which is a
+   * cascading render. Comparing against the current target expires it for free.
+   */
+  const target = openingTarget({ reopening, sessionRoot, catalogRoot, failed });
+
+  const [elapsedFor, setElapsedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (target === null) return;
+    const timer = setTimeout(() => {
+      setElapsedFor(target);
+    }, SKELETON_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [target]);
+
+  return openingState(target !== null, elapsedFor === target);
+}
 
 /** `EngineRequestError` is the only rejection the client produces, so this loses nothing. */
 export function toEngineError(cause: unknown): EngineError {
@@ -252,6 +322,15 @@ export function connect(): () => void {
     useSessionStore.getState().setHostFailure(failure);
   });
 
+  // Asked once and never again: this is a fact about the launch, and the port that follows it is a
+  // better answer to the same question. Not awaited, because nothing else here depends on it - the
+  // panes are subscribed, and the round trip lands inside the delay they are already serving.
+  void bridge.reopening().then((root) => {
+    const session = useSessionStore.getState();
+    // The port can beat the round trip on a warm launch, and then the hint is already history.
+    if (session.root === null) session.setReopening(root);
+  });
+
   const stopPorts = onEngineClient((client) => {
     markPhase(PHASES.rendererPortReceived);
     const session = useSessionStore.getState();
@@ -271,6 +350,8 @@ export function connect(): () => void {
     session.setHostFailure(null);
     session.setEnvironment(undefined);
     session.setClient(client, client.root);
+    // The hint has been superseded by the thing it was a hint about.
+    session.setReopening(null);
     // Re-parked on every port: a reader that answered for the previous host would report the
     // timings of a workspace nobody is looking at.
     publishPhaseReader(() => client.send("phases", {}));

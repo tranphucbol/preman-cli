@@ -25,6 +25,7 @@ a built `packages/desktop/dist` and, today, macOS: it finds the Electron binary 
 | ------------------------------------------------- | --------------- | -------------------------------- |
 | cold start to interactive window                  | ≤ 800ms         | `test/renderer/perf.app.test.ts` |
 | open a 5000-request workspace, to first row       | ≤ 4000ms\*      | `test/renderer/perf.app.test.ts` |
+| the same open, to the window saying it is opening | ≤ 2000ms        | `test/renderer/perf.app.test.ts` |
 | `buildCatalog`, 43 requests                       | ≤ 50ms          | `test/perf.test.ts`              |
 | `buildCatalog`, 1000 requests                     | ≤ 400ms         | `test/perf.test.ts`              |
 | workspace switch, host already warm               | ≤ 100ms         | `test/perf.test.ts`              |
@@ -87,12 +88,17 @@ has actually painted rows rather than to the moment one exists in the DOM.
 
 It is read from the app's own `performance.mark` calls rather than from Playwright's view of the
 page, because the number is only useful if it says where the time went, and three processes are
-involved of which one is a page. Thirteen phases are marked: four in the main process, three in the
-engine host, six in the renderer. `PHASES` in `packages/desktop/src/engine/protocol.ts` is the list;
-decision 027 is why the marks ship rather than living behind a build flag, and why the engine host
-answers a `phases` request even after it has been disposed. The perf suite joins the three reports
-on their `timeOrigin`s and asserts a named causal order over them, so a phase that stops firing —
-or starts firing in the wrong place — fails a case rather than quietly leaving a gap.
+involved of which one is a page. Fourteen phases are marked: four in the main process, three in the
+engine host, seven in the renderer. `PHASES` in `packages/desktop/src/engine/protocol.ts` is the
+list; decision 027 is why the marks ship rather than living behind a build flag, and why the engine
+host answers a `phases` request even after it has been disposed. The perf suite joins the three
+reports on their `timeOrigin`s and asserts a named causal order over them, so a phase that stops
+firing — or starts firing in the wrong place — fails a case rather than quietly leaving a gap.
+
+One of the fourteen is optional, and it is the only one whose absence is the good outcome:
+`renderer.skeleton-shown` fires when the window gives up waiting and draws a placeholder, and a
+workspace that opened fast enough never drew one. So the case that reads every declared phase skips
+it, and the two causal edges it sits on are skipped with it.
 
 Measured 2563, 2742 and 3167ms over three runs. One of them, phase by phase:
 
@@ -128,6 +134,24 @@ this row and on no other — `test/perf.test.ts` discards a first attempt and ne
 the open read as twelve seconds. `writeBigWorkspace` now reads every file back before it returns,
 which costs the same wall clock it always did and puts it somewhere it cannot be mistaken for the
 app.
+
+### The same open, to the window saying it is opening, gated at 2000ms
+
+The half of the row above that the row above used to hide. Four seconds to a usable tree is
+defensible for five thousand requests; four seconds of "No workspace open." was not, and the
+difference between the two sentences is one phase.
+
+`renderer.skeleton-shown` closes it. The placeholder cannot appear before the port that told the
+renderer to expect a workspace — the first four spans of the breakdown above, 919ms — and is held 150ms
+behind it, so the measurement is around 1100ms and is bounded by process start-up rather than by the
+size of the workspace. The gate is 2000ms, which is roughly twice that, because what it defends is
+"the wait is announced before the user has decided the app is broken" and not a number: the
+start-up it is made of is already gated by the cold-start row.
+
+The delay is why there is a second case against the committed fixture asserting the phase never
+fires at all. A 43-request workspace is on screen well inside 150ms, so no placeholder is drawn, no
+pulse starts and no extra commit happens — which is the whole justification for the delay existing.
+Drop it to zero and that case is what fails, rather than a screenshot nobody takes.
 
 ### `buildCatalog`, and the warm switch
 

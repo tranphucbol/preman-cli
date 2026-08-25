@@ -29,6 +29,17 @@ export const CHANNELS = {
    * of something. See `docs/decisions/022`.
    */
   readPreferences: "preman:read-preferences",
+  /**
+   * Which workspace the main process decided to reopen at launch, so the first thing the window
+   * says about it is not "No workspace open."
+   *
+   * Asynchronous, unlike `readPreferences` above, and deliberately so. The theme has to be right
+   * in the first painted frame because a light flash on a dark app is unmissable; this one only
+   * has to be right before the delay behind the skeleton expires, which is 150ms of headroom for
+   * an IPC round trip that takes well under one. Decision 022 argues for exactly one synchronous
+   * channel, and this is not the second.
+   */
+  readReopening: "preman:read-reopening",
   savePreferences: "preman:save-preferences",
   /** Renderer to main, after a theme or density change moved the window's own chrome. */
   setWindowChrome: "preman:set-window-chrome",
@@ -224,6 +235,14 @@ export interface PremanBridge {
   pickWorkspaceDirectory(): Promise<string | null>;
   /** Ask for a host for `root`. The port arrives through `onEnginePort`. */
   openWorkspace(root: string): Promise<void>;
+  /**
+   * The workspace the main process decided to reopen at launch, or `null` if it decided not to.
+   *
+   * The one fact about a workspace that is knowable before any engine port exists, which is what
+   * lets the window say "opening" instead of "nothing is open" on a cold start. Stale the moment a
+   * port arrives - from then on the session's own `root` is the answer - so read it once.
+   */
+  reopening(): Promise<string | null>;
   /**
    * Make an empty workspace called `name` in the one place this app puts new ones.
    *

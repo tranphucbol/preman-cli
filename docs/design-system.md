@@ -355,6 +355,12 @@ What actually animates:
   buttons and icon buttons. Never on a text field, and never on a disabled control.
 - **The in-flight request.** `.inflight-bar` sweeps the top of the response pane; `.body-enter`
   fades a response body in once.
+- **A workspace that is opening.** `.skeleton-block` pulses the placeholder bars `ui/Skeleton.tsx`
+  fills the sidebar and the editor with. Opacity only, and no `transform`: a skeleton is a promise
+  about where things will be, and a bar that also slides breaks that promise once a second. It only
+  appears at all after 150ms of waiting — a workspace of a normal size opens inside that and paints
+  no placeholder, which is the whole reason the delay is there. `docs/performance.md` gates both
+  halves of that.
 - **Two surfaces with real presence**, via Motion through `ui/motion.tsx`: the banner and the
   overlay-pane swap.
 - **The disclosure caret**, in the sidebar and the console drawer, and dnd-kit's drop animation.

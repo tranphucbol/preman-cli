@@ -305,6 +305,12 @@ export const PHASES = {
   engineCatalogEnter: "preman.engine.catalog.enter",
   engineCatalogExit: "preman.engine.catalog.exit",
   rendererPortReceived: "preman.renderer.port-received",
+  /**
+   * The one phase that does not always fire, and the only one whose absence is the good outcome:
+   * a workspace that opened fast enough never showed a placeholder. So a timeline without it is a
+   * timeline of an open nobody had to wait through.
+   */
+  rendererSkeletonShown: "preman.renderer.skeleton-shown",
   rendererCatalogAsked: "preman.renderer.catalog.asked",
   rendererCatalogArrived: "preman.renderer.catalog.arrived",
   rendererReplaceEnter: "preman.renderer.replace.enter",
@@ -339,7 +345,7 @@ const MARK_ENTRY_TYPE = "mark";
 /**
  * Record a phase on this process's own timeline.
  *
- * Guards nothing and swallows nothing: the argument is a union of thirteen literals, so a mark
+ * Guards nothing and swallows nothing: the argument is a union of fourteen literals, so a mark
  * that could throw is a mark whose name does not exist, which is a compile error and not a
  * runtime one.
  */

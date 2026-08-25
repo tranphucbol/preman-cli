@@ -213,6 +213,18 @@ const OPEN_BIG_REQUESTS = 5_000;
  * runner's disk was doing. `docs/performance.md` has the phase-by-phase breakdown.
  */
 const OPEN_BIG_BUDGET_MS = 4000;
+/**
+ * The same open, to the placeholder instead of to the rows: how long the window spends saying
+ * nothing at all.
+ *
+ * This is the number the row above used to hide. Four seconds to a usable tree is defensible for
+ * five thousand requests; four seconds of "No workspace open." was not, and the difference between
+ * the two is entirely this phase. The port reaches the renderer around 920ms on the reference
+ * machine and the placeholder is held back 150ms behind it, so the gate is set at roughly twice
+ * the measurement — it is bounded by process start-up, which the cold-start row already gates, and
+ * not by the size of the workspace at all.
+ */
+const OPEN_SKELETON_BUDGET_MS = 2000;
 /** The Performance API's own name for a `performance.mark`. */
 const MARK_ENTRIES = "mark";
 /**
@@ -252,7 +264,21 @@ const CAUSAL_ORDER: readonly (readonly [string, string])[] = [
   [PHASES.rendererCatalogArrived, PHASES.rendererReplaceEnter],
   [PHASES.rendererReplaceEnter, PHASES.rendererReplaceExit],
   [PHASES.rendererReplaceExit, PHASES.rendererRowsPainted],
+  // The placeholder, if there was one: it cannot precede the port that told the renderer to expect
+  // a workspace, and it has to be on screen before the catalog that replaces it lands. Skipped
+  // when the phase is absent, which is what a fast open looks like.
+  [PHASES.rendererPortReceived, PHASES.rendererSkeletonShown],
+  [PHASES.rendererSkeletonShown, PHASES.rendererCatalogArrived],
 ];
+
+/**
+ * The phases an open is allowed not to reach.
+ *
+ * One, and it is the placeholder: a workspace that opened inside the delay never painted one, and
+ * that is the outcome the delay exists to produce. Every other phase is a step the open takes
+ * whether anybody is watching or not, so its absence is a bug.
+ */
+const OPTIONAL_PHASES: ReadonlySet<string> = new Set<string>([PHASES.rendererSkeletonShown]);
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -389,6 +415,14 @@ function requirePhase(timeline: Timeline, phase: string): number {
     throw new Error(`${phase} never fired. The timeline held: ${fired}`);
   }
   return at;
+}
+
+/**
+ * Whether a phase is missing because it was allowed to be. A required phase that never fired is
+ * not this function's business - `requirePhase` is the one that has something to say about it.
+ */
+function absentByDesign(timeline: Timeline, phase: string): boolean {
+  return OPTIONAL_PHASES.has(phase) && phaseAt(timeline, phase) === undefined;
 }
 
 function requireBuild(): void {
@@ -817,6 +851,7 @@ describe.skipIf(!PERF_ENABLED)("the app's budget", () => {
       // nowhere is the one failure mode of this instrument that nothing else would notice: the
       // timeline would still be monotonic, still be under budget, and still be missing a step.
       for (const phase of Object.values(PHASES)) {
+        if (OPTIONAL_PHASES.has(phase)) continue;
         expect(fired.has(phase), phase).toBe(true);
       }
     },
@@ -830,6 +865,10 @@ describe.skipIf(!PERF_ENABLED)("the app's budget", () => {
       const timeline = await phaseTimeline(await launch(FIXTURE_WS));
 
       for (const [before, after] of CAUSAL_ORDER) {
+        // An edge with an optional endpoint that never fired is not an edge this open took. Still
+        // `requirePhase` either side of that, so a *required* phase going missing fails here too
+        // and not only in the case above.
+        if (absentByDesign(timeline, before) || absentByDesign(timeline, after)) continue;
         const earlier = requirePhase(timeline, before);
         const later = requirePhase(timeline, after);
         expect(later, `${before} -> ${after}`).toBeGreaterThanOrEqual(earlier - CLOCK_SKEW_MS);
@@ -848,6 +887,48 @@ describe.skipIf(!PERF_ENABLED)("the app's budget", () => {
       // The same axis the cold-start row uses — main's own time origin — so the two rows are
       // comparable, and the difference between them is the workspace and nothing else.
       expect(requirePhase(timeline, PHASES.rendererRowsPainted)).toBeLessThanOrEqual(OPEN_BIG_BUDGET_MS);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  /**
+   * The other half of the row above: an open this slow must admit it is an open.
+   *
+   * A separate launch and not a second assertion on the same timeline, because the phase is
+   * `OPTIONAL_PHASES`' one member — `requirePhase` here is the assertion that it fired at all, and
+   * folding it into the case above would make one failure read as two different regressions.
+   */
+  it(
+    "givenAFiveThousandRequestWorkspace_whenOpened_thenTheSkeletonAppearsUnderTwoThousandMs",
+    async () => {
+      requireBuild();
+      generated = writeBigWorkspace(OPEN_BIG_REQUESTS);
+      const timeline = await phaseTimeline(await launch(generated.root));
+
+      const skeleton = requirePhase(timeline, PHASES.rendererSkeletonShown);
+      expect(skeleton).toBeLessThanOrEqual(OPEN_SKELETON_BUDGET_MS);
+      // And it was a placeholder rather than a delay: the rows it stood in for came later.
+      expect(requirePhase(timeline, PHASES.rendererRowsPainted)).toBeGreaterThanOrEqual(skeleton - CLOCK_SKEW_MS);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  /**
+   * And the case that keeps the placeholder from becoming the cost it was meant to hide.
+   *
+   * A workspace of a normal size opens inside the delay, so the app never draws one — no pulse, no
+   * second commit, nothing between the empty pane and the tree. This is the assertion that the
+   * 150ms is real: raise it to zero and this case is what fails, not a screenshot nobody took.
+   */
+  it(
+    "givenTheCommittedFixture_whenOpened_thenNoSkeletonIsEverPainted",
+    async () => {
+      requireBuild();
+      const timeline = await phaseTimeline(await launch(FIXTURE_WS));
+
+      expect(phaseAt(timeline, PHASES.rendererSkeletonShown)).toBeUndefined();
+      // Proof the open it did not paint one for is a real open, and not a launch that failed early.
+      expect(requirePhase(timeline, PHASES.rendererRowsPainted)).toBeGreaterThan(0);
     },
     CASE_TIMEOUT_MS,
   );

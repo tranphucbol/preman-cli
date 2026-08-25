@@ -111,6 +111,8 @@ interface FakeBridge {
   created(): string[];
   opened(): string[];
   lists(): number;
+  /** What main says it is reopening at launch. The default is nothing, which is a cold first run. */
+  answerReopening(root: string | null): void;
 }
 
 /** What main hands back when nothing has been stored: no `activeEnvironment` key at all, because
@@ -127,6 +129,7 @@ function fakeBridge(): FakeBridge {
   const createNames: string[] = [];
   const openedRoots: string[] = [];
   let listCalls = 0;
+  let reopeningRoot: string | null = null;
 
   const bridge: PremanBridge = {
     titleBarGutter: TITLE_BAR_GUTTER_PX,
@@ -145,6 +148,7 @@ function fakeBridge(): FakeBridge {
       openedRoots.push(root);
       return Promise.resolve();
     },
+    reopening: () => Promise.resolve(reopeningRoot),
     createWorkspace: (name: string) => {
       createNames.push(name);
       return Promise.resolve(createResult);
@@ -176,6 +180,9 @@ function fakeBridge(): FakeBridge {
     created: () => [...createNames],
     opened: () => [...openedRoots],
     lists: () => listCalls,
+    answerReopening: (root) => {
+      reopeningRoot = root;
+    },
   };
 }
 
@@ -222,6 +229,7 @@ function resetStores(): void {
   session.setEnvironment(undefined);
   session.setDegraded(null);
   session.setHostFailure(null);
+  session.setReopening(null);
 }
 
 /** Every file in the workspace, keyed by its relative posix path. The bytes, not the mtimes. */

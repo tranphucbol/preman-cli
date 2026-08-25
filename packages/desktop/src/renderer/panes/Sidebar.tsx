@@ -30,13 +30,14 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { CatalogNode, MutateOp, RequestKind } from "@preman/desktop/engine/protocol.js";
 
 import { resolveMark, type GitDecoration, type RowMark } from "@preman/desktop/renderer/model/git.js";
 import { markRowsPainted } from "@preman/desktop/renderer/phases.js";
 import { resolveDrop, type DropSide } from "@preman/desktop/renderer/model/order.js";
+import { skeletonRowCount } from "@preman/desktop/renderer/model/opening.js";
 import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import {
   useCatalogStore,
@@ -46,8 +47,10 @@ import {
   useNode,
   type CatalogState,
 } from "@preman/desktop/renderer/stores/catalog.js";
+import { useOpening } from "@preman/desktop/renderer/stores/session.js";
 import { useUnsavedMark } from "@preman/desktop/renderer/stores/tabs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { SkeletonList } from "@preman/desktop/renderer/ui/Skeleton.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import {
   ContextContent,
@@ -108,6 +111,12 @@ const HALF = 2;
 
 /** Must equal `--z-index-drag` in app.css: `DragOverlay` writes its own inline z-index. */
 const DRAG_Z_INDEX = 25;
+
+/** Before the first measurement. `skeletonRowCount` answers one row for it, which is the floor. */
+const UNMEASURED = 0;
+
+/** What a screen reader is told once, in place of the tree items that do not exist yet. */
+const OPENING_LABEL = "Opening workspace";
 
 /*
  * dnd-kit's own tween rather than a Motion spring: the pill's job is to travel to the row it landed
@@ -187,6 +196,7 @@ export interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   const visibleIds = useCatalogStore(selectVisible);
   const root = useCatalogStore(selectRoot);
+  const opening = useOpening();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // The last phase of a workspace open: rows exist, so the wait the user was actually having is
@@ -296,8 +306,22 @@ export function Sidebar(props: SidebarProps) {
     [clearDrag, props],
   );
 
+  /**
+   * Nothing to show yet, and three different reasons for it. Exhaustive on the state, so a fourth
+   * reason is a type error here rather than the wrong sentence on screen.
+   */
   if (root === null) {
-    return <EmptyPane message="No workspace open." hint="Open one with Cmd+Shift+O." />;
+    switch (opening) {
+      case "opening":
+        return <SkeletonTree />;
+      // A workspace is on its way and has not taken long enough to be worth mentioning. Nothing at
+      // all, on purpose: this is the case the committed fixture takes, and the alternative is a
+      // placeholder that lives for two frames.
+      case "quiet":
+        return <div className="min-h-0 flex-1" />;
+      case "idle":
+        return <EmptyPane message="No workspace open." hint="Open one with Cmd+Shift+O." />;
+    }
   }
 
   if (visibleIds.length === 0) {
@@ -691,6 +715,44 @@ function SidebarContextMenu({ targetId, ...props }: { readonly targetId: string 
         Delete
       </ContextItem>
     </ContextContent>
+  );
+}
+
+/**
+ * The tree's placeholder, filled to the pane's own height.
+ *
+ * Measured rather than a fixed count, because the sidebar is resizable and a fixed number of bars
+ * either stops short of the fold or overflows it - and both of those read as a rendering bug
+ * rather than as a wait. A `ResizeObserver` and not the virtualizer: there is nothing to
+ * virtualize here, and both are gone the moment the real tree replaces this.
+ *
+ * `useLayoutEffect` and not `useEffect`, for the only reason that hook is ever the right one: the
+ * unmeasured first render draws a single bar, and committing the measurement after paint would
+ * make that single bar a visible frame.
+ */
+function SkeletonTree() {
+  const rowHeight = useDensityTokens().row;
+  const paneRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(UNMEASURED);
+
+  useLayoutEffect(() => {
+    const pane = paneRef.current;
+    if (pane === null) return;
+    setHeight(pane.clientHeight);
+    const observer = new ResizeObserver((entries) => {
+      const [entry] = entries;
+      if (entry !== undefined) setHeight(entry.contentRect.height);
+    });
+    observer.observe(pane);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div ref={paneRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <SkeletonList rows={skeletonRowCount(height, rowHeight)} rowHeight={rowHeight} label={OPENING_LABEL} />
+    </div>
   );
 }
 

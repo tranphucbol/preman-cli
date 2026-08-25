@@ -317,10 +317,11 @@
     }
   }
 
-  /* The one indeterminate indicator in the app: a 2px hairline sweeping the top edge of the
+  /* One of the app's two indeterminate indicators: a 2px hairline sweeping the top edge of the
    * response pane while a request is open. `transform` on a compositor layer, so it costs nothing
-   * on the main thread while the engine is busy — and it is the only keyframe animation here,
-   * because a loop is the one thing a transition cannot express. */
+   * on the main thread while the engine is busy. The other is `.skeleton-block` below, and they
+   * are the only two keyframe animations here, because a loop is the one thing a transition
+   * cannot express. */
   @keyframes inflight-sweep {
     from {
       transform: translateX(-100%);
@@ -339,6 +340,29 @@
     inline-size: 33%;
     background: var(--color-accent);
     animation: inflight-sweep 1.1s var(--ease-in-out) infinite;
+  }
+
+  /* The other indeterminate indicator: a placeholder bar, breathing, while a workspace opens.
+   *
+   * Opacity only, and no `transform`: a skeleton is a promise about where things will be, and a
+   * bar that also moves or grows breaks that promise every 1.1s. It bottoms out at 0.45 rather
+   * than 0, because a bar that disappears reads as a row that vanished.
+   *
+   * There is no duration token for this. The scale tops out at 200ms because nothing in this app
+   * transitions for longer, and a period is not a duration - it is the same 1.1s as
+   * `inflight-sweep`, deliberately, so the two indeterminate things in the app breathe together.
+   * `prefers-reduced-motion` pins it to one iteration in `@layer base`, which leaves the bar
+   * legible and still. */
+  @keyframes skeleton-pulse {
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  .skeleton-block {
+    border-radius: var(--radius-xs);
+    background: var(--color-line);
+    animation: skeleton-pulse 1.1s var(--ease-in-out) infinite;
   }
 
   /* A response body that replaced a hint should not appear to have been there all along. Opacity

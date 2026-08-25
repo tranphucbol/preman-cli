@@ -80,6 +80,7 @@ const bridge: PremanBridge = {
   listWorkspaces: () => ipcRenderer.invoke(CHANNELS.listWorkspaces) as Promise<WorkspaceHandle[]>,
   pickWorkspaceDirectory: () => ipcRenderer.invoke(CHANNELS.pickWorkspace) as Promise<string | null>,
   openWorkspace: (root: string) => ipcRenderer.invoke(CHANNELS.openWorkspace, root) as Promise<void>,
+  reopening: () => ipcRenderer.invoke(CHANNELS.readReopening) as Promise<string | null>,
   createWorkspace: (name: string) =>
     ipcRenderer.invoke(CHANNELS.createWorkspace, name) as Promise<CreateWorkspaceResult>,
   forgetWorkspace: (root: string) => ipcRenderer.invoke(CHANNELS.forgetWorkspace, root) as Promise<void>,

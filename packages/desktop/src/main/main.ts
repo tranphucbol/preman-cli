@@ -66,6 +66,17 @@ let window: BrowserWindow | undefined;
 let hosts: HostRegistry | undefined;
 let store: AppStore | undefined;
 
+/**
+ * The workspace this launch decided to reopen, if any. Module scope rather than a local in
+ * `start()` because the renderer asks for it: the window has to be able to say "opening" before
+ * any engine port exists, and this is the only process that knows.
+ *
+ * Never cleared. It is a fact about the launch, not about the current session, and the renderer
+ * drops its own copy the moment a port arrives - so an answer that outlives the reopen is answered
+ * to nobody.
+ */
+let reopening: string | null = null;
+
 /** Resolved against the built `dist/main/`, so dev and packaged agree on layout. */
 function distPath(relative: string): string {
   return join(import.meta.dirname, relative);
@@ -336,6 +347,10 @@ function registerIpc(): void {
     openWorkspace(root);
   });
 
+  // Registered before `start()` decides, which costs nothing: the rest of `start()` runs in the
+  // same turn, so the value is settled long before a renderer exists to ask for it.
+  ipcMain.handle(CHANNELS.readReopening, (): string | null => reopening);
+
   // The home directory is resolved here, never in the renderer and never by a shell: `~` is
   // documentation, and a renderer that could name a destination would be a renderer with a path.
   // Creation stops at the directories; the renderer opens the result over `openWorkspace`, so
@@ -423,7 +438,7 @@ function start(): void {
   // process starting with Chromium starting, which is a quarter of a second of the cold start that
   // was previously spent queueing behind the window.
   const last = requireStore().read().activeRoot;
-  const reopening = last !== null && looksLikeWorkspace(last) ? last : null;
+  reopening = last !== null && looksLikeWorkspace(last) ? last : null;
   if (reopening !== null) requireHosts().prewarm(reopening);
   markPhase(PHASES.mainPrewarm);
 
