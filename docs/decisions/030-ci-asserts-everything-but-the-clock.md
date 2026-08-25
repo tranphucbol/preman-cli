@@ -50,6 +50,11 @@ tag like `v0.1.0-rc.1` would otherwise become the thing `npm i preman` installs,
 Release would become the download the front of the repository offers. Both are derived from the one
 `case` on the version rather than from a second input, so they cannot disagree.
 
+That `--tag next` does not hold for the _first_ publish of a name: a package must have a `latest`, so
+npm points it at whatever arrives first and ignores the flag. `preman@0.1.0-rc.1` is therefore the
+`latest` on the registry today, `npm dist-tag rm latest` is refused by design, and the only cure is
+publishing a release version — which moves it. Every prerelease after the first behaves as written.
+
 npm publishes last because it is the only irreversible step. A DMG that fails to pack after the
 package is public cannot be undone; a GitHub Release created before a publish that fails is deleted
 in one click. The cost is that the pipeline is serial and a release takes minutes rather than
