@@ -4,6 +4,7 @@ import { parseDocument, stringify, type Document } from "yaml";
 import type { ZodTypeAny } from "zod";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 import { writeFileAtomic } from "@preman/core/workspace/atomic.js";
+import { existingEnvironmentName } from "@preman/core/workspace/environments.js";
 import {
   collectionsDirFor,
   definitionPathFor,
@@ -359,11 +360,25 @@ export interface CreateEnvironmentArgs {
  *
  * No `order`: environments are picked by name, never run in sequence, so the
  * concept does not apply to them.
+ *
+ * A name already in use is refused rather than resolved to a free one, which is the
+ * opposite of `createRequestFile` and needs saying why. There, `requestPathFor` writes
+ * `Foo (2).request.yaml` while the file keeps saying `Foo`, and that divergence is
+ * harmless because a request is addressed by its path. An environment is addressed by
+ * its name and by nothing else — `findEnvironment`, the `-e` flag and the picker all
+ * resolve one — so the same divergence would put two files behind one name, and every
+ * read and every `writeEnvironmentValue` would reach the first of them while the second
+ * quietly rotted. Renaming the user's input instead would be a second surprise, so the
+ * answer is a refusal the caller can show beside the field that caused it.
  */
 export function createEnvironmentFile(args: CreateEnvironmentArgs): Promise<string> {
   const dir = environmentsDirFor(args.root);
-  mkdirSync(dir, { recursive: true });
   const clean = sanitiseSegment(args.name);
+  const taken = existingEnvironmentName(dir, clean);
+  if (taken !== undefined) {
+    throw usage(`an environment named "${taken}" already exists`, ["pick a name no other environment uses"]);
+  }
+  mkdirSync(dir, { recursive: true });
   const file = environmentPathFor(dir, clean);
   writeFileAtomic(file, stringify({ [NAME_KEY]: clean, values: [] }));
   return Promise.resolve(file);

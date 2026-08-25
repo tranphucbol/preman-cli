@@ -310,6 +310,22 @@ describe("createEnvironmentFile", () => {
     expect(catalog.environments.find((environment) => environment.name === "STAGING")?.keys).toEqual([]);
   });
 
+  /*
+   * The refusal, and why it is not the collision-resolving `Foo (2)` every other creation does: an
+   * environment is reached by name, so two files behind one name is one of them lost. Case-blind
+   * because `findEnvironment` is, and a refusal a lookup would not have made is a refusal that
+   * blocks a name nothing was using.
+   */
+  it("givenNameAlreadyTaken_whenCreateEnvironmentFile_thenRefusedAndNothingIsWritten", async () => {
+    const taken = await expectUsageError(() => createEnvironmentFile({ root: ws().root, name: "LOCAL" }));
+    expect(taken.message).toContain('"LOCAL" already exists');
+    // Case-blind, because `findEnvironment` is: `-e local` already reaches `LOCAL`.
+    await expectUsageError(() => createEnvironmentFile({ root: ws().root, name: "local" }));
+
+    const catalog = await buildCatalog(ws().root);
+    expect(catalog.environments.map((environment) => environment.name)).toEqual(["LOCAL"]);
+  });
+
   it("givenEnvironment_whenRenameNode_thenFileAndNameFieldAgree", async () => {
     const file = join(ws().root, "postman", "environments", "LOCAL.environment.yaml");
 

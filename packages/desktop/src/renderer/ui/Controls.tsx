@@ -511,6 +511,54 @@ export function SelectOption({ value, children, disabled = false }: SelectOption
  * element — a radio group, which is labelled by `aria-label` on the group rather than by `for` —
  * can wear the same one without `Labelled` growing an arm for it.
  */
+/**
+ * Mirrored from `Menu.tsx`, per the floating-surface rule: a new floating list copies those
+ * constants rather than inventing a surface. Both content classes are `p-1`, so the negative
+ * margin reaches the popup's edges here exactly as it does there.
+ */
+const SELECT_SEPARATOR_CLASS = "-mx-1 my-1 h-px bg-line";
+
+/**
+ * `Menu.tsx`'s `ITEM_CLASS` verbatim, which is `SELECT_ITEM_CLASS` with a smaller gap. The
+ * difference is the point: the wide gap in a select item holds a label away from a tick on the
+ * far right, while this gap holds a label next to the icon that names it — and a row that acts
+ * like a menu item should measure like one.
+ */
+const SELECT_COMMAND_CLASS =
+  "flex h-control cursor-default select-none items-center gap-2 rounded-sm px-2 text-xs text-ink outline-none data-highlighted:bg-hover";
+
+/** A rule between groups of options. Radix skips it in keyboard navigation; it is decoration. */
+export function SelectSeparator() {
+  return <SelectPrimitive.Separator className={SELECT_SEPARATOR_CLASS} />;
+}
+
+export interface SelectCommandProps {
+  /** A sentinel the owner recognises and refuses to store, since this row is not a value. */
+  readonly value: string;
+  readonly icon: ReactNode;
+  readonly children: ReactNode;
+}
+
+/**
+ * A row that does something instead of being one of the answers.
+ *
+ * It is a `SelectPrimitive.Item` because that is the only child Radix will let the keyboard
+ * reach, and it wears an icon and no tick because those are the two marks that say which kind
+ * of row this is: the tick is the select's word for "the one you are on", and a row that can
+ * never be the one you are on must not be able to show it. The owner is expected to keep it
+ * last and behind a `SelectSeparator`, so the accidental press it invites is a press on a
+ * dialog's Cancel rather than on a silently changed value.
+ */
+export function SelectCommand({ value, icon, children }: SelectCommandProps) {
+  return (
+    <SelectPrimitive.Item value={value} className={SELECT_COMMAND_CLASS}>
+      {icon}
+      {/* Radix reads an item's typeahead text from here, so the label is inside it and the icon is not. */}
+      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    </SelectPrimitive.Item>
+  );
+}
+
 export const LABEL_CLASS = "text-2xs text-ink-dim";
 
 /**

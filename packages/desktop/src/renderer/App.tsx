@@ -13,7 +13,15 @@ import { Group, Panel, useDefaultLayout, usePanelCallbackRef } from "react-resiz
 import type { CatalogNode, GrepMatch } from "@preman/desktop/engine/protocol.js";
 
 import { AskDialog, type Ask, type CreateTarget } from "@preman/desktop/renderer/ui/Dialog.js";
-import { Button, IconButton, Select, SelectOption, TooltipProvider } from "@preman/desktop/renderer/ui/Controls.js";
+import {
+  Button,
+  IconButton,
+  Select,
+  SelectCommand,
+  SelectOption,
+  SelectSeparator,
+  TooltipProvider,
+} from "@preman/desktop/renderer/ui/Controls.js";
 import { Handle } from "@preman/desktop/renderer/ui/Handle.js";
 import {
   DropdownContent,
@@ -62,6 +70,7 @@ import {
   applyPlan,
   cancelRun,
   closeTab,
+  createEnvironment,
   discardAndClose,
   duplicateNode,
   mutate,
@@ -116,15 +125,25 @@ const RESPONSE_MIN = "15";
 const NO_ENVIRONMENT = "\u0000none";
 /** The placeholder's own value, so it can never be mistaken for the choice above. */
 const UNCHOSEN_ENVIRONMENT = "\u0000unchosen";
+/** The one row in the picker that is not an answer. Same NUL reasoning, same guarantee. */
+const CREATE_ENVIRONMENT = "\u0000create";
+
+/**
+ * What the trigger says while nobody has chosen. Two strings because there are two situations, and
+ * "Select environment" over a list with nothing selectable in it is the app asking for something it
+ * knows it cannot be given.
+ */
+const CHOOSE_ENVIRONMENT = "Select environment";
+const NO_ENVIRONMENTS_YET = "No environments yet";
 
 /**
  * What the palette can do besides jumping to a request.
  *
  * Mostly things the window carries out with no further questions, and "New collection" is still
  * deliberately absent: the sidebar's own button is a click away from the tree it acts on.
- * `Create new workspace…` is the one prompt here, because creating a workspace has no home in the
- * tree - there is no workspace yet - so the palette, the File menu and the workspace dropdown are
- * all it has. The palette closes first, then the naming dialog opens.
+ * The two prompts here are the two creations with no home in the tree - a workspace, because there
+ * is not one yet, and an environment, because it is not a node - so for both the palette is one of
+ * only a couple of ways in. The palette closes first, then the naming dialog opens.
  */
 const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "search", label: "Search the workspace", detail: "⌘⇧F" },
@@ -134,6 +153,7 @@ const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "send", label: "Send", detail: "⌘↵" },
   { kind: "command", id: "open-workspace", label: "Open workspace…", detail: "⌘⇧O" },
   { kind: "command", id: "create-workspace", label: "Create new workspace…", detail: "command" },
+  { kind: "command", id: "create-environment", label: "New environment…", detail: "command" },
   { kind: "command", id: "settings", label: "Settings", detail: "⌘," },
 ];
 
@@ -147,6 +167,22 @@ const CREATE_WORKSPACE_ASK = {
   // Assignable because `CreateWorkspaceResult`'s success arm carries a `root` the dialog ignores:
   // it waits for `ok`, and the store has already switched the window by the time it sees one.
   onConfirm: createNewWorkspace,
+} as const satisfies Ask;
+
+/**
+ * The naming dialog behind the picker's last row and the palette's command.
+ *
+ * Waits on the answer, unlike the sidebar's creations, which report through the banner: the only
+ * way this one fails is a name another environment already holds, and that is a correction to make
+ * in the field it was typed in rather than a banner over the whole window.
+ */
+const CREATE_ENVIRONMENT_ASK = {
+  kind: "name",
+  title: "New environment",
+  label: "Name",
+  initial: "",
+  submit: "Create",
+  onConfirm: createEnvironment,
 } as const satisfies Ask;
 
 export function App(): React.JSX.Element {
@@ -222,6 +258,9 @@ export function App(): React.JSX.Element {
           return;
         case "create-workspace":
           showCreateWorkspace();
+          return;
+        case "create-environment":
+          setAsk(CREATE_ENVIRONMENT_ASK);
           return;
         case "settings":
           useOverlayStore.getState().showSettings();
@@ -496,7 +535,7 @@ function TabBar({
       <TabStrip onClose={onClose} />
       <div className="ml-auto flex shrink-0 items-center gap-1 px-2">
         <CreateButton onAsk={onAsk} onFail={onFail} />
-        <EnvironmentPicker />
+        <EnvironmentPicker onAsk={onAsk} />
       </div>
     </div>
   );
@@ -621,18 +660,29 @@ function WorkspacePicker({ onCreateWorkspace }: { readonly onCreateWorkspace: ()
 /**
  * The environment selector, and the way into the variable manager beside it.
  *
- * Top-right of the tab bar, and a select rather than a menu because every row in it is a value.
- * The two look alike on purpose and are not the same control: this one reports what is currently
- * true and the workspace picker beside it issues commands. The manager is a separate button for
- * exactly that reason - a list where one row is a command and the rest are values is the kind of
- * control people press by accident.
+ * Top-right of the tab bar, and a select rather than a menu because the rows that answer "which
+ * environment" are values. The two look alike on purpose and are not the same control: this one
+ * reports what is currently true and the workspace picker beside it issues commands.
+ *
+ * One command is in here now, and it used to say why it never should be: a list where one row is a
+ * command and the rest are values is the kind of control people press by accident. That still holds
+ * for the variable manager, which is why that is still a button — pressing it by accident opens an
+ * overlay over the request you were reading. It does not hold for making an environment, because
+ * the mispress costs a dialog you cancel, and because the argument for keeping it out was answered
+ * by the list itself: while a workspace has no environments there is no list, and "create one" was
+ * reachable from nowhere at all. A row that is last, behind a rule, and wearing an icon instead of
+ * a tick is a smaller cost than a picker that cannot be filled.
+ *
+ * Gated on a workspace rather than on the workspace having environments, for that reason: the empty
+ * list is exactly the state you need this control in.
  *
  * "No environment" is a real option, and saying so is what Phase 6 bought. Core now takes `null`
  * to mean an explicit none, distinct from an absent `env` that leaves the choice open, so the
  * option is neither a lie about a sole environment being used silently nor a dead end on
  * ambiguity. The placeholder only appears while nobody has chosen at all.
  */
-function EnvironmentPicker(): React.JSX.Element {
+function EnvironmentPicker({ onAsk }: { readonly onAsk: (ask: Ask) => void }): React.JSX.Element {
+  const open = useCatalogStore((state) => state.root !== null);
   const environments = useCatalogStore((state) => state.environments);
   const environment = useSessionStore((state) => state.environment);
   const setEnvironment = useSessionStore((state) => state.setEnvironment);
@@ -640,31 +690,43 @@ function EnvironmentPicker(): React.JSX.Element {
 
   return (
     <>
-      {environments.length > 0 && (
+      {open && (
         <Select
           tier="chrome"
           aria-label="Environment"
           value={environment === undefined ? UNCHOSEN_ENVIRONMENT : (environment ?? NO_ENVIRONMENT)}
           onValueChange={(value) => {
+            // Intercepted before anything is stored: the sentinel is not a name, and a select whose
+            // value briefly became one would show it on the trigger for a frame. The dialog is the
+            // window's, so this hands it up rather than opening one of its own.
+            if (value === CREATE_ENVIRONMENT) {
+              onAsk(CREATE_ENVIRONMENT_ASK);
+              return;
+            }
             setEnvironment(value === NO_ENVIRONMENT ? null : value);
           }}
         >
           {/*
             A distinct value from "No environment", and disabled, because the two are different
-            answers: nobody has chosen yet, versus the user chose none. Only reachable with two or
-            more environments, since one is adopted the moment the catalog arrives.
+            answers: nobody has chosen yet, versus the user chose none. Reachable with two or more
+            environments, since one is adopted the moment the catalog arrives — and with none, where
+            it says so instead of asking for a choice the list cannot offer.
           */}
           {environment === undefined && (
             <SelectOption value={UNCHOSEN_ENVIRONMENT} disabled>
-              Select environment
+              {environments.length === 0 ? NO_ENVIRONMENTS_YET : CHOOSE_ENVIRONMENT}
             </SelectOption>
           )}
           <SelectOption value={NO_ENVIRONMENT}>No environment</SelectOption>
           {environments.map((candidate) => (
-            <SelectOption key={candidate.file} value={candidate.name}>
+            <SelectOption key={candidate.id} value={candidate.name}>
               {candidate.name}
             </SelectOption>
           ))}
+          <SelectSeparator />
+          <SelectCommand value={CREATE_ENVIRONMENT} icon={<AddIcon />}>
+            New environment…
+          </SelectCommand>
         </Select>
       )}
       {/* Shown even with no environments: globals are variables too, and this is where they read. */}

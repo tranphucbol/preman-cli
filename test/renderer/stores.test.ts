@@ -48,7 +48,7 @@ import {
   readPairs,
   textToPairs,
 } from "@preman/desktop/renderer/model/request.js";
-import { saveTab } from "@preman/desktop/renderer/actions.js";
+import { createEnvironment, saveTab } from "@preman/desktop/renderer/actions.js";
 import { clearFlush, flushPending, registerFlush } from "@preman/desktop/renderer/pending.js";
 import {
   DRAFT_PERSIST_DEBOUNCE_MS,
@@ -945,6 +945,62 @@ describe("drafts across a crash", () => {
 
     // Still open, so `adoptSoleEnvironment` is allowed to answer it.
     expect(useSessionStore.getState().environment).toBeUndefined();
+  });
+});
+
+/**
+ * The picker's own creation, against a real engine.
+ *
+ * The `post` here is `route`'s catalog arm and nothing more, because that arm is the only reason
+ * the action can select what it just made: the host publishes the new catalog before it answers
+ * the mutation, and messages arrive in order, so a store fed by pushes already holds the entry by
+ * the time the promise resolves. A harness that dropped pushes would be proving the opposite of
+ * what the app does.
+ */
+describe("creating an environment", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+
+  beforeEach(async () => {
+    resetStores();
+    workspace = cloneFixtureWorkspace();
+    host = createEngineHost({
+      root: workspace.root,
+      post: (message) => {
+        if ("push" in message && message.push === "catalog") useCatalogStore.getState().replace(message.catalog);
+      },
+    });
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    // The window always has a catalog before it has a picker; a refusal pushes no new one, so
+    // without this the "nothing changed" assertion below would be comparing an empty store.
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+  });
+
+  afterEach(() => {
+    host.dispose();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  it("givenAnUnsafeName_whenCreateEnvironment_thenTheSanitisedOneIsSelected", async () => {
+    const outcome = await createEnvironment("QC/east");
+
+    expect(outcome).toStrictEqual({ ok: true });
+    // The name that reached disk, not the name that was typed. Selecting by node id is what makes
+    // the difference invisible here; a picker that stored the typed name would name nothing.
+    expect(useSessionStore.getState().environment).toBe("QC east");
+    expect(useCatalogStore.getState().environments.map((entry) => entry.name)).toStrictEqual(["LOCAL", "QC east"]);
+  });
+
+  it("givenATakenName_whenCreateEnvironment_thenRefusedAndTheChoiceIsUntouched", async () => {
+    // Differently cased on purpose: `-e local` already reaches `LOCAL`, so this name is taken.
+    const outcome = await createEnvironment("local");
+
+    if (outcome.ok) throw new Error("expected the taken name to be refused");
+    expect(outcome.message).toContain("already exists");
+    expect(useSessionStore.getState().environment).toBeUndefined();
+    expect(useCatalogStore.getState().environments).toHaveLength(1);
   });
 });
 

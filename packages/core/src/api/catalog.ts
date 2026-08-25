@@ -192,6 +192,7 @@ function readSurroundings(ws: Workspace): Pick<Catalog, "workspaceId" | "environ
   return {
     workspaceId: resources.workspaceId ?? null,
     environments: listEnvironments(ws).map((environment) => ({
+      id: nodeIdFor(ws.root, environment.filePath),
       name: environment.name,
       file: environment.filePath,
       keys: Object.keys(environment.values),

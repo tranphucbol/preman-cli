@@ -19,13 +19,28 @@ export interface EnvironmentEntry {
 }
 
 export function listEnvironments(ws: Workspace): EnvironmentEntry[] {
-  const dir = join(ws.postmanDir, ENV_DIR);
+  return listEnvironmentsIn(join(ws.postmanDir, ENV_DIR));
+}
+
+/**
+ * The same list, given the directory rather than the workspace.
+ *
+ * For the mutation seam, which creates a file inside that directory and has a root rather
+ * than a discovered workspace. Reading through here rather than scanning again is what keeps
+ * a creation's idea of what already exists identical to a lookup's.
+ */
+export function listEnvironmentsIn(dir: string): EnvironmentEntry[] {
   if (!existsSync(dir)) return [];
 
   return readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.endsWith(ENV_SUFFIX))
     .map((e) => loadEnvironment(join(dir, e.name)))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The filename stem, which `findEnvironment` accepts as a name and `loadEnvironment` falls back to. */
+function stemOf(filePath: string): string {
+  return basename(filePath).slice(0, -ENV_SUFFIX.length);
 }
 
 /** Where workspace globals live, whether or not anyone has written the file yet. */
@@ -72,9 +87,24 @@ export function findEnvironment(ws: Workspace, name: string): EnvironmentEntry |
   const needle = name.trim().toLowerCase();
   const all = listEnvironments(ws);
   return (
-    all.find((e) => e.name.toLowerCase() === needle) ??
-    all.find((e) => basename(e.filePath).slice(0, -ENV_SUFFIX.length).toLowerCase() === needle)
+    all.find((e) => e.name.toLowerCase() === needle) ?? all.find((e) => stemOf(e.filePath).toLowerCase() === needle)
   );
+}
+
+/**
+ * The display name `name` would already resolve to in `dir`, if any.
+ *
+ * Deliberately `findEnvironment`'s matching rather than a filename check: an environment is
+ * addressed by name — by `-e`, by the picker, by `writeEnvironmentValue` — so two files a
+ * lookup cannot tell apart are two files one of them silently loses. A creation that would
+ * produce that pair has to be refused, and it can only know so by asking the same question
+ * the lookup will ask. Returns the existing name, so the refusal can quote it.
+ */
+export function existingEnvironmentName(dir: string, name: string): string | undefined {
+  const needle = name.trim().toLowerCase();
+  return listEnvironmentsIn(dir).find(
+    (entry) => entry.name.toLowerCase() === needle || stemOf(entry.filePath).toLowerCase() === needle,
+  )?.name;
 }
 
 /**

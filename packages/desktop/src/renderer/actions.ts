@@ -23,6 +23,9 @@ import { loadTab, toEngineError, useSessionStore } from "@preman/desktop/rendere
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
+// The shape a naming dialog waits on. Imported rather than restated, so an action that answers one
+// cannot drift from what the dialog reads; the dependency is a type and points at no component.
+import type { AskOutcome } from "@preman/desktop/renderer/ui/Dialog.js";
 
 /** A failure a caller wants to show rather than swallow. */
 export type Failure = { readonly message: string; readonly details: readonly string[] };
@@ -146,6 +149,36 @@ export async function mutate(op: MutateOp, options: { readonly open?: boolean } 
     return null;
   } catch (cause) {
     return failure(cause);
+  }
+}
+
+/**
+ * Create an environment and make it the active one.
+ *
+ * Selecting it is the whole point of creating one from the picker; leaving it unselected would be
+ * the tool making you do its filing, which is the argument `mutate`'s `open` already makes for a
+ * request. Nothing here has to wait for the catalog: `publish` posts the new one before the
+ * mutation's response and port messages are ordered, so the entry exists to be found by the time
+ * this resolves.
+ *
+ * Found by node id and not by the name that was typed, because creation sanitises what it writes —
+ * `prod/east` lands on disk, and in this list, as `prod east`.
+ *
+ * A refusal is returned rather than raised as a banner, the way `createNewWorkspace` returns one:
+ * a name another environment already holds is answered beside the field that caused it, while the
+ * dialog is still on screen to correct it in.
+ */
+export async function createEnvironment(name: string): Promise<AskOutcome> {
+  const engine = client();
+  // No workspace, so no picker to have opened this and nothing to report. As `mutate` does.
+  if (engine === null) return { ok: true };
+  try {
+    const { nodeId } = await engine.send("mutate", { op: { op: "create-environment", name } });
+    const created = useCatalogStore.getState().environments.find((candidate) => candidate.id === nodeId);
+    if (created !== undefined) useSessionStore.getState().setEnvironment(created.name);
+    return { ok: true };
+  } catch (cause) {
+    return { ok: false, message: failure(cause).message };
   }
 }
 

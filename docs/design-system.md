@@ -163,6 +163,13 @@ name: `SelectOption`'s tick, on the right, in the accent. Two visual languages f
 current one" inside one pane is the confusion; picking by orientation rather than by widget is what
 stops it.
 
+A **command** in a list of values is `SelectCommand`: last, behind a `SelectSeparator`, wearing an
+icon where the values wear a tick. The tick is the list's word for "the one you are on", so a row
+that can never be that must not be able to show one, and the icon says which kind of row it is
+before it is pressed. One per list, at the bottom — a list whose middle is commands is a menu, and
+`Menu.tsx` already exists. The environment picker in `App.tsx` is the case: the alternative was a
+control the user could not reach while a workspace had nothing to select.
+
 A radio group in a **grid** is the other shape, and it is a card: `rounded-md border p-2`,
 `border-accent bg-selected` when on, `border-line-strong bg-control hover:bg-hover` when off — the
 `Choice` in `panes/SettingsPane.tsx`. Both are a native `<input type="radio">` inside a `<label>`

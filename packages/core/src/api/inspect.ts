@@ -1,6 +1,7 @@
 import { listRequests } from "@preman/core/workspace/collections.js";
 import { requireWorkspace } from "@preman/core/workspace/discover.js";
 import { listEnvironments } from "@preman/core/workspace/environments.js";
+import { nodeIdFor } from "@preman/core/workspace/paths.js";
 import { loadResources } from "@preman/core/workspace/resources.js";
 
 export interface SnapshotRequest {
@@ -14,6 +15,16 @@ export interface SnapshotRequest {
 }
 
 export interface SnapshotEnvironment {
+  /**
+   * The environment's `nodeIdFor` path, the same string a mutation reports having created.
+   *
+   * An environment is not a tree node and carries no id for the sidebar's sake. It carries one
+   * so that a caller which has just created a file can say which entry in this list is that
+   * file, without deriving one absolute path from the other — `file` is absolute and a node id
+   * is relative and posix, and a renderer has neither the root nor a path library to bridge
+   * them. Names cannot do the job either: creation sanitises the name it was given.
+   */
+  id: string;
   name: string;
   file: string;
   keys: string[];
@@ -46,6 +57,7 @@ export function describeWorkspace(dir: string): WorkspaceSnapshot {
       folders: request.folders,
     })),
     environments: listEnvironments(ws).map((environment) => ({
+      id: nodeIdFor(ws.root, environment.filePath),
       name: environment.name,
       file: environment.filePath,
       keys: Object.keys(environment.values),

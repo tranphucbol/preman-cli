@@ -154,6 +154,13 @@ lives, so the first one can be made from there too. The context menu on a reques
 comments, scripts and examples included — to `Foo copy` directly below the original and opens it.
 Duplicate copies what is on disk, so save an edited tab first.
 
+An environment is made from the last row of the environment picker itself — **New environment…**,
+below the values and a rule — or from the command palette. It is created empty and becomes the
+active one, so the next `{{token}}` you write has somewhere to be set. A name another environment
+already holds is refused rather than resolved to `Foo (2)`: an environment is reached by name, by
+the picker and by `-e` alike, so two files answering to one name would be one of them silently
+ignored. The picker is present in every workspace, including one with no environments yet.
+
 A raw HTTP body and a gRPC message can be re-indented from the **Beautify** glyph at the right of
 their toolbar. It rewrites whitespace and nothing else, so a bare `{{token}}`, `1e3`, `1.0` and a
 twenty-digit id all survive byte for byte — a body is bytes that go on the wire, and a formatter that
