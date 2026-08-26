@@ -11,9 +11,12 @@ import {
   DEFAULT_PREFERENCES,
   ENGINE_PORT_WINDOW_MESSAGE,
   TITLE_BAR_GUTTER_PX,
+  type CloudWorkspaceListResult,
   type CreateWorkspaceResult,
   type EnginePortDelivery,
   type HostFailure,
+  type MigrateResult,
+  type MigrationProgress,
   type Preferences,
   type PremanBridge,
   type SessionSnapshot,
@@ -116,6 +119,27 @@ const bridge: PremanBridge = {
     ipcRenderer.on(CHANNELS.openCreateWorkspace, handler);
     return () => {
       ipcRenderer.off(CHANNELS.openCreateWorkspace, handler);
+    };
+  },
+  onMigrate(listener) {
+    const handler = (): void => {
+      listener();
+    };
+    ipcRenderer.on(CHANNELS.openMigrate, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.openMigrate, handler);
+    };
+  },
+  listPostmanWorkspaces: () => ipcRenderer.invoke(CHANNELS.listPostmanWorkspaces) as Promise<CloudWorkspaceListResult>,
+  migratePostmanWorkspace: (workspaceId: string) =>
+    ipcRenderer.invoke(CHANNELS.migratePostmanWorkspace, workspaceId) as Promise<MigrateResult>,
+  onMigrateProgress(listener) {
+    const handler = (_event: IpcRendererEvent, progress: MigrationProgress): void => {
+      listener(progress);
+    };
+    ipcRenderer.on(CHANNELS.migrateProgress, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.migrateProgress, handler);
     };
   },
 };

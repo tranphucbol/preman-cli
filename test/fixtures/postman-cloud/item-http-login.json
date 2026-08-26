@@ -1,0 +1,30 @@
+{
+  "data": {
+    "id": "a0000000-0000-4000-8000-000000000002",
+    "$kind": "http-request",
+    "parentId": "a0000000-0000-4000-8000-000000000001",
+    "collectionId": "11111111-1111-4111-8111-111111111111",
+    "isPartial": false,
+    "name": "Login",
+    "method": "POST",
+    "url": "{{base_url}}/login",
+    "headers": [
+      {
+        "key": "content-type",
+        "value": "application/json"
+      }
+    ],
+    "body": {
+      "type": "raw",
+      "content": "{\"user\":\"demo\"}"
+    },
+    "scripts": [
+      {
+        "type": "test",
+        "language": "javascript",
+        "code": "pm.test(\"ok\", () => pm.response.to.have.status(200));"
+      }
+    ],
+    "examples": []
+  }
+}

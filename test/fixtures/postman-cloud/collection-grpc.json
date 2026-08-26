@@ -1,0 +1,22 @@
+{
+  "data": {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "name": "gRpc - Exchange",
+    "description": "Exchange service, descriptor-backed.",
+    "owner": "12345",
+    "auth": {
+      "type": "bearer",
+      "credentials": {
+        "token": "{{token}}"
+      }
+    },
+    "$kind": "collection",
+    "items": [
+      {
+        "id": "b0000000-0000-4000-8000-000000000001",
+        "$kind": "grpc-request"
+      }
+    ]
+  },
+  "meta": {}
+}

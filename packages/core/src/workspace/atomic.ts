@@ -2,7 +2,12 @@ import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 
-const TEMP_SUFFIX = ".preman-tmp";
+/**
+ * Exported because it is part of how long a filename may be: the temp file is a sibling, so
+ * every name preman writes has to fit inside the filesystem's limit *with this appended*.
+ * `paths.ts` reserves it.
+ */
+export const TEMP_SUFFIX = ".preman-tmp";
 const ENCODING = "utf8";
 
 /**

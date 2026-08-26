@@ -2,11 +2,15 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import pc from "picocolors";
 import { interactiveSelection } from "@preman/cli/prompt.js";
+import { defaultPostmanAppData } from "@preman/cli/postman.js";
+import { progressWriter } from "@preman/cli/progress.js";
 import { renderEnvironment, renderEnvironmentSet } from "@preman/cli/render/env.js";
 import { renderList } from "@preman/cli/render/list.js";
+import { renderMigration, renderWorkspaceList } from "@preman/cli/render/migrate.js";
 import { hasHumanReporter, renderReports, reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
 import { readEnvironment, writeEnvironmentValue } from "@preman/core/api/environments.js";
 import { describeWorkspace } from "@preman/core/api/inspect.js";
+import { listCloudWorkspaces, migrateCloudWorkspace } from "@preman/core/api/migrate.js";
 import { runSelection } from "@preman/core/api/run.js";
 import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 
@@ -29,6 +33,9 @@ ${pc.bold("usage")}
   preman run <collection|folder>      run every request in it, in order
   preman env show
   preman env set <key> <value>
+  preman migrate --list               list the cloud workspaces Postman can see
+  preman migrate --workspace <id|name> --out <dir> [--dry-run]
+                                      copy a Postman cloud workspace to disk
 
 ${pc.bold("options")}
   -d, --dir <path>      workspace to use (default: search upwards from cwd)
@@ -77,6 +84,12 @@ ${pc.bold("options")}
       --json            alias for --reporter json
   -v, --verbose         show request body, script logs, headers, metadata and
                         trailers
+      --workspace <id|name>
+                        migrate only: which Postman cloud workspace to read
+      --out <dir>       migrate only: the directory to write; it must not exist
+                        or must be empty
+      --list            migrate only: list workspaces instead of migrating
+      --dry-run         migrate only: print what would be written, write nothing
   -h, --help            show this help
       --version         print the version
 
@@ -89,6 +102,13 @@ ${pc.bold("exit codes")}
   4  the call succeeded but a pm.test assertion failed
 
 A collection run reports the worst outcome it saw, in that same order.
+
+${pc.bold("migrate")}
+  Reads a Postman *cloud* workspace, gRPC included, and writes it as a Postman
+  filesystem workspace. Postman Desktop must be running and signed in: preman
+  borrows that window's own session and never asks for a password. gRPC requests
+  arrive descriptor-only — they run, but editing one against a .proto means
+  adding the file and a localResources.specs entry by hand.
 
 ${pc.bold("scripts")}
   beforeInvoke and prerequest run before the call; onMessage (gRPC) and
@@ -190,6 +210,12 @@ const OPTIONS = {
   "reporter-junit-export": { type: "string" },
   json: { type: "boolean" },
   verbose: { type: "boolean", short: "v" },
+  // `migrate` only. No token flag: the token comes from the running Postman Desktop, so there
+  // is nothing for a user to paste and nothing to leak into shell history.
+  workspace: { type: "string" },
+  out: { type: "string" },
+  list: { type: "boolean" },
+  "dry-run": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
 } as const;
@@ -242,6 +268,42 @@ export async function main(argv: string[]): Promise<ExitCode> {
         return EXIT.OK;
       }
       throw new PremanError(`unknown env subcommand "${sub}"`, { details: ["expected `show` or `set`"] });
+    }
+
+    case "migrate": {
+      const postmanAppData = defaultPostmanAppData();
+      if (values.list === true) {
+        const workspaces = await listCloudWorkspaces({ postmanAppData });
+        process.stdout.write(`${renderWorkspaceList(workspaces, { json })}\n`);
+        return EXIT.OK;
+      }
+      if (values.workspace === undefined) {
+        throw new PremanError("migrate needs --workspace <id|name>", {
+          details: ["run `preman migrate --list` to see what this Postman account can reach"],
+        });
+      }
+      const dryRun = values["dry-run"] === true;
+      // `--out` is required even for a dry run: the report names the destination, and a plan
+      // printed without one reads as if preman had decided where the workspace goes.
+      if (values.out === undefined) throw new PremanError("migrate needs --out <dir>");
+      // A migration is around forty seconds of silence on a large workspace. The line goes on
+      // stderr and comes back down before anything is printed, including on the way out through a
+      // throw — a half-drawn bar above an error message is an error message with a bar in it.
+      const progress = progressWriter(process.stderr);
+      try {
+        const outcome = await migrateCloudWorkspace({
+          postmanAppData,
+          workspace: values.workspace,
+          target: values.out,
+          dryRun,
+          onProgress: progress.report,
+        });
+        progress.clear();
+        process.stdout.write(`${renderMigration(outcome, { json })}\n`);
+      } finally {
+        progress.clear();
+      }
+      return EXIT.OK;
     }
 
     case "run": {

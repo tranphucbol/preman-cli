@@ -1,0 +1,48 @@
+{
+  "meta": {
+    "model": "workspace",
+    "action": "find",
+    "nextCursor": ""
+  },
+  "data": [
+    {
+      "id": "2a52db72-0b3f-45c5-8242-000000000001",
+      "name": "Work",
+      "description": "",
+      "summary": "",
+      "createdBy": "0",
+      "updatedBy": "0",
+      "team": 864666,
+      "visibilityStatus": "team",
+      "state": "active",
+      "isArchived": false,
+      "isFavorite": false
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555555",
+      "name": "Work",
+      "description": "",
+      "summary": "",
+      "createdBy": "0",
+      "updatedBy": "0",
+      "team": null,
+      "visibilityStatus": "personal",
+      "state": "active",
+      "isArchived": false,
+      "isFavorite": false
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "My Workspace",
+      "description": "",
+      "summary": "",
+      "createdBy": "0",
+      "updatedBy": "0",
+      "team": null,
+      "visibilityStatus": "personal",
+      "state": "active",
+      "isArchived": false,
+      "isFavorite": false
+    }
+  ]
+}

@@ -486,6 +486,27 @@ describe("paths", () => {
     expect(sanitiseSegment("trailing dots...")).toBe("trailing dots");
   });
 
+  it("givenALongName_whenSanitised_thenItFitsAFilenameWithItsSuffix", () => {
+    // Real workspaces hold requests named after a URL with its query string. The segment has to
+    // leave room for `.environment.yaml` and a ` (100)` marker inside the filesystem's 255.
+    const segment = sanitiseSegment(`https://host/search?q=${"long".repeat(200)}`);
+
+    expect(Buffer.byteLength(`${segment} (100).environment.yaml.preman-tmp`)).toBeLessThanOrEqual(255);
+    expect(segment.startsWith("https host search q=long")).toBe(true);
+  });
+
+  it("givenAMultibyteName_whenSanitised_thenTheLimitIsBytesAndNoCharacterIsSplit", () => {
+    // The limit is bytes, so a Vietnamese name reaches it well before 221 characters.
+    const vietnamese = sanitiseSegment("Chuyển tiền ".repeat(40));
+    expect(Buffer.byteLength(vietnamese)).toBeLessThanOrEqual(221);
+    expect(vietnamese.length).toBeGreaterThan(100);
+
+    // An emoji is four bytes and two UTF-16 units; cutting by either count would leave half.
+    const emoji = sanitiseSegment("\u{1f680}".repeat(100));
+    expect(Buffer.byteLength(emoji)).toBeLessThanOrEqual(221);
+    expect([...emoji].every((character) => character === "\u{1f680}")).toBe(true);
+  });
+
   it("givenNamesThatCannotBeFiles_whenSanitised_thenUsageError", () => {
     for (const name of ["", "   ", "..", "/", "\u0000"]) {
       expect(() => sanitiseSegment(name)).toThrow(PremanError);

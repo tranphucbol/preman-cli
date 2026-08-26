@@ -41,6 +41,7 @@ The CLI's own design predates the practice.
 | [030](030-ci-asserts-everything-but-the-clock.md)                   | CI asserts everything but the clock, and the tag is the version        |
 | [031](031-an-authored-body-is-re-indented-not-reserialised.md)      | An authored body is re-indented, not reserialised                      |
 | [032](032-the-linux-watcher-is-partial-and-said-so.md)              | The Linux watcher is partial, and says so in prose rather than in code |
+| [033](033-migrating-from-postman-cloud.md)                          | Migration reads Postman's own private API, with Postman's own token    |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -89,5 +90,14 @@ on everything the app has touched. It is not fixed, because every fix costs eith
 or the design 016 and this function's own docblock already settled, and 018 does not ship the app
 there. What is fixed is the comment that claimed the opposite, which is the part that could have
 cost someone a day.
+
+033 is the first record about getting a workspace in rather than about what happens to one once it is
+here, and the first whose main dependency is another vendor's undocumented surface. It takes the
+transport preman was built to avoid needing — Postman's own private RPC proxy, with the token borrowed
+from a signed-in desktop window — because the documented API cannot see the gRPC requests that are the
+README's first paragraph. It says in its own consequences that it will break without notice, which is
+the point of writing it down: the next reader will find a broken feature and needs to know it was
+built that way knowingly, and where to look. It also applies 029's argument to a second process, and
+declines to invent the `.proto` that 006 forbids inventing.
 
 `TEMPLATE.md` is the shape of a new one.

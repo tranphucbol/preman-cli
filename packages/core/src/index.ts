@@ -88,6 +88,15 @@ export {
   type VariableView,
 } from "@preman/core/api/variables.js";
 export { previewText, type TextPreview } from "@preman/core/api/preview.js";
+export {
+  listCloudWorkspaces,
+  migrateCloudWorkspace,
+  type MigrateArgs,
+  type MigrationOutcome,
+} from "@preman/core/api/migrate.js";
+export type { CloudWorkspace } from "@preman/core/postman/model.js";
+export type { SkippedItem } from "@preman/core/postman/plan.js";
+export type { MigrationPhase, MigrationProgress, MigrationReporter } from "@preman/core/postman/progress.js";
 export type { Scope } from "@preman/core/vars/store.js";
 export { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
 export { toJunitReport, type RunReport } from "@preman/core/report/junit.js";

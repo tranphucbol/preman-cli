@@ -78,19 +78,35 @@ function loadFromProtoFile(protoPath: string, includeDirs: string[]): PackageDef
   }
 }
 
-function loadFromDescriptor(base64: string): PackageDefinition {
+/**
+ * `whyNotTheProto` is why the `.proto` was not used, and it is the actionable half of any failure
+ * here: a descriptor that will not decode is usually one Postman's cloud truncated, and the fix is
+ * always the file. Measured against a real cloud workspace, 184 of 188 gRPC requests arrived with a
+ * `methodDescriptor` cut to exactly 300 characters (ADR 033), so this path is not an edge case and
+ * its message has to name the file it wanted.
+ */
+function loadFromDescriptor(base64: string, whyNotTheProto: readonly string[]): PackageDefinition {
   let buffer: Buffer;
   try {
     buffer = Buffer.from(base64, "base64");
   } catch (cause) {
-    throw new PremanError(`methodDescriptor is not valid base64: ${(cause as Error).message}`);
+    throw new PremanError(`methodDescriptor is not valid base64: ${(cause as Error).message}`, {
+      details: [...whyNotTheProto],
+    });
   }
-  if (buffer.length === 0) throw new PremanError("methodDescriptor decoded to zero bytes");
+  if (buffer.length === 0) {
+    throw new PremanError("methodDescriptor decoded to zero bytes", { details: [...whyNotTheProto] });
+  }
 
   try {
     return protoLoader.loadFileDescriptorSetFromBuffer(buffer, LOAD_OPTIONS);
   } catch (cause) {
-    throw new PremanError(`failed to load embedded methodDescriptor: ${(cause as Error).message}`);
+    throw new PremanError(`failed to load embedded methodDescriptor: ${(cause as Error).message}`, {
+      details: [
+        `the descriptor is ${base64.length} base64 characters and does not decode to a FileDescriptorSet`,
+        ...whyNotTheProto,
+      ],
+    });
   }
 }
 
@@ -162,7 +178,14 @@ export function resolveMethod(options: ResolveMethodOptions): ResolvedMethod {
         ],
       });
     }
-    pkg = loadFromDescriptor(options.methodDescriptor);
+    // `warnings` already holds why the file was not used, when there was a file to try. The
+    // fallback line covers the two cases that produce no warning at all.
+    pkg = loadFromDescriptor(
+      options.methodDescriptor,
+      warnings.length > 0
+        ? warnings
+        : [protoPath === undefined ? "the request has no schema.location" : `the .proto was not tried: ${protoPath}`],
+    );
     source = "descriptor";
     warnings.push("using the descriptor embedded in the request; it may be stale or partial");
   }

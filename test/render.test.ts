@@ -3,9 +3,16 @@ import * as protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runSelection, type RunSelectionArgs } from "@preman/core/api/run.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
+import { progressWriter, type ProgressStream } from "@preman/cli/progress.js";
 import { renderGroupOutcome, renderOutcome } from "@preman/cli/render/outcome.js";
+import { renderProgress } from "@preman/cli/render/migrate.js";
 import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
+import type { MigrationPhase, MigrationProgress } from "@preman/core";
 import type { GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
+
+/** Wide enough for the bar, and narrower than the bar needs. */
+const WIDE = 100;
+const NARROW = 40;
 import {
   FIXTURE_HTTP_WS,
   FIXTURE_INCLUDE_DIR,
@@ -321,5 +328,115 @@ describe("json reports", () => {
     expect(report.items[2]?.run).toBeNull();
     expect(report.items[0]?.run).toMatchObject({ methodPath: "test.echo.EchoService.Ping" });
     expect(report.items[0]?.error).toBeNull();
+  });
+});
+
+/**
+ * The migration's progress line. Pure, so the shape is assertable without a terminal — which is
+ * the point of the split: `progressWriter` owns the carriage returns and knows nothing about words.
+ */
+describe("renderProgress", () => {
+  const at = (over: Partial<MigrationProgress>): MigrationProgress => ({
+    phase: "reading-collections",
+    done: 0,
+    total: undefined,
+    calls: 0,
+    ...over,
+  });
+
+  it("givenAnUnknowableTotal_whenRendered_thenNoBarIsDrawn", () => {
+    const line = renderProgress(at({ phase: "converting", calls: 1245 }), WIDE);
+
+    // An empty bar would claim nothing has happened; what is true is that nobody knows how much
+    // there is. The absence of a bar is the honest drawing of that.
+    expect(line).not.toContain("░");
+    expect(line).toContain("converting");
+    expect(line).toContain("1245 reads");
+  });
+
+  it("givenOneRead_whenRendered_thenItIsSingular", () => {
+    expect(renderProgress(at({ phase: "reading-workspace", calls: 1 }), WIDE)).toContain("1 read");
+  });
+
+  it("givenAlmostEveryUnit_whenRendered_thenTheBarIsNotYetFull", () => {
+    const line = renderProgress(at({ done: 675, total: 684, calls: 1245 }), WIDE);
+
+    // Rounding would fill the last cell at 675 of 684 and put a visibly complete bar beside "98%".
+    expect(line).toContain("675/684");
+    expect(line).toContain("98%");
+    expect(line).toContain("░");
+  });
+
+  it("givenEveryUnit_whenRendered_thenTheBarIsFull", () => {
+    expect(renderProgress(at({ done: 41, total: 41 }), WIDE)).not.toContain("░");
+  });
+
+  it("givenNoUnitsAtAll_whenRendered_thenThePhaseReadsAsFinished", () => {
+    // A workspace with no environments; an empty bar there would read as stuck forever.
+    expect(renderProgress(at({ phase: "reading-environments", done: 0, total: 0 }), WIDE)).toContain("100%");
+  });
+
+  it("givenANarrowTerminal_whenRendered_thenTheCountsSurviveAndTheBarIsDropped", () => {
+    const line = renderProgress(at({ done: 12, total: 41 }), NARROW);
+
+    expect(line).toContain("12/41");
+    expect(line).not.toContain("░");
+  });
+});
+
+describe("progressWriter", () => {
+  const at = (phase: MigrationPhase, calls: number): MigrationProgress => ({
+    phase,
+    done: 0,
+    total: undefined,
+    calls,
+  });
+
+  function fake(isTTY: boolean): { stream: ProgressStream; written: string[] } {
+    const written: string[] = [];
+    return { stream: { isTTY, columns: WIDE, write: (chunk: string) => written.push(chunk) }, written };
+  }
+
+  it("givenATerminalThatWillNotSayHowWideItIs_whenReportsArrive_thenTheBarIsStillDrawn", () => {
+    // A pty with no window size attached reports zero rather than nothing — `script -q /dev/null`
+    // is one — and reading that as a width silently drops the bar on a real terminal.
+    const written: string[] = [];
+    progressWriter({ isTTY: true, columns: 0, write: (chunk: string) => written.push(chunk) }).report({
+      phase: "reading-collections",
+      done: 12,
+      total: 41,
+      calls: 327,
+    });
+
+    expect(written[0]).toContain("░");
+  });
+
+  it("givenATerminal_whenReportsArrive_thenOneLineIsRewrittenAndTakenBackDown", () => {
+    const { stream, written } = fake(true);
+    const writer = progressWriter(stream);
+
+    writer.report(at("reading-collections", 25));
+    writer.report(at("reading-collections", 50));
+    writer.clear();
+
+    expect(written).toHaveLength(3);
+    // Erase-then-write, so the previous line's length never has to be remembered.
+    expect(written.every((chunk) => chunk.startsWith("\u001B[2K\r"))).toBe(true);
+    expect(written[2]).toBe("\u001B[2K\r");
+  });
+
+  it("givenAPipe_whenReportsArrive_thenOnlyPhaseChangesAreLogged", () => {
+    const { stream, written } = fake(false);
+    const writer = progressWriter(stream);
+
+    writer.report(at("reading-collections", 25));
+    writer.report(at("reading-collections", 50));
+    writer.report(at("writing", 50));
+    writer.clear();
+
+    // Carriage returns in a log file are noise; a log wants to know when each phase began.
+    expect(written).toHaveLength(2);
+    expect(written.every((chunk) => chunk.endsWith("\n"))).toBe(true);
+    expect(written.some((chunk) => chunk.includes("\r"))).toBe(false);
   });
 });

@@ -28,6 +28,7 @@ import { EXIT_CODES, ORDER_STEP } from "@preman/desktop/engine/protocol.js";
 import { DEFAULT_PREFERENCES, TITLE_BAR_GUTTER_PX } from "@preman/desktop/preload/bridge.js";
 import type {
   CreateWorkspaceResult,
+  MigrateResult,
   PremanBridge,
   SessionSnapshot,
   WindowControl,
@@ -60,7 +61,12 @@ import {
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
 import { CONSOLE_MAX_LINES, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
-import { applyExternalChange, createNewWorkspace, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import {
+  applyExternalChange,
+  createNewWorkspace,
+  migrateFromPostman,
+  useSessionStore,
+} from "@preman/desktop/renderer/stores/session.js";
 import { DEFAULT_BODY_VIEW, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 
 import { cloneFixtureHttpWorkspace, cloneFixtureWorkspace, type ClonedWorkspace } from "../helpers.js";
@@ -81,6 +87,15 @@ const NEW_WORKSPACE_ROOT = "/tmp/home/.local/share/preman/workspace/payments";
 const CREATE_REFUSAL = "/tmp/home/.local/share/preman/workspace/payments already exists.";
 /** The fake's default, so a test that forgot to say what creation answers cannot pass by accident. */
 const NO_CREATE_ANSWER = "no creation result was staged";
+
+/** Migration: the cloud workspace asked for, where main says it wrote it, and why it might refuse. */
+const CLOUD_WORKSPACE_ID = "2a52db72-0b3f-45c5-8242-000000000001";
+const MIGRATED_ROOT = "/tmp/migrated/work";
+const MIGRATED_NAME = "Work";
+const MIGRATE_REFUSAL = "Postman Desktop does not appear to be running";
+const MIGRATE_ADVICE = "open Postman Desktop and sign in, then try again";
+/** Same reasoning as `NO_CREATE_ANSWER`: nothing succeeds because a test forgot to stage it. */
+const NO_MIGRATE_ANSWER = "no migration result was staged";
 const NO_CALLS = 0;
 const SETTLE_MS = DRAFT_PERSIST_DEBOUNCE_MS * 2;
 
@@ -119,6 +134,9 @@ interface FakeBridge {
   lists(): number;
   /** What main says it is reopening at launch. The default is nothing, which is a cold first run. */
   answerReopening(root: string | null): void;
+  /** What migration answers, and which cloud workspace ids it was asked for. */
+  answerMigrate(result: MigrateResult): void;
+  migrated(): string[];
 }
 
 /** What main hands back when nothing has been stored: no `activeEnvironment` key at all, because
@@ -136,6 +154,8 @@ function fakeBridge(): FakeBridge {
   const openedRoots: string[] = [];
   let listCalls = 0;
   let reopeningRoot: string | null = null;
+  let migrateResult: MigrateResult = { status: "failed", message: NO_MIGRATE_ANSWER, details: [] };
+  const migratedIds: string[] = [];
 
   const bridge: PremanBridge = {
     titleBarGutter: TITLE_BAR_GUTTER_PX,
@@ -144,7 +164,14 @@ function fakeBridge(): FakeBridge {
     setWindowChrome: () => undefined,
     onOpenSettings: () => () => undefined,
     onCreateWorkspace: () => () => undefined,
+    onMigrate: () => () => undefined,
     onHostFailure: () => () => undefined,
+    listPostmanWorkspaces: () => Promise.resolve({ status: "listed", workspaces: [] }),
+    migratePostmanWorkspace: (workspaceId: string) => {
+      migratedIds.push(workspaceId);
+      return Promise.resolve(migrateResult);
+    },
+    onMigrateProgress: () => () => undefined,
     listWorkspaces: () => {
       listCalls += 1;
       return Promise.resolve([]);
@@ -189,6 +216,10 @@ function fakeBridge(): FakeBridge {
     answerReopening: (root) => {
       reopeningRoot = root;
     },
+    answerMigrate: (result) => {
+      migrateResult = result;
+    },
+    migrated: () => [...migratedIds],
   };
 }
 
@@ -750,7 +781,7 @@ describe("the gRPC url split between the lock and the field", () => {
   });
 });
 
-describe("creating a workspace from the window", () => {
+describe("acquiring a workspace from the window", () => {
   let bridge: FakeBridge;
 
   beforeEach(() => {
@@ -788,6 +819,48 @@ describe("creating a workspace from the window", () => {
     expect(bridge.opened()).toHaveLength(NO_CALLS);
     expect(bridge.lists()).toBe(NO_CALLS);
     expect(useSessionStore.getState().root).toBeNull();
+  });
+
+  it("givenMigrationSucceeds_whenMigrateFromPostmanRuns_thenItOpensAndRefreshesRecents", async () => {
+    bridge.answerMigrate({
+      status: "migrated",
+      outcome: {
+        root: MIGRATED_ROOT,
+        workspaceName: MIGRATED_NAME,
+        counts: { collection: 2, "grpc-request": 1 },
+        skipped: [{ path: "Adapter/Legacy Socket", kind: "websocket-request" }],
+      },
+    });
+
+    const result = await migrateFromPostman(CLOUD_WORKSPACE_ID);
+
+    expect(result.status).toBe("migrated");
+    // An id crosses, never a destination: main owns the dialog that names where it went.
+    expect(bridge.migrated()).toEqual([CLOUD_WORKSPACE_ID]);
+    // Opened through the same call a recent workspace takes, and Recents read back afterwards.
+    expect(bridge.opened()).toEqual([MIGRATED_ROOT]);
+    expect(bridge.lists()).toBeGreaterThan(NO_CALLS);
+  });
+
+  it("givenMigrationFails_whenMigrateFromPostmanRuns_thenItReturnsTheErrorWithoutOpening", async () => {
+    bridge.answerMigrate({ status: "failed", message: MIGRATE_REFUSAL, details: [MIGRATE_ADVICE] });
+
+    const result = await migrateFromPostman(CLOUD_WORKSPACE_ID);
+
+    // The advice survives the crossing: the pane says both lines, so `details[]` is not folded in.
+    expect(result).toEqual({ status: "failed", message: MIGRATE_REFUSAL, details: [MIGRATE_ADVICE] });
+    expect(bridge.opened()).toHaveLength(NO_CALLS);
+    expect(bridge.lists()).toBe(NO_CALLS);
+    expect(useSessionStore.getState().root).toBeNull();
+  });
+
+  it("givenTheDestinationDialogIsDismissed_whenMigrateFromPostmanRuns_thenNothingIsOpened", async () => {
+    bridge.answerMigrate({ status: "cancelled" });
+
+    const result = await migrateFromPostman(CLOUD_WORKSPACE_ID);
+
+    expect(result).toEqual({ status: "cancelled" });
+    expect(bridge.opened()).toHaveLength(NO_CALLS);
   });
 });
 

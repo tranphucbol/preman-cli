@@ -180,6 +180,18 @@ describe("applyAuth", () => {
     expect(warnings).toEqual([]);
   });
 
+  it("givenCredentialsAsAList_whenApplied_thenTheyReadTheSameAsAMap", () => {
+    const headers: KeyValue[] = [];
+    // The shape every migrated request carries: Postman's own model keys credentials by entry.
+    applyAuth({
+      auth: { type: "bearer", credentials: [{ key: "token", value: "{{jwt_token}}" }] },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(pairs(headers)).toEqual({ Authorization: "Bearer tok-1" });
+  });
+
   it("givenBasicAuth_whenApplied_thenTheCredentialsAreBase64", () => {
     const headers: KeyValue[] = [];
     applyAuth({

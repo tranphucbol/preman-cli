@@ -43,5 +43,17 @@ const ENGINE_RUNTIME_PACKAGES = [
 
 export const ENGINE_EXTERNALS = [...new Set([...NODE_BUILTINS, ...ENGINE_RUNTIME_PACKAGES, "electron"])];
 
-/** Main and preload touch no engine dependency, so anything they resolve is a mistake worth seeing. */
-export const SHELL_EXTERNALS = [...new Set([...NODE_BUILTINS, "electron"])];
+/**
+ * The shell entries inline what they pull, so anything they reach is visible in the bundle. Main
+ * reaches `@preman/core/api/migrate.js` — a subtree of zod, `yaml` and `node:*`, and deliberately
+ * not the barrel, which would drag `@grpc/grpc-js` in behind it.
+ *
+ * `yaml` is the one exception, and it is a correctness one rather than a size one. It ships a CJS
+ * `dist/`, three of whose modules `require("process")`; inlined into an ESM output that becomes
+ * rolldown's `__require`, which throws "in an environment that doesn't expose the `require`
+ * function" the moment a migration loads. Externalising it emits a real `import` instead. It is
+ * already a runtime dependency for the engine, so electron-builder was packing it either way.
+ */
+const SHELL_RUNTIME_PACKAGES = ["yaml"];
+
+export const SHELL_EXTERNALS = [...new Set([...NODE_BUILTINS, ...SHELL_RUNTIME_PACKAGES, "electron"])];

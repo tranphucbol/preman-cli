@@ -21,6 +21,8 @@ preman run [<collection/request>]
 preman run <collection|folder>
 preman env show
 preman env set <key> <value>
+preman migrate --list
+preman migrate --workspace <id|name> --out <dir> [--dry-run]
 ```
 
 | Option                           | Behavior                                                                                                                                                             |
@@ -55,6 +57,17 @@ preman env set <key> <value>
 | `-v, --verbose`                  | Show request bodies, logs, headers, metadata, trailers, and full group reports.                                                                                      |
 
 Test results and failed assertions are printed without `--verbose`.
+
+Four options belong to `migrate` alone:
+
+| Option                   | Behavior                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| `--list`                 | Print the cloud workspaces this Postman account can reach, with their ids.          |
+| `--workspace <id\|name>` | Which cloud workspace to read. A name matches case-insensitively.                   |
+| `--out <dir>`            | Where to write it. The directory must not exist, or must be empty. Always required. |
+| `--dry-run`              | Print every file that would be written, and write none. Still requires `--out`.     |
+
+`--json` also applies to both forms, and prints the workspace list or the migration outcome as JSON.
 
 ## Reporters
 
@@ -172,6 +185,81 @@ pass. `--bail`, inherited-script aborts, and run-budget exhaustion stop the whol
 Iterations do not apply to a single-request selector. A multi-row data file or count above one must
 target the parent collection or folder.
 
+## Migration
+
+`preman migrate` copies a Postman **cloud** workspace into the filesystem format the rest of `preman`
+reads. It requires Postman Desktop to be running and signed in, because it borrows that window's own
+session token; there is no API key or password.
+
+It reads Postman's internal RPC proxy rather than the documented API. The documented API returns
+collections in schema v2.1, which has no representation for gRPC requests and omits them, so a
+migration built on it would drop the requests `preman` exists to run. The internal one is
+undocumented and can change without notice.
+
+Resolution and destination:
+
+- `--workspace` takes a workspace id verbatim. Anything else is matched against workspace names,
+  case-insensitively. No match lists the available names; more than one match lists the candidate ids
+  and refuses, since a team and a personal workspace commonly share a name.
+- `--out` must be empty or absent. `.DS_Store`, `Thumbs.db`, and `.localized` are tolerated. An
+  existing workspace is never merged into.
+- Every file is planned in memory and validated before anything is written, so a refusal writes
+  nothing.
+- Postman names a collection's children by id only, so every request and folder costs one read. A
+  large workspace — 41 collections, 684 requests — is 822 reads and takes about 40 seconds.
+
+Progress, while it runs:
+
+- A bar is drawn on **standard error**, and taken back down before the report is printed. Standard
+  output carries the report, and under `--json` it carries a document; a bar redrawn into that is a
+  document nothing downstream can parse.
+- Redirect standard error to a file or a pipe and it becomes one line per phase instead, without
+  carriage returns, so a CI log stays readable.
+- The proportion is counted in collections, not in requests or calls. Postman reveals a collection's
+  contents only as it is read, so the total number of calls is not known until the migration is over;
+  the number of collections is exact from the first reply and never revised. The rising read count
+  beside the bar is a liveness signal, not a fraction of anything.
+
+gRPC schemas:
+
+- Postman's cloud returns a truncated `methodDescriptor` for most gRPC requests — 184 of 188 measured
+  came back cut to exactly 300 characters, which does not decode. The value is written as received,
+  but it will not resolve a method on its own.
+- What does resolve one is the `.proto`. When Postman recorded a path to it
+  (`schema: {source: "file", location}`), the request keeps that path and every distinct path is
+  written to `localResources.specs` in `.postman/resources.yaml`.
+- The path stays exactly as Postman recorded it, which is absolute and belongs to the machine that
+  authored the request. A workspace migrated on one machine and used on another needs those adjusted
+  by hand.
+- A `schema` pointing at a Postman API (`{source: "api", apiId, versionId}`) is dropped: it names
+  nothing on this machine.
+- A request whose `.proto` is missing still runs everything up to schema resolution and then names the
+  file it wanted. Its imports must resolve too: `localResources.specs` contributes each spec's own
+  directory as an include root, and a proto whose imports are rooted higher needs that root added by
+  hand.
+
+What is written:
+
+- `.postman/resources.yaml` holds the source workspace id, and `localResources.specs` when any request
+  points at a `.proto`.
+- Each collection becomes `postman/collections/<name>/`, each folder a directory inside it, both with
+  a `.resources/definition.yaml`.
+- Each request becomes `<name>.request.yaml`, with `order` following Postman's own order.
+- Each environment becomes `postman/environments/<name>.environment.yaml`.
+- A name the filesystem rejects, or one already taken in the same directory, gains Postman's ` (2)`
+  suffix. A name too long for a filename — Postman allows a request to be named after a URL — is
+  truncated. The `name` inside the file keeps the original spelling either way.
+- Cloud identity keys — `id`, `parentId`, `owner`, `revision`, timestamps — are stripped. Collection
+  variables, scripts, and auth are kept.
+
+What is not:
+
+- The `.proto` files themselves are never copied. The request points at where Postman said the file
+  is; a copy would be a snapshot going stale behind a request that claims to be built from it.
+- Request kinds with no runner, such as websockets, are skipped. Every skipped item is printed by its
+  full path.
+- Monitors, mocks, APIs, and specifications are not migrated.
+
 ## Exit codes
 
 | Code | Meaning                                                                     |
@@ -185,6 +273,10 @@ target the parent collection or folder.
 A collection run returns its worst result in this order: `1`, `2`, `3`, `4`, `0`.
 
 Codes `3` and `4` separate a business rejection from an assertion failure, which is useful in CI.
+
+`migrate` uses only `0`, `1`, and `2`. Postman Desktop not running, a missing or ambiguous
+`--workspace`, a missing `--out`, a destination that is not empty, and a name no filesystem accepts
+are all `1`. A proxy that refused the call, or a response `preman` could not parse, is `2`.
 
 ## gRPC
 

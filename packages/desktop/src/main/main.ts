@@ -19,6 +19,10 @@ import {
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
 } from "electron";
+// The only engine module this process imports at startup, and it is thirty lines of declarations.
+// Everything migration needs is behind the `import()` in `migration()` below.
+import { PremanError } from "@preman/core/errors.js";
+import type * as MigrationApi from "@preman/core/api/migrate.js";
 import { createHostRegistry, type HostRegistry } from "@preman/desktop/main/hosts.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
 import { createWorkspace } from "@preman/desktop/main/workspaces.js";
@@ -27,6 +31,9 @@ import {
   CHANNELS,
   TRAFFIC_LIGHT_HEIGHT_PX,
   TRAFFIC_LIGHT_INSET_PX,
+  type CloudWorkspaceListResult,
+  type MigrateFailure,
+  type MigrateResult,
   type Preferences,
   type SessionSnapshot,
   type WindowChrome,
@@ -55,6 +62,16 @@ const DATA_FILTER_NAME = "Iteration data";
 const ITERATION_DATA_EXTENSIONS = ["json", "csv"] as const;
 const REPORT_DIALOG_TITLE = "Export run report";
 const REPORT_ENCODING = "utf8";
+const MIGRATE_DIALOG_TITLE = "Choose an empty directory for the migrated workspace";
+const MIGRATE_DIALOG_BUTTON = "Migrate here";
+/**
+ * Postman Desktop's application data, under the same parent Electron gives this app: macOS's
+ * `Application Support`, Windows's `%APPDATA%`, `~/.config` elsewhere. Asked rather than guessed,
+ * which is the one advantage the window has over the CLI's `defaultPostmanAppData`.
+ */
+const POSTMAN_APP_DATA_DIR = "Postman";
+/** A rejection with no sentence in it. Better than reporting `undefined` to the user. */
+const UNEXPECTED_MIGRATION_FAILURE = "The migration did not finish.";
 const FRAMELESS_PLATFORM = "darwin";
 const HALF = 2;
 
@@ -258,6 +275,14 @@ function buildMenu(): void {
             window?.webContents.send(CHANNELS.openCreateWorkspace);
           },
         },
+        // Sends for the same reason the item above it does: the list of cloud workspaces and the
+        // report of what was migrated are both renderer state, and neither is a native dialog.
+        {
+          label: "Migrate from Postman…",
+          click: () => {
+            window?.webContents.send(CHANNELS.openMigrate);
+          },
+        },
         ...(process.platform === "darwin" ? [] : [{ type: "separator" as const }, SETTINGS_ITEM]),
         { type: "separator" },
         { role: process.platform === "darwin" ? "close" : "quit" },
@@ -321,6 +346,58 @@ async function saveReportDialog(suggestedName: string, text: string): Promise<st
   return picked.filePath;
 }
 
+/**
+ * Where a migrated workspace goes. `createDirectory` is offered because an empty directory is
+ * exactly what `applyPlan` insists on, and making one in the dialog is the shortest way to it.
+ */
+async function migrateDestinationDialog(): Promise<string | null> {
+  const parent = window;
+  if (parent === undefined) return null;
+  const picked = await dialog.showOpenDialog(parent, {
+    title: MIGRATE_DIALOG_TITLE,
+    buttonLabel: MIGRATE_DIALOG_BUTTON,
+    properties: ["openDirectory", "createDirectory"],
+  });
+  const root = picked.filePaths[0];
+  return picked.canceled || root === undefined ? null : root;
+}
+
+function postmanAppData(): string {
+  return join(app.getPath("appData"), POSTMAN_APP_DATA_DIR);
+}
+
+/**
+ * The migration half of the engine, loaded the first time someone asks for it.
+ *
+ * A deep import rather than `@preman/core`, because the barrel would bring `@grpc/grpc-js` into a
+ * bundle that externalises nothing. Dynamic rather than static, because zod is most of what this
+ * subtree weighs and a statically imported one took `dist/main/main.js` from 31 kB to 410 kB — four
+ * hundred kilobytes parsed on every cold start for a feature most installs run once, if ever. This
+ * is also why the two handlers below are the only callers: `import()` in a third place would be a
+ * third chunk boundary to reason about.
+ */
+function migration(): Promise<typeof MigrationApi> {
+  return import("@preman/core/api/migrate.js");
+}
+
+/**
+ * A thrown engine error turned into a value the renderer can draw.
+ *
+ * `details[]` is carried through rather than folded into the message: "Postman Desktop does not
+ * appear to be running" is the failure and "open Postman Desktop and sign in, then try again" is
+ * the advice, and a pane that ran them together would be a pane that had to re-split them.
+ */
+function migrationFailure(cause: unknown): MigrateFailure {
+  if (cause instanceof PremanError) {
+    return { status: "failed", message: cause.message, details: [...cause.details] };
+  }
+  return {
+    status: "failed",
+    message: cause instanceof Error ? cause.message : UNEXPECTED_MIGRATION_FAILURE,
+    details: [],
+  };
+}
+
 function openWorkspace(root: string): void {
   const contents = window?.webContents;
   if (contents === undefined) return;
@@ -357,6 +434,46 @@ function registerIpc(): void {
   // there is no creation-specific host lifecycle.
   ipcMain.handle(CHANNELS.createWorkspace, (_event: IpcMainInvokeEvent, name: string) =>
     createWorkspace(homedir(), name),
+  );
+
+  // Both migration handlers live here rather than in an engine host: there is no workspace to host
+  // yet, and the credential they need is harvested from Postman Desktop, not from a workspace.
+  ipcMain.handle(CHANNELS.listPostmanWorkspaces, async (): Promise<CloudWorkspaceListResult> => {
+    try {
+      const { listCloudWorkspaces } = await migration();
+      return { status: "listed", workspaces: await listCloudWorkspaces({ postmanAppData: postmanAppData() }) };
+    } catch (cause) {
+      return migrationFailure(cause);
+    }
+  });
+
+  // The destination comes from the dialog, never from the renderer. Opening the result goes through
+  // `openWorkspace`, the same path a recent workspace takes, so migrating adds no host lifecycle.
+  ipcMain.handle(
+    CHANNELS.migratePostmanWorkspace,
+    async (_event: IpcMainInvokeEvent, workspaceId: string): Promise<MigrateResult> => {
+      const target = await migrateDestinationDialog();
+      if (target === null) return { status: "cancelled" };
+
+      try {
+        const { migrateCloudWorkspace } = await migration();
+        const outcome = await migrateCloudWorkspace({
+          postmanAppData: postmanAppData(),
+          workspace: workspaceId,
+          target,
+          dryRun: false,
+          // Sent as it arrives, unthrottled: core already reports about a hundred times over the
+          // whole migration rather than once per read, so there is nothing here worth coalescing
+          // and a coalescer would be one more place the last report could be the one dropped.
+          onProgress: (progress) => {
+            window?.webContents.send(CHANNELS.migrateProgress, progress);
+          },
+        });
+        return { status: "migrated", outcome };
+      } catch (cause) {
+        return migrationFailure(cause);
+      }
+    },
   );
 
   ipcMain.handle(CHANNELS.forgetWorkspace, (_event: IpcMainInvokeEvent, root: string) => {

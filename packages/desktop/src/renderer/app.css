@@ -331,12 +331,15 @@
     }
   }
 
+  /* Thickness is a variable so the same sweep can be the indeterminate half of a progress bar
+   * without a second keyframe. It is 2px as an edge hairline on a pane and 4px as the subject of
+   * a dialog; a copy of this rule at a different height would be a copy, not a new idea. */
   .inflight-bar::after {
     content: "";
     position: absolute;
     inset-block-start: 0;
     inset-inline-start: 0;
-    block-size: 2px;
+    block-size: var(--inflight-thickness, 2px);
     inline-size: 33%;
     background: var(--color-accent);
     animation: inflight-sweep 1.1s var(--ease-in-out) infinite;

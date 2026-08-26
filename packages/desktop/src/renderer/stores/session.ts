@@ -16,7 +16,12 @@ import {
   type EngineError,
   type EngineMessage,
 } from "@preman/desktop/engine/protocol.js";
-import type { CreateWorkspaceResult, HostFailure, WorkspaceHandle } from "@preman/desktop/preload/bridge.js";
+import type {
+  CreateWorkspaceResult,
+  HostFailure,
+  MigrateResult,
+  WorkspaceHandle,
+} from "@preman/desktop/preload/bridge.js";
 
 import { EngineRequestError, onEngineClient, type EngineClient } from "@preman/desktop/renderer/client.js";
 import { openingState, openingTarget, type OpeningState } from "@preman/desktop/renderer/model/opening.js";
@@ -409,5 +414,23 @@ export async function createNewWorkspace(name: string): Promise<CreateWorkspaceR
   const result = await window.preman.createWorkspace(name);
   if (!result.ok) return result;
   await switchWorkspace(result.root);
+  return result;
+}
+
+/**
+ * Bring a Postman cloud workspace down to disk and move the window to it.
+ *
+ * The same shape as `createNewWorkspace` above and for the same reasons: the refusal is a returned
+ * value rather than a banner, because the pane that asked is still on screen and "Postman Desktop
+ * does not appear to be running" is answered there; and opening ends in `switchWorkspace`, so
+ * migrating adds no host lifecycle of its own.
+ *
+ * The outcome is handed back rather than stored. It is a report about an operation that has
+ * finished, read once by the pane that asked for it, and a store entry would only be a copy that
+ * outlived its reader.
+ */
+export async function migrateFromPostman(workspaceId: string): Promise<MigrateResult> {
+  const result = await window.preman.migratePostmanWorkspace(workspaceId);
+  if (result.status === "migrated") await switchWorkspace(result.outcome.root);
   return result;
 }

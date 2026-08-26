@@ -1,7 +1,7 @@
 import { PremanError } from "@preman/core/errors.js";
 import { interpolateStrict } from "@preman/core/vars/interpolate.js";
 import type { VariableStore } from "@preman/core/vars/store.js";
-import type { RequestAuth } from "@preman/core/workspace/schemas.js";
+import type { AuthCredentials, RequestAuth } from "@preman/core/workspace/schemas.js";
 
 const NO_AUTH = "noauth";
 const API_KEY_IN_QUERY = "query";
@@ -23,8 +23,21 @@ export interface RenderedAuthResult {
 
 const NONE: RenderedAuth = { kind: "none" };
 
+/**
+ * One credential out of either shape Postman writes.
+ *
+ * A list is not a worse map: it is what Postman's own model holds, so every request that came
+ * out of a cloud workspace carries `[{key: "token", value: …}]`. Reading only the map form
+ * would authenticate hand-written files and silently drop the token from migrated ones.
+ */
+function lookup(credentials: AuthCredentials | undefined, name: string): unknown {
+  if (credentials === undefined) return undefined;
+  if (!Array.isArray(credentials)) return credentials[name];
+  return credentials.find((entry) => entry.key === name)?.value;
+}
+
 function credential(auth: RequestAuth, name: string, store: VariableStore): string {
-  const raw = auth.credentials?.[name];
+  const raw = lookup(auth.credentials, name);
   if (raw === undefined || raw === null) return "";
   const text =
     typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean" || typeof raw === "bigint"

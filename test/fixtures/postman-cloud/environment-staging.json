@@ -1,0 +1,38 @@
+{
+  "model_id": "33333333-3333-4333-8333-333333333333",
+  "meta": {
+    "model": "environment",
+    "action": "find"
+  },
+  "data": {
+    "owner": "0",
+    "team": null,
+    "lastUpdatedBy": "0",
+    "lastRevision": 1784993002000,
+    "id": "33333333-3333-4333-8333-333333333333",
+    "name": "staging",
+    "color": null,
+    "values": [
+      {
+        "key": "base_url",
+        "value": "https://adapter.example.test",
+        "enabled": true,
+        "type": "default"
+      },
+      {
+        "key": "grpc_url",
+        "value": "exchange.example.test:443",
+        "enabled": true,
+        "type": "default"
+      },
+      {
+        "key": "token",
+        "value": "",
+        "enabled": true,
+        "type": "secret"
+      }
+    ],
+    "createdAt": "2026-01-04T09:12:00.000Z",
+    "updatedAt": "2026-02-28T17:47:36.000Z"
+  }
+}

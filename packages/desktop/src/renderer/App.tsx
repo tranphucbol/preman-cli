@@ -49,6 +49,7 @@ import { BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence, MotionRoot, m } from "@preman/desktop/renderer/ui/motion.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { ConsoleDrawer } from "@preman/desktop/renderer/panes/ConsoleDrawer.js";
+import { MigratePane } from "@preman/desktop/renderer/panes/MigratePane.js";
 import { RequestEditor } from "@preman/desktop/renderer/panes/RequestEditor.js";
 import { ResponsePane } from "@preman/desktop/renderer/panes/ResponsePane.js";
 import { RunnerPane } from "@preman/desktop/renderer/panes/RunnerPane.js";
@@ -153,6 +154,7 @@ const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "send", label: "Send", detail: "⌘↵" },
   { kind: "command", id: "open-workspace", label: "Open workspace…", detail: "⌘⇧O" },
   { kind: "command", id: "create-workspace", label: "Create new workspace…", detail: "command" },
+  { kind: "command", id: "migrate", label: "Migrate from Postman…", detail: "command" },
   { kind: "command", id: "create-environment", label: "New environment…", detail: "command" },
   { kind: "command", id: "settings", label: "Settings", detail: "⌘," },
 ];
@@ -197,6 +199,12 @@ export function App(): React.JSX.Element {
   const [ask, setAsk] = useState<Ask | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /*
+   * Window state rather than an `overlayStore` entry, and that is the whole reason it is not one:
+   * every overlay is dismissed when an engine port arrives, and a successful migration's own port
+   * arrives while its report is still what the user is reading.
+   */
+  const [migrateOpen, setMigrateOpen] = useState(false);
   const dismissFailure = useCallback(() => {
     setFailure(null);
   }, []);
@@ -212,6 +220,15 @@ export function App(): React.JSX.Element {
   // Same shape as Settings above, and for the same reason: the menu lives in the main process and
   // the dialog is renderer state, so the menu sends and this is where it lands.
   useEffect(() => window.preman.onCreateWorkspace(showCreateWorkspace), [showCreateWorkspace]);
+
+  // Same three ways in, same one pane: the File menu, the palette, and nothing else.
+  const showMigrate = useCallback(() => {
+    setMigrateOpen(true);
+  }, []);
+  const dismissMigrate = useCallback(() => {
+    setMigrateOpen(false);
+  }, []);
+  useEffect(() => window.preman.onMigrate(showMigrate), [showMigrate]);
 
   // The library owns pane persistence, which keeps one more thing out of the app-data store.
   const layout = useDefaultLayout({ id: LAYOUT_ID, panelIds: [SIDEBAR_ID, EDITOR_ID], storage: localStorage });
@@ -259,6 +276,9 @@ export function App(): React.JSX.Element {
         case "create-workspace":
           showCreateWorkspace();
           return;
+        case "migrate":
+          showMigrate();
+          return;
         case "create-environment":
           setAsk(CREATE_ENVIRONMENT_ASK);
           return;
@@ -267,7 +287,7 @@ export function App(): React.JSX.Element {
           return;
       }
     },
-    [showCreateWorkspace, toggleConsole],
+    [showCreateWorkspace, showMigrate, toggleConsole],
   );
 
   return (
@@ -334,6 +354,7 @@ export function App(): React.JSX.Element {
               setAsk(null);
             }}
           />
+          <MigratePane open={migrateOpen} onDismiss={dismissMigrate} />
           <Palette open={paletteOpen} onDismiss={dismissPalette} onCommand={runCommand} />
         </MotionRoot>
       </TooltipProvider>

@@ -444,7 +444,12 @@ What actually animates:
 - **Controls, on hover and press.** Colour transitions everywhere, plus `active:scale-[0.97]` on
   buttons and icon buttons. Never on a text field, and never on a disabled control.
 - **The in-flight request.** `.inflight-bar` sweeps the top of the response pane; `.body-enter`
-  fades a response body in once.
+  fades a response body in once. That sweep is now also the indeterminate half of `ui/Progress.tsx`,
+  at `--inflight-thickness: 4px` instead of the 2px an edge hairline wants. The thickness is a
+  variable rather than a second rule: a copy of the keyframe at another height would be a copy.
+- **A migration's progress bar.** `ui/Progress.tsx`, in `MigratePane` and nowhere else. The
+  determinate fill is `scaleX` from `origin-left` at `--duration-panel`, never an animated `width` —
+  see the paragraph below, which this would otherwise be the exception to.
 - **A workspace that is opening.** `.skeleton-block` pulses the placeholder bars `ui/Skeleton.tsx`
   fills the sidebar and the editor with. Opacity only, and no `transform`: a skeleton is a promise
   about where things will be, and a bar that also slides breaks that promise once a second. It only
@@ -483,6 +488,12 @@ preference, since it is the one property that would turn the sidebar's slide bac
   Only the named `--spacing-*` tokens above are ours, and they are heights, not spacing.
 - **A component library boundary.** shadcn components are vendored and retuned, per decision 9.
   There is no `@preman/ui` package and there should not be one for a single consumer.
+- **A general progress bar.** `ui/Progress.tsx` is drawn in `MigratePane` and nowhere else, because
+  a migration is the one operation here that is worth watching and can state a proportion at all.
+  A collection run reports `12 of 41` as text in `RunnerPane`'s summary and should keep doing so:
+  the run list beside it already _is_ the progress, and `--bail` leaves a bar parked at 30% with no
+  way to say why. Reach for `Progress` when the wait is long, opaque, and has a denominator that
+  cannot be revised; two of those three is a count.
 - **Motion on the command palette, or on the open-request strip.** The palette is a 100+/day keyboard
   action and animates never, permanently. The strip needs `layout` rather than `layoutId`, on the
   interaction the 16ms budget is named after. Decision 26, as amended by plan 019, says what each

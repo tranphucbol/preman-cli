@@ -49,6 +49,12 @@ const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
 const DURATION_TOKEN = /--duration-([a-z]+):\s*([\d.]+)ms/g;
 /** `ease-in` as a whole word: `ease-in-out` and `ease-in-expo` are other easings, not this one. */
 const EASE_IN = /\bease-in\b(?!-)/;
+/**
+ * Tailwind's `transition-all`, and any arbitrary transition naming one of the three properties the
+ * design system rules out. Not `height`: the console's call detail opens by height and is named in
+ * that document as the one exception, so a rule that caught it would be a rule against the docs.
+ */
+const LAYOUT_TWEEN = /\btransition-all\b|\btransition-\[[^\]]*\b(?:width|top|left|all)\b/;
 const MOTION_CURVE = /ease:\s*\[([^\]]+)\]/g;
 const CSS_CURVE = /cubic-bezier\(([^)]+)\)/g;
 
@@ -189,6 +195,20 @@ describe("the motion tokens", () => {
     for (const curve of restated) {
       expect(curve.points, curve.path).toEqual(EASE_OUT_POINTS);
     }
+  });
+
+  /*
+   * `docs/design-system.md` says `width`, `top` and `all` animate nowhere, because the budgets in
+   * decision 17 are blocking-time medians and those three are layout on every frame. It said so
+   * for a while before anything checked, and the first progress bar written here animated `width`
+   * — which is the argument for this case rather than against it. A fill scales from its origin.
+   */
+  it("givenTheRenderer_whenScanned_thenNothingTweensALayoutProperty", () => {
+    const offenders = rendererSources()
+      .filter((source) => LAYOUT_TWEEN.test(code(source.text)))
+      .map((source) => source.path);
+
+    expect(offenders).toEqual([]);
   });
 });
 

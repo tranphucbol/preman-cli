@@ -16,6 +16,15 @@ export const CHANNELS = {
   createWorkspace: "preman:create-workspace",
   /** Main to renderer, from the File menu's Create New Workspace item. */
   openCreateWorkspace: "preman:open-create-workspace",
+  /** Main to renderer, from the File menu's Migrate from Postman item. */
+  openMigrate: "preman:open-migrate",
+  listPostmanWorkspaces: "preman:list-postman-workspaces",
+  migratePostmanWorkspace: "preman:migrate-postman-workspace",
+  /**
+   * Main to renderer, while a migration runs. A push rather than a reply, because the migration
+   * itself is one `invoke` that does not settle for the better part of a minute.
+   */
+  migrateProgress: "preman:migrate-progress",
   forgetWorkspace: "preman:forget-workspace",
   revealInFileManager: "preman:reveal",
   pickDataFile: "preman:pick-data-file",
@@ -143,6 +152,73 @@ export interface WorkspaceHandle {
  */
 export type CreateWorkspaceResult =
   { readonly ok: true; readonly root: string } | { readonly ok: false; readonly message: string };
+
+/**
+ * One workspace in the signed-in Postman account.
+ *
+ * Declared here rather than imported from `@preman/core`: this file is also compiled into the
+ * renderer, which may not reach the engine in process. The shape is core's `CloudWorkspace`
+ * narrowed to what a list row draws, so main assigns the real thing to it without a mapping step.
+ *
+ * No per-workspace counts. Postman's `/workspaces` answers with identity only — collections live
+ * behind one `/workspace/{id}?populate=true` each — and a list of forty workspaces is not worth
+ * forty round trips to put a number beside each name.
+ */
+export interface CloudWorkspace {
+  readonly id: string;
+  readonly name: string;
+  /** Postman's own word: `team`, `personal`, `private`. Absent when Postman did not say. */
+  readonly type?: string;
+}
+
+/** What a migration wrote, narrowed from core's `MigrationOutcome` to what the pane reports. */
+export interface MigrateOutcome {
+  readonly root: string;
+  readonly workspaceName: string;
+  /** Keyed by kind: `collection`, `folder`, `environment`, `grpc-request`, `http-request`. */
+  readonly counts: Readonly<Record<string, number>>;
+  /** What Postman had and preman cannot represent. Named, never silently dropped. */
+  readonly skipped: readonly { readonly path: string; readonly kind: string }[];
+}
+
+/**
+ * How far a running migration has got, mirroring core's `MigrationProgress` for a renderer that
+ * may not import it.
+ *
+ * `total` is `undefined` for a phase whose size cannot be known — which is most of them, because
+ * the walk discovers the tree as it reads it. That is not a value to be filled in with a guess:
+ * a reader draws indeterminate, and `postman/progress.ts` in core says why the collection is the
+ * only honest unit.
+ */
+export interface MigrationProgress {
+  readonly phase: string;
+  readonly done: number;
+  readonly total: number | undefined;
+  /** Proxy reads finished so far. Rises without a ceiling; never drawn as a proportion. */
+  readonly calls: number;
+}
+
+/**
+ * A failure worth showing, carrying `details[]` for the same reason `HostFailure` does: a
+ * migration fails for reasons the user can act on — Postman Desktop is not running, the
+ * destination is not empty — and the advice is half the answer.
+ *
+ * A value, not a rejected invoke, on the same reasoning as `CreateWorkspaceResult`: Electron
+ * reports anything thrown inside `ipcMain.handle` as `Error invoking remote method …`, which is a
+ * sentence about IPC rather than about Postman.
+ */
+export interface MigrateFailure {
+  readonly status: "failed";
+  readonly message: string;
+  readonly details: readonly string[];
+}
+
+/** `cancelled` is the native destination dialog being dismissed, which is not a failure. */
+export type MigrateResult =
+  { readonly status: "migrated"; readonly outcome: MigrateOutcome } | { readonly status: "cancelled" } | MigrateFailure;
+
+export type CloudWorkspaceListResult =
+  { readonly status: "listed"; readonly workspaces: readonly CloudWorkspace[] } | MigrateFailure;
 
 /**
  * A tab the user had open. `subTab` is `string | null` rather than the renderer's `SubTab` union
@@ -285,4 +361,29 @@ export interface PremanBridge {
    * renderer to open the one naming dialog the dropdown and the palette also open.
    */
   onCreateWorkspace(listener: () => void): () => void;
+  /** The File menu's Migrate from Postman item. Returns an unsubscribe function. */
+  onMigrate(listener: () => void): () => void;
+  /**
+   * Every cloud workspace the running, signed-in Postman Desktop can see.
+   *
+   * Nothing is passed in and no token comes back: the credential is harvested inside the engine
+   * from the running Postman Desktop, so the renderer never holds one and cannot leak one.
+   */
+  listPostmanWorkspaces(): Promise<CloudWorkspaceListResult>;
+  /**
+   * Migrate one cloud workspace into a directory the user picks in a native dialog.
+   *
+   * The destination is chosen in the main process, never named by the renderer — the same rule
+   * `createWorkspace` and `saveReport` follow. The caller opens the result over `openWorkspace`,
+   * so migrating adds no host lifecycle of its own.
+   */
+  migratePostmanWorkspace(workspaceId: string): Promise<MigrateResult>;
+  /**
+   * How far the running migration has got. Returns an unsubscribe function.
+   *
+   * Separate from the `invoke` above because that promise settles once, at the end; a migration is
+   * about a hundred reports over the better part of a minute, and a window that showed nothing
+   * until the last one is a window that looks hung.
+   */
+  onMigrateProgress(listener: (progress: MigrationProgress) => void): () => void;
 }

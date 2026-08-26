@@ -1,0 +1,36 @@
+{
+  "data": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "name": "Adapter",
+    "description": "The HTTP side of the adapter.",
+    "owner": "12345",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-06-01T00:00:00.000Z",
+    "variables": [
+      {
+        "key": "base_url",
+        "value": "https://adapter.example.test",
+        "type": "default"
+      }
+    ],
+    "scripts": [
+      {
+        "type": "prerequest",
+        "language": "javascript",
+        "code": "pm.environment.set(\"nonce\", \"1\");"
+      }
+    ],
+    "$kind": "collection",
+    "items": [
+      {
+        "id": "a0000000-0000-4000-8000-000000000001",
+        "$kind": "collection"
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000004",
+        "$kind": "http-request"
+      }
+    ]
+  },
+  "meta": {}
+}

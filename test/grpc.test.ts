@@ -8,6 +8,11 @@ import { FIXTURE_INCLUDE_DIR, FIXTURE_WS, FIXTURES_DIR, requestPath } from "./he
 
 /** The real base64 FileDescriptorSet captured by Postman for pe.aev2.ExchangeService.Exchange. */
 const REAL_DESCRIPTOR = readFileSync(join(FIXTURES_DIR, "method-descriptor.b64.txt"), "utf8").trim();
+/**
+ * The same descriptor as Postman's cloud serves it: the first 300 characters, and nothing else.
+ * Its outer length prefix promises far more than what follows, so it cannot decode.
+ */
+const TRUNCATED_DESCRIPTOR = REAL_DESCRIPTOR.slice(0, 300);
 
 describe("splitMethodPath", () => {
   it("givenDottedPath_whenSplit_thenSplitsOnTheLastDot", () => {
@@ -146,6 +151,27 @@ describe("resolveMethod", () => {
         methodPath: "test.echo.StreamService.Chat",
       }),
     ).toThrow(/streaming method/);
+  });
+
+  it("givenATruncatedDescriptorAndAMissingProto_whenResolved_thenTheFailureNamesTheProto", () => {
+    // A migrated request looks exactly like this: Postman's cloud cut the descriptor to 300
+    // characters and the `.proto` it names lives on the machine that authored it (ADR 033).
+    const missing = "/nowhere/asset-exchange-v2/src/main/proto/asset/asset-exchange-v2.proto";
+    try {
+      resolveMethod({
+        ...base,
+        schemaLocation: missing,
+        methodDescriptor: TRUNCATED_DESCRIPTOR,
+        methodPath: "pe.aev2.ExchangeService.Exchange",
+      });
+      expect.unreachable("a truncated descriptor cannot resolve a method");
+    } catch (error) {
+      const failure = error as PremanError;
+      expect(failure.message).toContain("failed to load embedded methodDescriptor");
+      const details = failure.details.join("\n");
+      expect(details).toContain(`${TRUNCATED_DESCRIPTOR.length} base64 characters`);
+      expect(details).toContain(missing);
+    }
   });
 
   it("givenGarbageDescriptor_whenResolved_thenThrows", () => {

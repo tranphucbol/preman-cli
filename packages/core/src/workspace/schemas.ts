@@ -49,13 +49,26 @@ const scriptSchema = z
   .passthrough();
 
 /**
+ * A map (`{token: "…"}`) or a list of entries (`[{key: token, value: "…"}]`).
+ *
+ * Both are real. The map is what a hand-written or older exported file holds; the list is what
+ * Postman's own model holds, and it is the *only* shape a cloud workspace uses, so every
+ * migrated file carries it. Accepting one would mean preman could open, display and edit a
+ * request it then refused to authenticate — the same argument as headers and metadata below.
+ */
+const authCredentialsSchema = z.union([
+  z.record(z.unknown()),
+  z.array(z.object({ key: z.string(), value: z.unknown() }).passthrough()),
+]);
+
+/**
  * Shared by HTTP requests, gRPC requests and group definitions: the same `auth`
  * block shape is legal at every level of a Postman tree.
  */
 const authSchema = z
   .object({
     type: z.string(),
-    credentials: z.record(z.unknown()).optional(),
+    credentials: authCredentialsSchema.optional(),
   })
   .passthrough();
 
@@ -212,4 +225,5 @@ export type OtherRequest = z.infer<typeof otherRequestSchema>;
 export type EnvironmentFile = z.infer<typeof environmentSchema>;
 export type RequestScript = z.infer<typeof scriptSchema>;
 export type RequestAuth = z.infer<typeof authSchema>;
+export type AuthCredentials = z.infer<typeof authCredentialsSchema>;
 export type GroupDefinitionFile = z.infer<typeof groupDefinitionSchema>;
