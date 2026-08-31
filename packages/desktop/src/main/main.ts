@@ -23,15 +23,17 @@ import {
 // Everything migration needs is behind the `import()` in `migration()` below.
 import { PremanError } from "@preman/core/errors.js";
 import type * as MigrationApi from "@preman/core/api/migrate.js";
+import { createDiagnostics, type Diagnostics } from "@preman/desktop/main/diagnostics.js";
 import { createHostRegistry, type HostRegistry } from "@preman/desktop/main/hosts.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
 import { createWorkspace } from "@preman/desktop/main/workspaces.js";
-import { markPhase, PHASES } from "@preman/desktop/engine/protocol.js";
+import { markPhase, PHASES, type LogLevel } from "@preman/desktop/engine/protocol.js";
 import {
   CHANNELS,
   TRAFFIC_LIGHT_HEIGHT_PX,
   TRAFFIC_LIGHT_INSET_PX,
   type CloudWorkspaceListResult,
+  type DiagnosticsInfo,
   type MigrateFailure,
   type MigrateResult,
   type Preferences,
@@ -41,12 +43,18 @@ import {
   type WorkspaceHandle,
 } from "@preman/desktop/preload/bridge.js";
 
+// In code rather than as `--enable-source-maps` on the command line: the packaged app is launched
+// by the OS, which passes no flags, so a stack from a shipped build would name a column of the
+// bundle. A crash report that cannot say which source file it came from is barely a report.
+process.setSourceMapsEnabled(true);
+
 /**
  * Set before anything reads `app.getPath("userData")`. Unpackaged, Electron names the app after
  * its own binary, so `bun run desktop` and an installed build would keep their state in different
  * directories and disagree about which workspaces exist.
  */
 const APP_NAME = "preman";
+const STARTUP_LABEL = "preman starting: ";
 const MIN_WIDTH = 900;
 const MIN_HEIGHT = 560;
 const DEV_SERVER_ENV_VAR = "PREMAN_DEV_SERVER";
@@ -82,6 +90,28 @@ app.setName(APP_NAME);
 let window: BrowserWindow | undefined;
 let hosts: HostRegistry | undefined;
 let store: AppStore | undefined;
+let diagnostics: Diagnostics | undefined;
+
+/**
+ * Say something, and keep it if there is anywhere to keep it.
+ *
+ * Before `start()` there is no `app.getPath("logs")` to write into, so the earliest lines reach
+ * stderr only, and carry the level in the text so the two halves of a session read alike.
+ * Everything after it reaches both. A level, but no opt-in and no filter: a log nobody turned on
+ * is a log nobody has when it is needed. See `docs/decisions/035` and `036`.
+ */
+function note(level: LogLevel, line: string): void {
+  if (diagnostics === undefined) {
+    process.stderr.write(`${level.toUpperCase()} ${line}\n`);
+    return;
+  }
+  diagnostics.write(level, line);
+}
+
+function requireDiagnostics(): Diagnostics {
+  if (diagnostics === undefined) throw new Error("diagnostics are not ready");
+  return diagnostics;
+}
 
 /**
  * The workspace this launch decided to reopen, if any. Module scope rather than a local in
@@ -195,11 +225,11 @@ function createWindow(): BrowserWindow {
   // `ready-to-show` never fires if the document never paints, and a window that stays hidden is
   // indistinguishable from an app that did not start. Say what went wrong and show it anyway.
   created.webContents.on("did-fail-load", (_event, code, description, url) => {
-    process.stderr.write(`preman: the renderer failed to load ${url}: ${description} (${String(code)})\n`);
+    note("error", `the renderer failed to load ${url}: ${description} (${String(code)})`);
     created.show();
   });
   created.webContents.on("render-process-gone", (_event, details) => {
-    process.stderr.write(`preman: the renderer process is gone: ${details.reason}\n`);
+    note("fatal", `the renderer process is gone: ${details.reason}`);
   });
 
   created.on("close", () => {
@@ -415,30 +445,54 @@ function openWorkspace(root: string): void {
   requireHosts().open(root, contents);
 }
 
+/**
+ * Register one channel, and say so if answering it throws.
+ *
+ * `ipcMain.handle` turns a throw into a rejected `invoke` in the renderer and tells this process
+ * nothing, so before this every failed main-side operation — a dialog that could not open, a
+ * session that could not be saved — was visible only as a toast the user then dismissed. The cause
+ * is re-thrown unchanged: the renderer's error path is the one that was already audited, and this
+ * is a witness, not a handler.
+ */
+function handle<Args extends unknown[], Result>(
+  channel: string,
+  listener: (event: IpcMainInvokeEvent, ...args: Args) => Result | Promise<Result>,
+): void {
+  ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]): Promise<Result> => {
+    try {
+      return await listener(event, ...(args as Args));
+    } catch (cause) {
+      note(
+        "error",
+        `the ${channel} request failed: ${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}`,
+      );
+      throw cause;
+    }
+  });
+}
+
 function registerIpc(): void {
-  ipcMain.handle(CHANNELS.listWorkspaces, (): WorkspaceHandle[] => requireStore().handles());
+  handle(CHANNELS.listWorkspaces, (): WorkspaceHandle[] => requireStore().handles());
 
-  ipcMain.handle(CHANNELS.pickWorkspace, () => openWorkspaceDialog());
+  handle(CHANNELS.pickWorkspace, () => openWorkspaceDialog());
 
-  ipcMain.handle(CHANNELS.openWorkspace, (_event: IpcMainInvokeEvent, root: string) => {
+  handle(CHANNELS.openWorkspace, (_event: IpcMainInvokeEvent, root: string) => {
     openWorkspace(root);
   });
 
   // Registered before `start()` decides, which costs nothing: the rest of `start()` runs in the
   // same turn, so the value is settled long before a renderer exists to ask for it.
-  ipcMain.handle(CHANNELS.readReopening, (): string | null => reopening);
+  handle(CHANNELS.readReopening, (): string | null => reopening);
 
   // The home directory is resolved here, never in the renderer and never by a shell: `~` is
   // documentation, and a renderer that could name a destination would be a renderer with a path.
   // Creation stops at the directories; the renderer opens the result over `openWorkspace`, so
   // there is no creation-specific host lifecycle.
-  ipcMain.handle(CHANNELS.createWorkspace, (_event: IpcMainInvokeEvent, name: string) =>
-    createWorkspace(homedir(), name),
-  );
+  handle(CHANNELS.createWorkspace, (_event: IpcMainInvokeEvent, name: string) => createWorkspace(homedir(), name));
 
   // Both migration handlers live here rather than in an engine host: there is no workspace to host
   // yet, and the credential they need is harvested from Postman Desktop, not from a workspace.
-  ipcMain.handle(CHANNELS.listPostmanWorkspaces, async (): Promise<CloudWorkspaceListResult> => {
+  handle(CHANNELS.listPostmanWorkspaces, async (): Promise<CloudWorkspaceListResult> => {
     try {
       const { listCloudWorkspaces } = await migration();
       return { status: "listed", workspaces: await listCloudWorkspaces({ postmanAppData: postmanAppData() }) };
@@ -449,7 +503,7 @@ function registerIpc(): void {
 
   // The destination comes from the dialog, never from the renderer. Opening the result goes through
   // `openWorkspace`, the same path a recent workspace takes, so migrating adds no host lifecycle.
-  ipcMain.handle(
+  handle(
     CHANNELS.migratePostmanWorkspace,
     async (_event: IpcMainInvokeEvent, workspaceId: string): Promise<MigrateResult> => {
       const target = await migrateDestinationDialog();
@@ -476,7 +530,7 @@ function registerIpc(): void {
     },
   );
 
-  ipcMain.handle(CHANNELS.forgetWorkspace, (_event: IpcMainInvokeEvent, root: string) => {
+  handle(CHANNELS.forgetWorkspace, (_event: IpcMainInvokeEvent, root: string) => {
     requireHosts().release(root);
     requireStore().update((state) => {
       state.workspaces = state.workspaces.filter((workspace) => workspace.root !== root);
@@ -484,21 +538,35 @@ function registerIpc(): void {
     });
   });
 
-  ipcMain.handle(CHANNELS.revealInFileManager, (_event: IpcMainInvokeEvent, target: string) => {
+  handle(CHANNELS.revealInFileManager, (_event: IpcMainInvokeEvent, target: string) => {
     shell.showItemInFolder(target);
   });
 
-  ipcMain.handle(CHANNELS.pickDataFile, () => pickDataFileDialog());
+  // An ordinary `invoke`: nothing paints on this, so unlike `readPreferences` it has no reason to
+  // block the preload. See `docs/decisions/022`.
+  handle(CHANNELS.readDiagnostics, (): DiagnosticsInfo => {
+    const kept = requireDiagnostics();
+    return {
+      logFile: kept.logFile,
+      directory: kept.directory,
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron,
+      chromeVersion: process.versions.chrome,
+      nodeVersion: process.versions.node,
+    };
+  });
 
-  ipcMain.handle(CHANNELS.saveReport, (_event: IpcMainInvokeEvent, suggestedName: string, text: string) =>
+  handle(CHANNELS.pickDataFile, () => pickDataFileDialog());
+
+  handle(CHANNELS.saveReport, (_event: IpcMainInvokeEvent, suggestedName: string, text: string) =>
     saveReportDialog(suggestedName, text),
   );
 
-  ipcMain.handle(CHANNELS.readSession, (_event: IpcMainInvokeEvent, root: string): SessionSnapshot =>
+  handle(CHANNELS.readSession, (_event: IpcMainInvokeEvent, root: string): SessionSnapshot =>
     requireStore().sessionFor(root),
   );
 
-  ipcMain.handle(CHANNELS.saveSession, (_event: IpcMainInvokeEvent, root: string, snapshot: SessionSnapshot) => {
+  handle(CHANNELS.saveSession, (_event: IpcMainInvokeEvent, root: string, snapshot: SessionSnapshot) => {
     requireStore().saveSession(root, snapshot);
   });
 
@@ -509,7 +577,7 @@ function registerIpc(): void {
     event.returnValue = requireStore().read().preferences;
   });
 
-  ipcMain.handle(CHANNELS.savePreferences, (_event: IpcMainInvokeEvent, next: Preferences) => {
+  handle(CHANNELS.savePreferences, (_event: IpcMainInvokeEvent, next: Preferences) => {
     requireStore().update((state) => {
       state.preferences = next;
     });
@@ -540,9 +608,21 @@ function start(): void {
   if (app.dock !== undefined && dockIcon !== undefined) app.dock.setIcon(dockIcon);
 
   store = createAppStore(app.getPath("userData"));
+  // Before the registry, because the registry writes through it from its first fork. `logs` is
+  // `~/Library/Logs/preman` on macOS and the equivalent elsewhere — resolved after `setName`, so
+  // an unpackaged run and an installed one keep one file between them rather than two.
+  diagnostics = createDiagnostics({ directory: app.getPath("logs") });
+  // The first line of every session, so a file that has survived a rotation still says which
+  // build wrote the lines under it. Versions only: the four the Diagnostics section already shows.
+  note(
+    "info",
+    `${STARTUP_LABEL}${app.getVersion()} (electron ${process.versions.electron}, chrome ${process.versions.chrome}, node ${process.versions.node})`,
+  );
   hosts = createHostRegistry({
     entryFile: distPath(ENGINE_FILE),
     onFailure: (failure) => window?.webContents.send(CHANNELS.hostFailure, failure),
+    write: note,
+    writeReport: (report) => requireDiagnostics().writeReport(report),
   });
 
   registerIpc();
@@ -572,6 +652,35 @@ function start(): void {
     window = undefined;
   });
 }
+
+/**
+ * Every child Chromium owns, including the utility processes the host registry forked. The
+ * registry sees its own hosts exit; this sees the ones that never got far enough to be one, and
+ * names a renderer or a GPU process that the registry knows nothing about.
+ */
+app.on("child-process-gone", (_event, details) => {
+  const named = details.serviceName === undefined ? details.type : `${details.type} ${details.serviceName}`;
+  // `error` and not `fatal`: the registry respawns an engine host, and the app outlives a GPU
+  // process. What died here is a child, and whether that is terminal is the registry's to say.
+  note("error", `child process gone: ${named}: ${details.reason} (exit code ${String(details.exitCode)})`);
+});
+
+/**
+ * Observe and die, for the reason `engine/entry.ts` gives at greater length: swallowing here
+ * would leave a main process with a window it can no longer serve.
+ */
+process.on("uncaughtExceptionMonitor", (cause) => {
+  note("fatal", `uncaught exception in the main process: ${cause.stack ?? cause.message}`);
+});
+
+// `error`, not `fatal`: Node turns an unhandled rejection into an uncaught exception, and the
+// monitor above logs the `fatal` when it does. Two fatal lines for one death reads as two deaths.
+process.on("unhandledRejection", (cause) => {
+  note(
+    "error",
+    `unhandled rejection in the main process: ${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}`,
+  );
+});
 
 app.on("window-all-closed", () => {
   hosts?.closeAll();

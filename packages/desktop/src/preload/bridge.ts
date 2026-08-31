@@ -54,6 +54,13 @@ export const CHANNELS = {
   setWindowChrome: "preman:set-window-chrome",
   /** Main to renderer, from the app menu's Settings item. */
   openSettings: "preman:open-settings",
+  /**
+   * Where the log is and what versions are running, for the Settings pane's Diagnostics section.
+   *
+   * Asynchronous, like every channel but `readPreferences`. Decision 022 argues for exactly one
+   * synchronous channel, and a section the user has to open a pane to see is not it.
+   */
+  readDiagnostics: "preman:read-diagnostics",
 } as const;
 
 export type WindowControl = "minimise" | "maximise" | "close";
@@ -282,8 +289,31 @@ export interface EnginePortDelivery {
 export interface EnginePort {
   postMessage(message: unknown): void;
   addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
+  /**
+   * Fires when the far end is gone: the host crashed, was killed, or was reaped.
+   *
+   * A second overload rather than a widened `type`, so this stays the statement of exactly which
+   * events the renderer is given. Without it the client has nothing to settle a pending request
+   * with, and a dead engine is a skeleton that pulses until the user quits.
+   */
+  addEventListener(type: "close", listener: () => void): void;
   start(): void;
   close(): void;
+}
+
+/**
+ * What a bug report needs and the renderer cannot work out for itself.
+ *
+ * Paths and version strings only — never a line of the log. The pane points at the file; opening
+ * it is the file manager's job. See `docs/decisions/035`.
+ */
+export interface DiagnosticsInfo {
+  readonly logFile: string;
+  readonly directory: string;
+  readonly appVersion: string;
+  readonly electronVersion: string;
+  readonly chromeVersion: string;
+  readonly nodeVersion: string;
 }
 
 /** A host that will not come back. Carries `details[]` for the same reason `EngineError` does. */
@@ -386,4 +416,11 @@ export interface PremanBridge {
    * until the last one is a window that looks hung.
    */
   onMigrateProgress(listener: (progress: MigrationProgress) => void): () => void;
+  /**
+   * Where the log is and what is running, for the Settings pane's Diagnostics section.
+   *
+   * Read on demand rather than handed over at load: none of it changes while the app runs, but
+   * nothing pays for it until someone opens the pane that shows it.
+   */
+  diagnostics(): Promise<DiagnosticsInfo>;
 }

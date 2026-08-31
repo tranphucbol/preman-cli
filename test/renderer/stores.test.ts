@@ -28,6 +28,7 @@ import { EXIT_CODES, ORDER_STEP } from "@preman/desktop/engine/protocol.js";
 import { DEFAULT_PREFERENCES, TITLE_BAR_GUTTER_PX } from "@preman/desktop/preload/bridge.js";
 import type {
   CreateWorkspaceResult,
+  DiagnosticsInfo,
   MigrateResult,
   PremanBridge,
   SessionSnapshot,
@@ -96,6 +97,15 @@ const MIGRATE_REFUSAL = "Postman Desktop does not appear to be running";
 const MIGRATE_ADVICE = "open Postman Desktop and sign in, then try again";
 /** Same reasoning as `NO_CREATE_ANSWER`: nothing succeeds because a test forgot to stage it. */
 const NO_MIGRATE_ANSWER = "no migration result was staged";
+/** Nothing in this suite reads it; the bridge is a whole type and a partial one would not compile. */
+const A_DIAGNOSTICS: DiagnosticsInfo = {
+  logFile: "/tmp/logs/preman.log",
+  directory: "/tmp/logs",
+  appVersion: "0.0.0",
+  electronVersion: "0.0.0",
+  chromeVersion: "0.0.0",
+  nodeVersion: "0.0.0",
+};
 const NO_CALLS = 0;
 const SETTLE_MS = DRAFT_PERSIST_DEBOUNCE_MS * 2;
 
@@ -205,6 +215,7 @@ function fakeBridge(): FakeBridge {
       writes += 1;
       return Promise.resolve();
     },
+    diagnostics: () => Promise.resolve(A_DIAGNOSTICS),
   };
 
   return {
@@ -254,6 +265,8 @@ function hostClient(host: EngineHost, root: string): EngineClient {
       return response.data as EngineResults[K];
     },
     onPush: () => () => undefined,
+    // A host driven directly never goes away by itself, so nothing here can ever fire.
+    onClose: () => () => undefined,
     close: () => undefined,
   };
 }
@@ -524,7 +537,7 @@ describe("external changes under an open tab", () => {
   beforeEach(async () => {
     resetStores();
     workspace = cloneFixtureWorkspace();
-    host = createEngineHost({ root: workspace.root, post: () => undefined });
+    host = createEngineHost({ root: workspace.root, post: () => undefined, log: () => undefined });
     const client = hostClient(host, workspace.root);
     useSessionStore.getState().setClient(client, workspace.root);
     useCatalogStore.getState().replace(await client.send("catalog", {}));
@@ -593,7 +606,7 @@ describe("flushing the focused editor before a save", () => {
   beforeEach(async () => {
     resetStores();
     workspace = cloneFixtureWorkspace();
-    host = createEngineHost({ root: workspace.root, post: () => undefined });
+    host = createEngineHost({ root: workspace.root, post: () => undefined, log: () => undefined });
     const client = hostClient(host, workspace.root);
     useSessionStore.getState().setClient(client, workspace.root);
     useCatalogStore.getState().replace(await client.send("catalog", {}));
@@ -700,7 +713,7 @@ describe("the bulk header editor", () => {
     // The HTTP fixture, because it is the one with headers to read: `Profile` declares them as a
     // YAML map, which is also the shape the bulk tab has to survive.
     workspace = cloneFixtureHttpWorkspace();
-    host = createEngineHost({ root: workspace.root, post: () => undefined });
+    host = createEngineHost({ root: workspace.root, post: () => undefined, log: () => undefined });
   });
 
   afterEach(() => {
@@ -965,7 +978,7 @@ describe("drafts across a crash", () => {
   beforeEach(() => {
     resetStores();
     workspace = cloneFixtureWorkspace();
-    host = createEngineHost({ root: workspace.root, post: () => undefined });
+    host = createEngineHost({ root: workspace.root, post: () => undefined, log: () => undefined });
     bridge = fakeBridge();
     installBridge(bridge.bridge);
   });
@@ -1135,6 +1148,7 @@ describe("creating an environment", () => {
       post: (message) => {
         if ("push" in message && message.push === "catalog") useCatalogStore.getState().replace(message.catalog);
       },
+      log: () => undefined,
     });
     const client = hostClient(host, workspace.root);
     useSessionStore.getState().setClient(client, workspace.root);

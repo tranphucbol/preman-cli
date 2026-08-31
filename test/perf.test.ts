@@ -157,7 +157,7 @@ describe.skipIf(CLOCK_SKIPPED)("warm host budget", () => {
    */
   it("givenWarmHost_whenSwitchingWorkspace_thenUnderOneHundredMs", async () => {
     generated = writeBigWorkspace(BIG_WORKSPACE_REQUESTS);
-    const host = track(createEngineHost({ root: generated.root, post: () => undefined }));
+    const host = track(createEngineHost({ root: generated.root, post: () => undefined, log: () => undefined }));
 
     const first = await host.handle({ id: FIRST_ID, kind: "catalog" });
     expect(first.ok).toBe(true);

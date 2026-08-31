@@ -17,6 +17,7 @@ import type {
   EngineResults,
   EnginePush,
   GitStatus,
+  LogLevel,
   NodeDocument,
   PhaseReport,
   RunEvent,
@@ -54,6 +55,16 @@ const PROFILE_ID = "postman/collections/admin/Profile.request.yaml";
 const ADMIN_ID = "postman/collections/admin";
 const LOCAL_ENV_ID = "postman/environments/LOCAL.environment.yaml";
 const ESCAPE_ID = "../../../etc/passwd";
+/** Inside the root, so it fails on its contents rather than on the path check. */
+const MISSING_NODE_ID = "postman/Echo/no-such-request";
+/**
+ * An OpenAPI document declared as a proto — the shape of the real case: a workspace whose `docs/`
+ * holds one beside its protos warns on every method pick.
+ */
+const RESOURCES_FILE = ".postman/resources.yaml";
+const UNPARSEABLE_SPEC = "src/main/proto/echo/openapi.yaml";
+const UNPARSEABLE_SPEC_BODY = "openapi: 3.0.0\n";
+const UNPARSEABLE_SPEC_ENTRY = `    - ../${UNPARSEABLE_SPEC}\n`;
 const ECHO_NODE_ID = "postman/collections/payment/Echo.request.yaml";
 /** The one fixture request with no `metadata` key at all, which is the shape that matters here. */
 const DESCRIPTOR_ONLY_ID = "postman/collections/payment/Descriptor Only.request.yaml";
@@ -161,9 +172,16 @@ scripts:
  * their own ids here for the same reason the real client mints them: a response is only useful
  * if it can be matched to a call.
  */
+interface LoggedLine {
+  level: LogLevel;
+  line: string;
+}
+
 interface Harness {
   host: EngineHost;
   pushes: EngineMessage[];
+  /** What the host said to its log sink. Every failure below reaches it and the caller both. */
+  logged: LoggedLine[];
   send<K extends EngineRequestKind>(kind: K, payload: EnginePayload<K>): Promise<EngineResults[K]>;
   fail<K extends EngineRequestKind>(
     kind: K,
@@ -175,12 +193,14 @@ interface Harness {
 
 function harnessFor(root: string): Harness {
   const pushes: EngineMessage[] = [];
+  const logged: LoggedLine[] = [];
   let nextId = FIRST_REQUEST_ID;
   const host = createEngineHost({
     root,
     post: (message) => {
       pushes.push(message);
     },
+    log: (level, line) => logged.push({ level, line }),
   });
 
   async function respond<K extends EngineRequestKind>(kind: K, payload: EnginePayload<K>) {
@@ -191,6 +211,7 @@ function harnessFor(root: string): Harness {
   return {
     host,
     pushes,
+    logged,
     async send(kind, payload) {
       const response = await respond(kind, payload);
       if (!response.ok) {
@@ -566,6 +587,56 @@ describe("the engine host protocol", () => {
       const text = await open().send("message-skeleton", { methodPath: ECHO_METHOD, environment: null });
 
       expect((JSON.parse(text) as { trans_id: string }).trans_id).toBe("");
+    });
+
+    /**
+     * A spec that will not parse reaches the renderer as `warnings`, which becomes a banner the
+     * user dismisses — and, before this, nothing else. A workspace whose `docs/` holds an OpenAPI
+     * document beside its protos warns on every pick, and the log was empty every time.
+     */
+    it("givenASpecThatWillNotParse_whenMethodsListed_thenEachWarningIsLoggedAsAWarning", async () => {
+      const repo = cloneFixtureWorkspace();
+      const app = harnessFor(repo.root);
+      writeFileSync(join(repo.root, UNPARSEABLE_SPEC), UNPARSEABLE_SPEC_BODY, "utf8");
+      const resources = join(repo.root, RESOURCES_FILE);
+      writeFileSync(resources, readFileSync(resources, "utf8") + UNPARSEABLE_SPEC_ENTRY, "utf8");
+
+      const choices = await app.send("list-methods", {});
+
+      expect(choices.warnings.length).toBeGreaterThan(0);
+      const warnings = app.logged.filter((entry) => entry.level === "warn");
+      expect(warnings.map((entry) => entry.line).join("\n")).toContain(UNPARSEABLE_SPEC);
+      // Every warning the renderer was given, not a summary of them.
+      expect(warnings).toHaveLength(choices.warnings.length);
+      app.host.dispose();
+    });
+  });
+
+  /**
+   * `handle` turns every failure into an `ok: false` response, so before this an engine-side
+   * error existed only in a toast. The response is the renderer's; the line is the file's.
+   */
+  describe("what a failed request leaves behind", () => {
+    it("givenARequestThatFails_whenItIsAnswered_thenTheFailureIsLoggedAsAnError", async () => {
+      const app = open();
+
+      await app.fail("read-node", { nodeId: MISSING_NODE_ID });
+
+      const errors = app.logged.filter((entry) => entry.level === "error");
+      expect(errors).toHaveLength(1);
+      expect(errors.at(0)?.line).toContain("read-node");
+    });
+
+    /**
+     * Only failures. A log that also held the successful requests would be a log of what the user
+     * did, which is the traffic record 035 refused — and it would bury the one line that matters.
+     */
+    it("givenARequestThatSucceeds_whenItIsAnswered_thenNothingIsLogged", async () => {
+      const app = open();
+
+      await app.send("read-node", { nodeId: PING_ID });
+
+      expect(app.logged).toStrictEqual([]);
     });
   });
 

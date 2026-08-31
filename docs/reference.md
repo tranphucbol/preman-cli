@@ -834,6 +834,24 @@ interleaved `console`, `test`, and `side-request`, then `request-end` → `run-e
 Every variant carries `runId`, so two concurrent runs cannot be interleaved by mistake. Every
 per-request variant carries `nodeId`, which is the same string as that node's `CatalogNode.id`.
 
+### A port that closed
+
+The port is the only thing the renderer has, so a host that is gone has to be a fact the port
+reports. `EnginePort` declares a second `addEventListener` overload for `"close"`, which fires when
+the far end is dead — crashed, killed, or reaped after the five-minute idle window.
+
+`createEngineClient` treats that as terminal. Every pending request is rejected with an
+`EngineRequestError` carrying `EXIT_CODES.TRANSPORT` and details saying the engine stopped and to
+reopen the workspace, and every later `send` rejects the same way without posting. The client also
+exposes `onClose(listener)`, returning an unsubscribe function; the session subscribes and raises a
+`HostFailure`, so a workspace that was still opening stops showing a skeleton that will never fill.
+
+`client.close()` is the other direction — the renderer letting the port go — and deliberately does
+**not** notify `onClose` listeners: a host the app itself released is not a failure to report.
+
+Without this a dead engine is a promise that never settles, which is indistinguishable from a slow
+one. A timeout would answer both with the same sentence; this answers exactly the second.
+
 ### Duplicated constants
 
 A few of core's constants are declared in the protocol module rather than imported: `EXIT_CODES`,

@@ -52,6 +52,7 @@ import {
   type EngineRequest,
   type EngineResponse,
   type EngineResult,
+  type LogLevel,
   type MutateOp,
   type MutateResult,
   type NodeDocument,
@@ -68,6 +69,10 @@ const DEFAULT_RUN_TIMEOUT_MS = 0;
 const NO_DELAY_MS = 0;
 const RUN_ID_PREFIX = "run-";
 const FIRST_RUN = 1;
+/** What a line in the log calls the two kinds of failure that used to reach only the renderer. */
+const PROTO_WARNING_LABEL = "proto not loaded: ";
+const RUN_WARNING_LABEL = "run warning: ";
+const DISPATCH_FAILED_LABEL = "request failed: ";
 const SELECTOR_SEPARATOR = "/";
 const PARENT_SEGMENT = "..";
 const ENCODING = "utf8";
@@ -122,6 +127,14 @@ export interface EngineHostOptions {
   root: string;
   /** A property, not a method, because the host destructures it and calls it unbound. */
   post: (message: EngineMessage) => void;
+  /**
+   * Where this host says what went wrong. A property for the same reason as {@link post}.
+   *
+   * Required, and not defaulted to a no-op: every failure below is caught and turned into a
+   * response, so a host without a sink is a host whose errors exist only in a banner the user
+   * dismissed. Making the caller name the sink is what stops that from being the quiet default.
+   */
+  log: (level: LogLevel, line: string) => void;
 }
 
 export interface EngineHost {
@@ -211,7 +224,7 @@ function renderReport(report: RunReport, format: ReportFormat): string {
 }
 
 export function createEngineHost(options: EngineHostOptions): EngineHost {
-  const { root, post } = options;
+  const { root, post, log } = options;
   const bodies = new BodyStore();
   /** One per host, because the load is the expensive part and it only changes with a `.proto`. */
   let protos: ProtoCache | undefined;
@@ -521,6 +534,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         };
         const result = await runSelection(selection);
         remember(runId, result);
+        for (const warning of result.warnings) log("warn", `${RUN_WARNING_LABEL}${warning}`);
         if (!state.cancelled) {
           post({ push: "run-done", runId, warnings: result.warnings, cancelled: false });
         }
@@ -570,6 +584,10 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         ? {}
         : { schemaLocation: relative(from, method.spec).split(sep).join(LOCATION_SEPARATOR) }),
     }));
+    // The renderer shows these in a banner the user dismisses; the log is where they survive it.
+    // A spec that will not parse is the same spec on every open, so this repeats — which is the
+    // honest record of a picker that was opened five times and warned five times.
+    for (const warning of index.warnings) log("warn", `${PROTO_WARNING_LABEL}${warning}`);
     return { methods, warnings: index.warnings };
   }
 
@@ -671,6 +689,14 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       try {
         return { id: request.id, ok: true, data: await dispatch(request) };
       } catch (cause) {
+        // The response tells the renderer; this tells the file. Without it every engine-side
+        // failure in the app was a toast and nothing else, and a bug report could not be read
+        // after the toast had gone. The kind and the cause, never the request's arguments: the
+        // cause is the text the banner already shows, and a payload can hold a variable value.
+        log(
+          "error",
+          `${DISPATCH_FAILED_LABEL}${request.kind}: ${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}`,
+        );
         return { id: request.id, ok: false, error: toEngineError(cause) };
       }
     },

@@ -21,6 +21,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/desktop/src/renderer/tsconfig.json && tsc --noEmit -p test/renderer/tsconfig.json",
     "typecheck:core": "tsc --noEmit -p packages/core/tsconfig.json",
     "desktop": "bun run --filter '@preman/desktop' build && bun run --cwd packages/desktop start",
+    "desktop:inspect": "bun run --filter '@preman/desktop' build && bun run --cwd packages/desktop start:inspect",
     "desktop:package": "bun run --filter '@preman/desktop' build && bun run --cwd packages/desktop package"
   },
   "devDependencies": {

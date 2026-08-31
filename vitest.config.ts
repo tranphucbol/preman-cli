@@ -5,6 +5,13 @@ const WORKSPACE_ROOT = import.meta.dirname;
 const CORE_SOURCE_ROOT = resolve(WORKSPACE_ROOT, "packages/core/src");
 const CLI_SOURCE_ROOT = resolve(WORKSPACE_ROOT, "packages/cli/src");
 const DESKTOP_SOURCE_ROOT = resolve(WORKSPACE_ROOT, "packages/desktop/src");
+/**
+ * Electron lives in the desktop package rather than at the root, so `electron` resolves to one id
+ * from `packages/desktop/src/main/` and to nothing from `test/`. A `vi.mock("electron", …)` keyed
+ * on the second would never be found by the first, which is a mock that silently does nothing.
+ * Aliased so both spell the same module, which is what makes `main/hosts.ts` testable at all.
+ */
+const ELECTRON_MODULE = resolve(WORKSPACE_ROOT, "packages/desktop/node_modules/electron");
 const TEST_FILES = ["test/**/*.test.ts"];
 const TEST_TIMEOUT_MS = 20_000;
 const NODE_MAIN_FIELDS = ["module", "jsnext:main", "jsnext", "main"];
@@ -25,9 +32,11 @@ export default defineConfig({
     alias: {
       "@preman/core": CORE_SOURCE_ROOT,
       "@preman/cli": CLI_SOURCE_ROOT,
-      // The engine host, exercised directly. Nothing under `src/main` or `src/preload` is
-      // testable here: those import `electron`, which only exists inside the Electron runtime.
+      // The engine host, exercised directly. Anything under `src/main` that imports `electron`
+      // is testable only with `vi.mock("electron", …)`, which needs the alias below; `src/preload`
+      // additionally needs a `contextBridge` to exist, so it stays read as text.
       "@preman/desktop": DESKTOP_SOURCE_ROOT,
+      electron: ELECTRON_MODULE,
     },
     mainFields: NODE_MAIN_FIELDS,
     conditions: NODE_CONDITIONS,

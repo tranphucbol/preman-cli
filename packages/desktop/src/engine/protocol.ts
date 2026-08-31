@@ -283,6 +283,62 @@ export const ENGINE_PORT_MESSAGE = "engine-port";
 export const WORKSPACE_ROOT_FLAG = "--workspace-root=";
 
 /**
+ * How severe a line in `preman.log` is.
+ *
+ * Four, and deliberately no `debug`: a debug level is a level somebody has to turn on, and 035
+ * refused the switch. These are labels on a file that is always written at one detail, not a
+ * filter. `info` is something happening, `warn` is something the user will want to know went
+ * wrong while the app carried on, `error` is an operation that failed, `fatal` is a process
+ * that is not coming back.
+ */
+export const LOG_LEVELS = ["info", "warn", "error", "fatal"] as const;
+
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+const LOG_TAG_OPEN = "<preman:";
+const LOG_TAG_CLOSE = ">";
+/** What an untagged line is worth. Third-party output — Node's own `Debugger listening on
+ * ws://…`, a dependency's stray write — arrives with no opinion, and guessing one from the text
+ * is the pattern-matching this codebase does not do. */
+const UNTAGGED_LEVEL: LogLevel = "info";
+
+const LEVEL_BY_NAME: ReadonlyMap<string, LogLevel> = new Map(LOG_LEVELS.map((level) => [level, level]));
+
+/**
+ * One line of engine output, marked with what the engine meant by it.
+ *
+ * The engine host writes to a pipe only the main process reads, and main is the only writer of
+ * the log (035). Without a mark, main would have to decide the severity of a line it did not
+ * write, so an engine stack trace and a debugger banner would land at the same level. The tag is
+ * printable rather than a control character: if it ever reaches a human — an engine run outside
+ * Electron, a pipe read by something else — it should read as a word and not as mojibake.
+ */
+export function tagLine(level: LogLevel, line: string): string {
+  return `${LOG_TAG_OPEN}${level}${LOG_TAG_CLOSE}${line}`;
+}
+
+export interface TaggedLine {
+  readonly level: LogLevel;
+  readonly message: string;
+}
+
+/**
+ * Split a captured line back into what the engine meant and what it said.
+ *
+ * Anything that is not exactly a known level between the delimiters is left alone, tag and all:
+ * a line that merely starts with `<preman:` is somebody else's text, and eating it would lose
+ * output to a near miss.
+ */
+export function readTaggedLine(line: string): TaggedLine {
+  if (!line.startsWith(LOG_TAG_OPEN)) return { level: UNTAGGED_LEVEL, message: line };
+  const close = line.indexOf(LOG_TAG_CLOSE, LOG_TAG_OPEN.length);
+  if (close < 0) return { level: UNTAGGED_LEVEL, message: line };
+  const level = LEVEL_BY_NAME.get(line.slice(LOG_TAG_OPEN.length, close));
+  if (level === undefined) return { level: UNTAGGED_LEVEL, message: line };
+  return { level, message: line.slice(close + LOG_TAG_CLOSE.length) };
+}
+
+/**
  * The boundaries a workspace open crosses, grouped by the process that marks them.
  *
  * Grouped, not ordered: the engine's catalog build is triggered by the renderer asking for it, so

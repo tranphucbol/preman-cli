@@ -1,11 +1,15 @@
 # 034: The sidebar starts shut
 
-Status: Accepted
+Status: Reversed by 037
 
 ## Decision
 
 The sidebar panel is `collapsible` with a `collapsedSize` of zero, and its `defaultSize` is that
 same zero. On a fresh install the window opens with no tree: title bar, tab bar, editor, status bar.
+
+_(037 reversed this one sentence: `defaultSize` is `SIDEBAR_OPEN` again and the app starts with the
+tree showing. Everything else below — the two controls, the absent header toggle, the animation, the
+widths — is still what the app does.)_
 
 Two controls open it, and both call one `toggleSidebar` in `App.tsx`:
 

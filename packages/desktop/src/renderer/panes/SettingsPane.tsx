@@ -24,10 +24,11 @@ import {
 import type { Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
+import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
-import { Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
+import { Button, Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
 import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
-import type { Density } from "@preman/desktop/preload/bridge.js";
+import type { Density, DiagnosticsInfo } from "@preman/desktop/preload/bridge.js";
 
 /** The nine colours a card shows: the three surfaces you look at, then the six verbs you read. */
 const SWATCHES = [
@@ -91,7 +92,7 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
         <span className="text-xs font-medium text-ink">Settings</span>
-        <span className="truncate text-2xs text-ink-faint">Appearance</span>
+        <span className="truncate text-2xs text-ink-faint">Appearance and diagnostics</span>
         <div className="flex-1" />
         <IconButton label="Close settings" onClick={onDismiss}>
           <CloseIcon />
@@ -103,6 +104,7 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
           <ThemeSection />
           <DensitySection />
           <FontSection />
+          <DiagnosticsSection />
         </div>
       </div>
     </div>
@@ -286,6 +288,88 @@ function FontSection(): React.JSX.Element {
         </Labelled>
       </div>
     </Section>
+  );
+}
+
+/** What the Engine row says when nothing is open, which is a state and not an absence of one. */
+const NO_WORKSPACE = "No workspace open";
+const ENGINE_RUNNING = "Running";
+const ENGINE_STOPPED = "Stopped";
+/** Before the one `invoke` settles. It is a local round trip, so this is a frame, not a wait. */
+const UNKNOWN_VALUE = "…";
+
+/**
+ * The four versions a bug report needs, and where to find the log.
+ *
+ * Not a line of the log is rendered. A pane that showed it would have to decide what to redact, and
+ * `docs/decisions/035` decided that by not writing it — the console drawer is where a request is
+ * looked at. The button reveals the *directory* rather than the file: the rotated `preman.log.1` is
+ * half of what a report wants, and a file manager showing the folder gives both.
+ */
+function DiagnosticsSection(): React.JSX.Element {
+  const [info, setInfo] = useState<DiagnosticsInfo | null>(null);
+  const root = useSessionStore((state) => state.root);
+  const failed = useSessionStore((state) => state.hostFailure !== null);
+
+  // Once, on mount: none of it changes while the app runs, and re-reading it would only be a way
+  // for the pane to disagree with itself. A failed read leaves the placeholders, which is honest.
+  useEffect(() => {
+    let live = true;
+    void window.preman
+      .diagnostics()
+      .then((read) => {
+        if (live) setInfo(read);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  return (
+    <Section title="Diagnostics" hint="What a bug report needs, and where the app writes things down.">
+      <dl className="flex flex-col gap-2">
+        <DiagnosticsRow term="Versions">
+          <span className="text-2xs text-ink-dim">
+            preman {info?.appVersion ?? UNKNOWN_VALUE} · Electron {info?.electronVersion ?? UNKNOWN_VALUE} · Chromium{" "}
+            {info?.chromeVersion ?? UNKNOWN_VALUE} · Node {info?.nodeVersion ?? UNKNOWN_VALUE}
+          </span>
+        </DiagnosticsRow>
+        <DiagnosticsRow term="Engine">
+          <span className="truncate font-mono text-2xs text-ink-dim">{root ?? NO_WORKSPACE}</span>
+          <span className={cn("text-2xs", failed ? "text-danger" : "text-ink-faint")}>
+            {failed ? ENGINE_STOPPED : ENGINE_RUNNING}
+          </span>
+        </DiagnosticsRow>
+        <DiagnosticsRow term="Log">
+          <span className="truncate font-mono text-2xs text-ink-dim">{info?.logFile ?? UNKNOWN_VALUE}</span>
+          <Button
+            variant="neutral"
+            disabled={info === null}
+            onClick={() => {
+              if (info !== null) void window.preman.revealInFileManager(info.directory);
+            }}
+          >
+            Reveal
+          </Button>
+        </DiagnosticsRow>
+      </dl>
+    </Section>
+  );
+}
+
+function DiagnosticsRow({
+  term,
+  children,
+}: {
+  readonly term: string;
+  readonly children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <dt className="w-24 shrink-0 text-2xs text-ink-faint">{term}</dt>
+      <dd className="flex min-w-0 flex-1 items-center gap-2">{children}</dd>
+    </div>
   );
 }
 

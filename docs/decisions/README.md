@@ -43,6 +43,9 @@ The CLI's own design predates the practice.
 | [032](032-the-linux-watcher-is-partial-and-said-so.md)              | The Linux watcher is partial, and says so in prose rather than in code |
 | [033](033-migrating-from-postman-cloud.md)                          | Migration reads Postman's own private API, with Postman's own token    |
 | [034](034-the-sidebar-starts-shut.md)                               | The sidebar starts shut                                                |
+| [035](035-the-log-contains-no-traffic.md)                           | The log contains no traffic                                            |
+| [036](036-the-log-says-how-bad-it-was.md)                           | The log says how bad it was                                            |
+| [037](037-the-sidebar-starts-open-again.md)                         | The sidebar starts open again                                          |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -111,5 +114,32 @@ them: a horizontally collapsing pane has no transform that expresses it, so it t
 says in its own text why 017's argument survives that — the spend is one pane for 180ms on an
 explicit gesture, which is the test a progress fill fails. The fence moved with it, since the one
 that existed read components and would never have seen a rule in `app.css`.
+
+035 is the first record about what the app writes down about itself, and the first whose substance is
+a prohibition. It exists because the same properties that make the engine the right place to resolve
+a `{{token}}` (025) and to hold a response body (013) make it the one process whose output cannot be
+logged: a traffic log written by it is a credential file the user never enabled. So the file is
+unconditional and the content is fenced, which is the opposite of the usual trade, and it leans on
+024 to say where a request actually goes when you want to look at one. It is also the first record to
+put something outside `userData` on purpose, and the cost is a file two renames deep that answers
+nothing about last week.
+
+036 is the first record to amend another rather than reverse it or extend it, and 035 is nine days
+old. It exists because 035's file turned out to be right about what it must not hold and quiet about
+most of what went wrong: opening a real workspace and picking a method put three failing specs in a
+banner and nothing in the log, because the engine host turns every failure into a response and a
+response is not a record. Fixing that meant relaxing 035's path clause, since the warning is made of
+paths — so this is also the first record whose cost is a privacy one taken knowingly rather than
+avoided, and it says so in its own text. The levels are the smaller half: four, no `debug`, and no
+filter, because a level you can turn off is the switch 035 already refused. The tag the engine
+prefixes its lines with is the same argument as 027's shared phase names, applied to severity: two
+processes, one file, and no guessing at the boundary.
+
+037 is the first outright reversal in the set, and it reverses the newest record but one. 034 kept
+its file and its argument and changed its status, which is the convention working as intended: the
+pane's default has now been argued twice and both halves are here to read. It also demonstrates what
+034 was buying, which 034 could only assert — with the tree mounting in the first render again, the
+5000-node start-up budget went from comfortable to marginal, and the record says so rather than
+quietly moving the number.
 
 `TEMPLATE.md` is the shape of a new one.

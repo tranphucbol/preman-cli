@@ -23,7 +23,13 @@ import type {
   WorkspaceHandle,
 } from "@preman/desktop/preload/bridge.js";
 
-import { EngineRequestError, onEngineClient, type EngineClient } from "@preman/desktop/renderer/client.js";
+import {
+  EngineRequestError,
+  onEngineClient,
+  PORT_CLOSED_DETAILS,
+  PORT_CLOSED_MESSAGE,
+  type EngineClient,
+} from "@preman/desktop/renderer/client.js";
 import { openingState, openingTarget, type OpeningState } from "@preman/desktop/renderer/model/opening.js";
 import { publishPhaseReader } from "@preman/desktop/renderer/phases.js";
 import { readSession, restoreCollapse, restoreOpenState, startPersistence } from "@preman/desktop/renderer/persist.js";
@@ -362,6 +368,20 @@ export function connect(): () => void {
     publishPhaseReader(() => client.send("phases", {}));
 
     client.onPush(route);
+    // The other half of the same fact. A port that dies mid-request rejects that request, and
+    // `resume`'s catch below turns it into this banner; a port that dies with nothing in flight has
+    // no promise to reject, and without this the window would keep claiming to be connected.
+    client.onClose(() => {
+      const failed = useSessionStore.getState();
+      // A client the window has already moved off is not news: the workspace changed, and the
+      // banner would name a host nobody is looking at.
+      if (failed.client !== client) return;
+      failed.setHostFailure({
+        root: client.root,
+        message: PORT_CLOSED_MESSAGE,
+        details: [...PORT_CLOSED_DETAILS],
+      });
+    });
     resume(client).catch((cause: unknown) => {
       const error = toEngineError(cause);
       useSessionStore.getState().setHostFailure({

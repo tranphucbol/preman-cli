@@ -111,12 +111,15 @@ const EXCHANGE_LAYOUT_ID = "preman:exchange";
 const SIDEBAR_OPEN = "22";
 const SIDEBAR_MIN = "14";
 const SIDEBAR_MAX = "40";
-/** The tree starts shut, and opening it is one click or `Cmd+B`. Decision 34. */
+/**
+ * The width a collapsed pane has. The tree no longer starts at it: 034 opened the app with no tree
+ * and 037 reversed that, so this is what `Cmd+B` collapses *to* rather than what it starts at.
+ */
 const SIDEBAR_COLLAPSED = 0;
 /*
- * Both halves of the toggle's name, hoisted because `perf.app.test.ts` selects the button by the
- * shut half. The shortcut is in the name rather than only in a tooltip: with no toggle inside the
- * pane, this button is the only thing on screen that can teach `Cmd+B`.
+ * Both halves of the toggle's name, hoisted because `perf.app.test.ts` selects the button by them.
+ * The shortcut is in the name rather than only in a tooltip: with no toggle inside the pane, this
+ * button is the only thing on screen that can teach `Cmd+B`.
  */
 const SIDEBAR_SHOW_LABEL = "Show the sidebar (Cmd+B)";
 const SIDEBAR_HIDE_LABEL = "Hide the sidebar (Cmd+B)";
@@ -272,8 +275,8 @@ export function App(): React.JSX.Element {
 
   /*
    * The sidebar is the same arrangement as the drawer above, for the same three reasons, and it
-   * starts shut for the reason in decision 34. Always mounted: the tree's scroll position and the
-   * pane's width both belong to the session, and a pane that unmounts keeps neither.
+   * starts open: 034 shut it and 037 reversed that. Always mounted: the tree's scroll position and
+   * the pane's width both belong to the session, and a pane that unmounts keeps neither.
    *
    * `sliding` is the one thing the drawer does not have. It arms the transition in `app.css` for
    * exactly the length of a toggle and disarms it again, because the same property is what the
@@ -281,7 +284,9 @@ export function App(): React.JSX.Element {
    * feel broken rather than animated. Decision 34.
    */
   const [sidebarPanel, setSidebarPanel] = usePanelCallbackRef();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Seeded to match `defaultSize`, so the toggle's label is right on the first paint rather than
+  // after the panel's first `onResize`.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sliding, setSliding] = useState(false);
   const slideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => clearTimeout(slideTimer.current ?? undefined), []);
@@ -368,7 +373,7 @@ export function App(): React.JSX.Element {
                     id={SIDEBAR_ID}
                     collapsible
                     collapsedSize={SIDEBAR_COLLAPSED}
-                    defaultSize={SIDEBAR_COLLAPSED}
+                    defaultSize={SIDEBAR_OPEN}
                     minSize={SIDEBAR_MIN}
                     maxSize={SIDEBAR_MAX}
                     className="flex min-w-0 flex-col bg-panel"

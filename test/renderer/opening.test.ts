@@ -283,6 +283,32 @@ describe("the panes that draw the wait", () => {
   });
 });
 
+/**
+ * The opening state's one unbounded escape, closed.
+ *
+ * Plan 021 refused to bound this state with a timeout on the grounds that "a hang with neither is
+ * a broken host registry" — and it was reachable, because a host that died while serving settled
+ * nothing. Both halves are asserted: the model already leaves `opening` on a failure, and the
+ * session is now the thing that produces one when the port dies.
+ */
+describe("an engine that dies while a workspace is opening", () => {
+  it("givenAnOpeningWorkspace_whenTheEngineDies_thenTheSkeletonGivesWayToTheBanner", () => {
+    const opening = { ...IDLE_INPUTS, sessionRoot: SOME_ROOT };
+    expect(openingState(openingTarget(opening) !== null, DELAY_ELAPSED)).toBe("opening");
+
+    // The one thing that changed is the failure, and it is the only thing that had to.
+    const died = { ...opening, failed: true };
+    expect(openingState(openingTarget(died) !== null, DELAY_ELAPSED)).toBe("idle");
+  });
+
+  /** Where the failure comes from now. Nothing else in the renderer subscribes to a dead port. */
+  it("givenTheSession_whenAPortArrives_thenItSubscribesToTheClosureThatEndsTheWait", () => {
+    const handler = /client\.onClose\(\(\) => \{([\s\S]*?)\n {4}\}\);/.exec(SESSION);
+    expect(handler).not.toBeNull();
+    expect(handler?.[1] ?? "").toContain("setHostFailure({");
+  });
+});
+
 describe("the pre-port hint", () => {
   it("givenTheSession_whenItConnects_thenItReadsTheHintAndDropsItOnAPort", () => {
     expect(SESSION).toContain("bridge.reopening()");

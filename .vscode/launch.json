@@ -1,0 +1,61 @@
+{
+  // Committed, because attaching to a utility process is the part nobody works out twice.
+  //
+  // Both configurations attach rather than launch: the app is started by `bun run desktop:inspect`
+  // (main) and `PREMAN_INSPECT=1 bun run desktop` (engine), so the build being debugged is the one
+  // the terminal built, and the debugger is not a second way to run the app that can disagree with
+  // the first.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 9229 is Electron's documented main-process port, and the one `--inspect` takes with no
+      // argument. The engine deliberately does not use it; see `INSPECT_ARGS` in `main/hosts.ts`.
+      "name": "main",
+      "type": "node",
+      "request": "attach",
+      "address": "127.0.0.1",
+      "port": 9229,
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      // Auto Attach never sees this one: a `utilityProcess` is forked by Electron rather than by a
+      // terminal, so there is no child of a debugged shell for it to notice. It has to be attached
+      // to by hand, and there is no fixed port to attach to — one host per open workspace means an
+      // ephemeral port, or the second workspace opened would fail to listen.
+      //
+      // So the address is asked for. `hosts.ts` forwards everything the host writes to stderr, and
+      // `Debugger listening on ws://…` is the first of those lines; paste it here.
+      //
+      // `continueOnAttach` because `PREMAN_INSPECT=brk` is the way to catch the engine before it
+      // reads the workspace and `PREMAN_INSPECT=1` is not — the second must not sit paused waiting
+      // to be resumed by someone who did not ask for a breakpoint. `restart` because a host is
+      // respawned up to `HOST_RESPAWN_LIMIT` times; the respawn gets a new port and a new URL, so
+      // this reconnects only while the address holds, which is still better than a session that
+      // ends silently on the first crash.
+      "name": "engine",
+      "type": "node",
+      "request": "attach",
+      "websocketAddress": "${input:engineInspector}",
+      "restart": true,
+      "continueOnAttach": true,
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "engineInspector",
+      "type": "promptString",
+      "description": "The engine host's inspector URL, from the ws:// line in the terminal"
+    }
+  ],
+  "compounds": [
+    {
+      // A bug that spans the port — a request that leaves the renderer and never comes back — is
+      // not diagnosable from either end alone.
+      "name": "preman",
+      "configurations": ["main", "engine"]
+    }
+  ]
+}

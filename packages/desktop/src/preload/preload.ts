@@ -13,6 +13,7 @@ import {
   TITLE_BAR_GUTTER_PX,
   type CloudWorkspaceListResult,
   type CreateWorkspaceResult,
+  type DiagnosticsInfo,
   type EnginePortDelivery,
   type HostFailure,
   type MigrateResult,
@@ -142,6 +143,7 @@ const bridge: PremanBridge = {
       ipcRenderer.off(CHANNELS.migrateProgress, handler);
     };
   },
+  diagnostics: () => ipcRenderer.invoke(CHANNELS.readDiagnostics) as Promise<DiagnosticsInfo>,
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

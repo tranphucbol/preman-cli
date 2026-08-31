@@ -25,7 +25,7 @@
  *   milliseconds of process spawn before any JavaScript runs, and all of Playwright's launch
  *   scaffolding, neither of which the app can affect.
  * - The first launch is discarded. It reads two hundred megabytes of Electron framework off disk
- *   and lands around 1300ms; every launch after it is around 550ms. The budget is a property of
+ *   and lands around 1300ms; every launch after it is around 420ms. The budget is a property of
  *   the app, not of the page cache.
  * - Start-up is measured against the committed fixture workspace, not the generated one. "Cold
  *   start to interactive window" and "a tree with five thousand nodes in it" are two different
@@ -56,6 +56,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PREFERENCES } from "@preman/desktop/preload/bridge.js";
 import type { AppState } from "@preman/desktop/main/store.js";
 import { PHASE_PREFIX, PHASES, type PhaseReport } from "@preman/desktop/engine/protocol.js";
+import { PORT_CLOSED_MESSAGE } from "@preman/desktop/renderer/client.js";
 import { PHASE_READER_KEY, type PhaseReader } from "@preman/desktop/renderer/phases.js";
 import { FIXTURE_WS } from "../helpers.js";
 import { writeBigWorkspace, type GeneratedWorkspace } from "../support/big-workspace.js";
@@ -71,16 +72,14 @@ const ELECTRON_BINARY = join(DESKTOP_ROOT, "node_modules/electron/dist/Electron.
 /** A sidebar row. Every selector this file depends on is an ARIA role or a behaviour, not a class. */
 const ROW_SELECTOR = '[role="treeitem"]';
 /**
- * The footer's sidebar toggle. Selected on the shut half of its name, which is also what makes it
- * unambiguous: the sidebar keeps a close button of its own, and that one only ever says "Hide".
+ * The footer's sidebar toggle, selected on the open half of its name.
  *
- * The pane starts collapsed under decision 34, and a collapsed pane is zero pixels wide, so every
- * row below it is present and invisible. Opening it is therefore part of launching, not part of a
- * test. It costs the start-up row nothing measurable: the button paints with the first frame,
- * which is already on the critical path to the first row, so the click overlaps the engine's
- * catalog build rather than following it.
+ * The pane starts open again under decision 37, so launching no longer has to open it and the rows
+ * are visible on the first paint. The selector stays because two cases still toggle the pane, and
+ * because a launch that silently stopped finding this button is a launch that would go on measuring
+ * something else.
  */
-const SIDEBAR_TOGGLE_SELECTOR = 'button[aria-label="Show the sidebar (Cmd+B)"]';
+const SIDEBAR_TOGGLE_SELECTOR = 'button[aria-label="Hide the sidebar (Cmd+B)"]';
 /** A request row: only groups carry `aria-expanded`, so "a leaf of the tree" is the whole test. */
 const REQUEST_ROW_SELECTOR = '[role="treeitem"]:not([aria-expanded])';
 /** Named, because the request editor's own section triggers are `role="tab"` as well. */
@@ -208,6 +207,27 @@ const LAUNCH_TIMEOUT_MS = 120_000;
 const CASE_TIMEOUT_MS = 300_000;
 
 /**
+ * The engine host, as the main process sees it: `ProcessMetric.name` is the `serviceName` passed to
+ * `utilityProcess.fork`, and `hosts.ts` builds it from the workspace's basename. Matching on the
+ * prefix rather than on `type` alone matters — Chromium's own Network and Audio services are
+ * `Utility` too, and killing one of those would prove nothing about the engine.
+ */
+const ENGINE_PROCESS_TYPE = "Utility";
+const ENGINE_SERVICE_PREFIX = "preman-engine";
+const ONE_ENGINE = 1;
+/** Unreachable: `enginePid` asserts the length first. Present because `at(0)` is optional. */
+const NO_ENGINE_PID = 0;
+const KILL_SIGNAL = "SIGKILL";
+/** `Banner` puts `role="alert"` on the animated element itself; see the comment there. */
+const BANNER_SELECTOR = '[role="alert"]';
+/**
+ * Not a budget: a dead engine has to be visible before the user has decided the app is broken, and
+ * a second is generous for a `close` event that Chromium raises on the port as the process is
+ * reaped. The number that would fail this is `Infinity`, which is what the app did before.
+ */
+const BANNER_BUDGET_MS = 1_000;
+
+/**
  * Five thousand requests, to first row painted. Kept separate from {@link SCROLL_REQUESTS} even
  * though the number is the same: one row is about how long the open takes and the other about
  * whether the tree is virtualized, and a future change to either should not silently move the
@@ -215,7 +235,7 @@ const CASE_TIMEOUT_MS = 300_000;
  */
 const OPEN_BIG_REQUESTS = 5_000;
 /**
- * Measured at 2563, 2742 and 3167ms over three runs on an M-series laptop, and wanted under 2500.
+ * Measured at 2082, 2002 and 2153ms over three runs on an M-series laptop, and wanted under 2500.
  *
  * The gate is above the worst of those rather than beside the goal, because this is the one row
  * that does not discard its first launch — it cannot, since a second launch would find the
@@ -342,7 +362,9 @@ async function launch(root: string): Promise<LaunchedApp> {
     args: [MAIN_ENTRY, `--user-data-dir=${userData}`],
   });
   const page = await app.firstWindow();
-  await page.click(SIDEBAR_TOGGLE_SELECTOR, { timeout: LAUNCH_TIMEOUT_MS });
+  // No click any more: 037 opens the pane by default, so waiting for a row is waiting for the
+  // thing the start-up row is supposed to measure and nothing else.
+  await page.waitForSelector(SIDEBAR_TOGGLE_SELECTOR, { timeout: LAUNCH_TIMEOUT_MS });
   await page.waitForSelector(ROW_SELECTOR, { timeout: LAUNCH_TIMEOUT_MS });
   // Read before anything else: every further round trip would be charged to start-up.
   const interactiveAt = await page.evaluate(() => Date.now());
@@ -1127,4 +1149,42 @@ describe.skipIf(!PERF_ENABLED)("the app's budget", () => {
     },
     CASE_TIMEOUT_MS,
   );
+
+  /*
+   * A correctness assertion rather than a budget, and here because this is the only suite in the
+   * repository where all three processes exist at once. Nothing below the window can prove it: the
+   * client's own test kills a fake port, and the registry's kills a fake child. What is under test
+   * is that a real `SIGKILL` to a real utility process reaches a real React tree.
+   */
+  it(
+    "givenARunningEngine_whenItsProcessIsKilled_thenTheWindowShowsTheBannerWithinOneSecond",
+    async () => {
+      requireBuild();
+      const app = await launch(FIXTURE_WS);
+      const pid = await enginePid(app.app);
+
+      process.kill(pid, KILL_SIGNAL);
+
+      await app.page.waitForSelector(BANNER_SELECTOR, { timeout: BANNER_BUDGET_MS });
+      // The banner and nothing else would also be true of a workspace that failed to open, so the
+      // sentence is asserted too: this is the port's closure, not a load error wearing its clothes.
+      expect(await app.page.textContent(BANNER_SELECTOR)).toContain(PORT_CLOSED_MESSAGE);
+    },
+    CASE_TIMEOUT_MS,
+  );
 });
+
+/** The one utility process this app forks. Fails loudly if there is not exactly one. */
+async function enginePid(app: ElectronApplication): Promise<number> {
+  const pids = await app.evaluate(
+    ({ app: electron }, { type, prefix }) =>
+      electron
+        .getAppMetrics()
+        .filter((metric) => metric.type === type && (metric.name ?? "").startsWith(prefix))
+        .map((metric) => metric.pid),
+    { type: ENGINE_PROCESS_TYPE, prefix: ENGINE_SERVICE_PREFIX },
+  );
+
+  expect(pids).toHaveLength(ONE_ENGINE);
+  return pids[0] ?? NO_ENGINE_PID;
+}

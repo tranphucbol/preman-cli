@@ -6,6 +6,7 @@
  * `import { runRequest }`, one eventually will, and the app becomes Postman.
  */
 import {
+  EXIT_CODES,
   isEnginePush,
   type EngineError,
   type EngineMessage,
@@ -25,6 +26,16 @@ import {
 } from "@preman/desktop/preload/bridge.js";
 
 const FIRST_REQUEST_ID = 1;
+
+/**
+ * What a request that outlived its engine says.
+ *
+ * An `EngineRequestError` rather than a new class: `toEngineError`, `ResponseFailure` and
+ * `HostBanner` already draw that shape, and a second class would be a new branch in each of them
+ * for a failure they already know how to render. `TRANSPORT`, because the port is the transport.
+ */
+export const PORT_CLOSED_MESSAGE = "the engine stopped";
+export const PORT_CLOSED_DETAILS = ["the workspace's engine process is gone", "reopen the workspace"] as const;
 
 declare global {
   interface Window {
@@ -46,12 +57,22 @@ export class EngineRequestError extends Error {
 }
 
 export type PushListener = (push: EnginePush) => void;
+export type CloseListener = () => void;
 
 export interface EngineClient {
   readonly root: string;
   send<K extends EngineRequestKind>(kind: K, payload: EnginePayload<K>): Promise<EngineResults[K]>;
   /** Returns an unsubscribe function. */
   onPush(listener: PushListener): () => void;
+  /**
+   * The far end went away by itself. Returns an unsubscribe function.
+   *
+   * Separate from a rejected `send`, and not redundant with it: a port that dies with nothing in
+   * flight — a reap after five idle minutes, most often — has no promise to reject, so this is the
+   * only thing that can tell the window its engine is gone. Not called by {@link EngineClient.close},
+   * which is this side hanging up on purpose.
+   */
+  onClose(listener: CloseListener): () => void;
   close(): void;
 }
 
@@ -60,9 +81,19 @@ interface Pending {
   reject(error: Error): void;
 }
 
+/** The rejection every abandoned request gets, built fresh so no two share a stack. */
+function portClosedError(): EngineRequestError {
+  return new EngineRequestError({
+    message: PORT_CLOSED_MESSAGE,
+    details: [...PORT_CLOSED_DETAILS],
+    exitCode: EXIT_CODES.TRANSPORT,
+  });
+}
+
 export function createEngineClient(root: string, port: EnginePort): EngineClient {
   const pending = new Map<number, Pending>();
   const listeners = new Set<PushListener>();
+  const closeListeners = new Set<CloseListener>();
   let nextId = FIRST_REQUEST_ID;
   let closed = false;
 
@@ -74,6 +105,18 @@ export function createEngineClient(root: string, port: EnginePort): EngineClient
     else waiting.reject(new EngineRequestError(response.error));
   }
 
+  /**
+   * Abandon everything in flight. Shared by the deliberate close and the far end vanishing,
+   * because two loops that must agree is how one of them eventually stops agreeing.
+   */
+  function rejectPending(): void {
+    // Drained before the loop: a `.catch` that calls back into the client must not find the
+    // request it is being told about still listed as pending.
+    const abandoned = [...pending.values()];
+    pending.clear();
+    for (const waiting of abandoned) waiting.reject(portClosedError());
+  }
+
   port.addEventListener("message", (event) => {
     const message = event.data as EngineMessage;
     if (isEnginePush(message)) {
@@ -82,12 +125,25 @@ export function createEngineClient(root: string, port: EnginePort): EngineClient
     }
     settle(message);
   });
+
+  port.addEventListener("close", () => {
+    // Already closed means this side hung up, and the caller who did that already knows.
+    if (closed) return;
+    closed = true;
+    rejectPending();
+    const notify = [...closeListeners];
+    closeListeners.clear();
+    listeners.clear();
+    for (const listener of notify) listener();
+  });
+
   port.start();
 
   return {
     root,
     send<K extends EngineRequestKind>(kind: K, payload: EnginePayload<K>): Promise<EngineResults[K]> {
-      if (closed) return Promise.reject(new Error(`the engine for ${root} is closed`));
+      // Refused rather than queued at a dead port: a message posted to one is never answered.
+      if (closed) return Promise.reject(portClosedError());
       const id = nextId++;
       // The envelope is assembled here so no caller can invent an id.
       const request = { id, kind, ...payload } as unknown as EngineRequest;
@@ -101,11 +157,16 @@ export function createEngineClient(root: string, port: EnginePort): EngineClient
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    onClose(listener) {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    },
     close() {
       closed = true;
-      for (const waiting of pending.values()) waiting.reject(new Error(`the engine for ${root} closed`));
-      pending.clear();
+      rejectPending();
       listeners.clear();
+      // Not notified: this is the window replacing its own client, not the engine going away.
+      closeListeners.clear();
       port.close();
     },
   };

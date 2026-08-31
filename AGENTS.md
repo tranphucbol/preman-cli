@@ -53,6 +53,7 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
   src/main/                      lifecycle, one window, menu, dialogs; holds no workspace state
     hosts.ts                     one utilityProcess per open workspace; MessageChannelMain transfer
     store.ts                     app data: workspaces, tabs, drafts, window bounds
+    diagnostics.ts               the one log file and the host output tail; 035 fences it, 036 levels it
   src/preload/                   contextBridge surface; relays the engine port into the page
   src/engine/                    the utility process: Catalog, BodyStore, watcher, proto cache
     protocol.ts                  the typed contract; the only module engine and renderer share

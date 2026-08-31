@@ -28,7 +28,7 @@ today, macOS: it finds the Electron binary at `node_modules/electron/dist/Electr
 | Metric                                            | Budget          | Asserted in                      |
 | ------------------------------------------------- | --------------- | -------------------------------- |
 | cold start to interactive window                  | ≤ 800ms         | `test/renderer/perf.app.test.ts` |
-| open a 5000-request workspace, to first row       | ≤ 4000ms\*      | `test/renderer/perf.app.test.ts` |
+| open a 5000-request workspace, to first row       | ≤ 4000ms\*†     | `test/renderer/perf.app.test.ts` |
 | the same open, to the window saying it is opening | ≤ 2000ms        | `test/renderer/perf.app.test.ts` |
 | `buildCatalog`, 43 requests                       | ≤ 50ms          | `test/perf.test.ts`              |
 | `buildCatalog`, 1000 requests                     | ≤ 400ms         | `test/perf.test.ts`              |
@@ -38,7 +38,7 @@ today, macOS: it finds the Electron binary at `node_modules/electron/dist/Electr
 | total idle RSS, all processes, one workspace open | ≤ 250MB\*\*     | `test/renderer/perf.app.test.ts` |
 | tab switch                                        | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
 | keystroke to paint, any editor or grid            | ≤ 8ms           | `test/renderer/perf.app.test.ts` |
-| open a request tab, editor mounted                | ≤ 8ms           | `test/renderer/perf.app.test.ts` |
+| open a request tab, editor mounted                | ≤ 8ms†          | `test/renderer/perf.app.test.ts` |
 | theme switch                                      | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
 | density switch                                    | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
 | longest task on main or renderer                  | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
@@ -52,6 +52,13 @@ goal.
 \*\* Gated at 450MB, because 250 is a private-footprint number and macOS does not report one. The
 whole argument is below. This and the row above are the two where the gate and the goal are
 different numbers, and both say why in the section that reads them.
+
+† Marginal since ADR 037 reopened the sidebar at launch. The tree's virtualizer mounts in the first
+render again instead of after a click, so the work that used to overlap the engine's catalog build
+is on the critical path. One run measured 4393ms and 9.5ms against these two; the next passed both.
+Neither number has been re-baselined, which means a red run of either is a known consequence of a
+decision rather than a new regression — a sentence a performance budget exists to make unnecessary,
+so it should not stay true.
 
 \*\*\* Not asserted because it needs a live server behind the app to have a response to paint, and
 separating the paint from the network means instrumenting from the `response-head` push rather
@@ -79,6 +86,11 @@ The first launch is discarded. It reads two hundred megabytes of Electron framew
 lands around 1300ms; every launch after it is around 550ms. The budget is a property of the app,
 not of the page cache.
 
+Re-measured at 423, 435 and 403ms after the engine host's output was piped through the main process
+and both Node processes gained `process.setSourceMapsEnabled(true)`. Neither shows: a pipe costs
+nothing until something is written to it, and source-map support is lazy — it installs a hook and
+reads a `.map` only when a stack is formatted, which on a launch that does not throw is never.
+
 It also drives the built `dist/` under the Electron binary rather than an installer's output. Those
 are the same bytes — electron-builder copies `dist/` into the bundle — and packaging inside a test
 would spend minutes producing a DMG in order to launch it once. The packaged bundle is verified by
@@ -104,23 +116,30 @@ One of the fourteen is optional, and it is the only one whose absence is the goo
 workspace that opened fast enough never drew one. So the case that reads every declared phase skips
 it, and the two causal edges it sits on are skipped with it.
 
-Measured 2563, 2742 and 3167ms over three runs. One of them, phase by phase:
+Measured 2082, 2002 and 2153ms over three runs, with the host's output piped and source maps
+enabled in both Node processes — and with the sidebar shut at launch, which ADR 034 was still in
+force for. **037 reopened it and these numbers are stale.** With the tree mounting in the first
+render again, one run measured 4393ms and failed the 4000ms budget while the next passed, so this
+row is marginal until it is re-measured and either re-baselined or won back. The phase table below
+is from the pane-shut era and is kept because the shape of it — one span dwarfing the other six — is
+what the row is actually about.
 
-| span                                                        | cost   |
-| ----------------------------------------------------------- | ------ |
-| process spawn to `main.start`, which is after `whenReady()` | 310ms  |
-| store, host registry, IPC and menu, to `main.prewarm`       | 182ms  |
-| window created, `did-finish-load`, port posted              | 240ms  |
-| port reaches the renderer                                   | 187ms  |
-| engine host's own process finishes booting                  | 175ms  |
-| **`buildCatalog`, 5000 requests**                           | 1258ms |
-| catalog crosses the port, re-index, first paint             | 31ms   |
+| span                                                               | cost   |
+| ------------------------------------------------------------------ | ------ |
+| process spawn to `main.start`, which is after `whenReady()`        | 305ms  |
+| store, diagnostics, host registry, IPC and menu, to `main.prewarm` | 46ms   |
+| window created, `did-finish-load`, port posted                     | 284ms  |
+| port reaches the renderer                                          | 133ms  |
+| engine host's own process finishes booting                         | 115ms  |
+| **`buildCatalog`, 5000 requests**                                  | 1276ms |
+| catalog crosses the port, re-index, first paint                    | 36ms   |
 
-Half of it is one call, and that call is close to its floor: read and parsed in isolation, the same
-five thousand files cost 424ms of `readFileSync` and 274ms of `parseYaml`. The engine host's boot
-and the build are already back to back, so there is nothing there to overlap either. What is left
-is the 900ms before the catalog is even asked for, which is four processes' worth of start-up and
-is the same 900ms the cold-start row spends.
+The engine host's boot overlaps the window's, so the spans do not sum to the total. Half of the
+total is one call, and that call is close to its floor: read and parsed in isolation, the same five
+thousand files cost 424ms of `readFileSync` and 274ms of `parseYaml`. The host's boot and the build
+are already back to back, so there is nothing there to overlap either. What is left is the 770ms
+before the catalog is even asked for, which is four processes' worth of start-up and is the same
+start-up the cold-start row spends.
 
 This row does not discard its first launch, and cannot: a second launch of the same workspace finds
 the engine host's catalog already built, which is the warm-switch row and not this one. So the
@@ -146,8 +165,8 @@ defensible for five thousand requests; four seconds of "No workspace open." was 
 difference between the two sentences is one phase.
 
 `renderer.skeleton-shown` closes it. The placeholder cannot appear before the port that told the
-renderer to expect a workspace — the first four spans of the breakdown above, 919ms — and is held 150ms
-behind it, so the measurement is around 1100ms and is bounded by process start-up rather than by the
+renderer to expect a workspace — the first four spans of the breakdown above, 768ms — and is held 150ms
+behind it, so the measurement is around 920ms and is bounded by process start-up rather than by the
 size of the workspace. The gate is 2000ms, which is roughly twice that, because what it defends is
 "the wait is announced before the user has decided the app is broken" and not a number: the
 start-up it is made of is already gated by the cold-start row.
