@@ -7,7 +7,7 @@
  * should be muscle memory by the third day, and asymmetry that reads as designed on a landing
  * page reads as a bug here.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, useDefaultLayout, usePanelCallbackRef } from "react-resizable-panels";
 
 import type { CatalogNode, GrepMatch } from "@preman/desktop/engine/protocol.js";
@@ -34,15 +34,18 @@ import {
 import {
   AddIcon,
   BranchIcon,
+  CollapseAllIcon,
   CollectionIcon,
   ConsoleIcon,
   EnvironmentIcon,
+  ExpandAllIcon,
   ICON_DEFAULTS,
   IconContext,
   NewFolderIcon,
   PickerIcon,
   SearchIcon,
   SettingsIcon,
+  SidebarIcon,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
@@ -105,9 +108,25 @@ const LAYOUT_ID = "preman:panes";
 const SHELL_LAYOUT_ID = "preman:shell";
 const EXCHANGE_LAYOUT_ID = "preman:exchange";
 /** Strings without units are percentages in react-resizable-panels v4. */
-const SIDEBAR_DEFAULT = "22";
+const SIDEBAR_OPEN = "22";
 const SIDEBAR_MIN = "14";
 const SIDEBAR_MAX = "40";
+/** The tree starts shut, and opening it is one click or `Cmd+B`. Decision 34. */
+const SIDEBAR_COLLAPSED = 0;
+/*
+ * Both halves of the toggle's name, hoisted because `perf.app.test.ts` selects the button by the
+ * shut half. The shortcut is in the name rather than only in a tooltip: with no toggle inside the
+ * pane, this button is the only thing on screen that can teach `Cmd+B`.
+ */
+const SIDEBAR_SHOW_LABEL = "Show the sidebar (Cmd+B)";
+const SIDEBAR_HIDE_LABEL = "Hide the sidebar (Cmd+B)";
+/**
+ * `--duration-panel`, restated because a `setTimeout` cannot read a custom property — the same
+ * bargain three modules already make with `--ease-out`. It only has to be no shorter than the
+ * token: it disarms a transition that has already finished, so erring long costs nothing and
+ * erring short would cut the slide off mid-way.
+ */
+const SIDEBAR_SLIDE_MS = 180;
 /** The drawer starts shut, and opening it is one click on the footer. */
 const CONSOLE_COLLAPSED = 0;
 const CONSOLE_OPEN = "30";
@@ -149,6 +168,7 @@ const NO_ENVIRONMENTS_YET = "No environments yet";
 const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "search", label: "Search the workspace", detail: "⌘⇧F" },
   { kind: "command", id: "variables", label: "Variables", detail: "command" },
+  { kind: "command", id: "sidebar", label: "Toggle sidebar", detail: "⌘B" },
   { kind: "command", id: "console", label: "Toggle console", detail: "command" },
   { kind: "command", id: "save", label: "Save", detail: "⌘S" },
   { kind: "command", id: "send", label: "Send", detail: "⌘↵" },
@@ -250,7 +270,33 @@ export function App(): React.JSX.Element {
     else consolePanel.collapse();
   }, [consolePanel]);
 
-  useShortcuts(setFailure, setPaletteOpen);
+  /*
+   * The sidebar is the same arrangement as the drawer above, for the same three reasons, and it
+   * starts shut for the reason in decision 34. Always mounted: the tree's scroll position and the
+   * pane's width both belong to the session, and a pane that unmounts keeps neither.
+   *
+   * `sliding` is the one thing the drawer does not have. It arms the transition in `app.css` for
+   * exactly the length of a toggle and disarms it again, because the same property is what the
+   * handle drags: left armed, every drag would lag 180ms behind the pointer and the pane would
+   * feel broken rather than animated. Decision 34.
+   */
+  const [sidebarPanel, setSidebarPanel] = usePanelCallbackRef();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sliding, setSliding] = useState(false);
+  const slideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(slideTimer.current ?? undefined), []);
+  const toggleSidebar = useCallback(() => {
+    if (sidebarPanel === null) return;
+    clearTimeout(slideTimer.current ?? undefined);
+    setSliding(true);
+    slideTimer.current = setTimeout(() => {
+      setSliding(false);
+    }, SIDEBAR_SLIDE_MS);
+    if (sidebarPanel.isCollapsed()) sidebarPanel.resize(SIDEBAR_OPEN);
+    else sidebarPanel.collapse();
+  }, [sidebarPanel]);
+
+  useShortcuts(setFailure, setPaletteOpen, toggleSidebar);
 
   const runCommand = useCallback(
     (id: string) => {
@@ -260,6 +306,9 @@ export function App(): React.JSX.Element {
           return;
         case "variables":
           useOverlayStore.getState().showVariables();
+          return;
+        case "sidebar":
+          toggleSidebar();
           return;
         case "console":
           toggleConsole();
@@ -287,7 +336,7 @@ export function App(): React.JSX.Element {
           return;
       }
     },
-    [showCreateWorkspace, showMigrate, toggleConsole],
+    [showCreateWorkspace, showMigrate, toggleConsole, toggleSidebar],
   );
 
   return (
@@ -317,10 +366,19 @@ export function App(): React.JSX.Element {
                 >
                   <Panel
                     id={SIDEBAR_ID}
-                    defaultSize={SIDEBAR_DEFAULT}
+                    collapsible
+                    collapsedSize={SIDEBAR_COLLAPSED}
+                    defaultSize={SIDEBAR_COLLAPSED}
                     minSize={SIDEBAR_MIN}
                     maxSize={SIDEBAR_MAX}
                     className="flex min-w-0 flex-col bg-panel"
+                    // Lands on the library's own sized element, which is the parent of `className`
+                    // and the only node whose `flex-grow` is the pane's width. `app.css` reads it.
+                    data-sliding={sliding || undefined}
+                    onResize={(size) => {
+                      setSidebarOpen(size.inPixels > SIDEBAR_COLLAPSED);
+                    }}
+                    panelRef={setSidebarPanel}
                   >
                     <WorkspaceTree onAsk={setAsk} onFail={setFailure} />
                   </Panel>
@@ -346,7 +404,12 @@ export function App(): React.JSX.Element {
                 <ConsoleDrawer onClose={toggleConsole} />
               </Panel>
             </Group>
-            <StatusBar consoleOpen={consoleOpen} onToggleConsole={toggleConsole} />
+            <StatusBar
+              consoleOpen={consoleOpen}
+              onToggleConsole={toggleConsole}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={toggleSidebar}
+            />
           </div>
           <AskDialog
             ask={ask}
@@ -372,7 +435,11 @@ export function App(): React.JSX.Element {
  * that check. A `Cmd+K` that did nothing because no file happened to be open would be the kind
  * of shortcut people stop pressing.
  */
-function useShortcuts(onFail: (failure: Failure | null) => void, onPalette: (open: boolean) => void): void {
+function useShortcuts(
+  onFail: (failure: Failure | null) => void,
+  onPalette: (open: boolean) => void,
+  onToggleSidebar: () => void,
+): void {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (!event.metaKey && !event.ctrlKey) return;
@@ -390,6 +457,14 @@ function useShortcuts(onFail: (failure: Failure | null) => void, onPalette: (ope
       if (event.shiftKey && key === "f") {
         event.preventDefault();
         useSearchStore.getState().show();
+        return;
+      }
+      // `Cmd+B` is the sidebar toggle in every editor this app's users already have open, and it
+      // is bound before the tab gate below because the whole point of it is reaching the tree
+      // when nothing is open yet.
+      if (key === "b") {
+        event.preventDefault();
+        onToggleSidebar();
         return;
       }
       // The platform shortcut for preferences on both platforms this ships to. Bound here as well
@@ -418,7 +493,7 @@ function useShortcuts(onFail: (failure: Failure | null) => void, onPalette: (ope
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [onFail, onPalette]);
+  }, [onFail, onPalette, onToggleSidebar]);
 }
 
 /**
@@ -768,6 +843,7 @@ function WorkspaceTree({
   readonly onFail: Fail;
 }): React.JSX.Element {
   const root = useCatalogStore((state) => state.root);
+  const fold = useCatalogStore((state) => state.fold);
   const searching = useSearchStore((state) => state.showing);
   const toggleSearch = useSearchStore((state) => state.toggle);
 
@@ -786,6 +862,24 @@ function WorkspaceTree({
         {/* Sentence case. Uppercase wide-tracking labels are a decoration this pane has not earned. */}
         <span className="text-xs font-medium text-ink-dim">{searching ? "Search" : "Collections"}</span>
         <div className="flex-1" />
+        {/*
+          One button and not two, because this row is 26px controls inside a pane that can be 14%
+          of the window, and because the pair would spend half its width on the press nobody makes.
+          Which press it is comes from the tree: it closes until everything is closed, then opens.
+          Absent rather than disabled when the workspace has no collection yet - there is no fold
+          to grey out, and the empty tree beside it is already saying so.
+        */}
+        {fold !== null && (
+          <IconButton
+            label={fold === "collapse" ? "Collapse all" : "Expand all"}
+            disabled={searching}
+            onClick={() => {
+              useCatalogStore.getState().setAllCollapsed(fold === "collapse");
+            }}
+          >
+            {fold === "collapse" ? <CollapseAllIcon /> : <ExpandAllIcon />}
+          </IconButton>
+        )}
         <IconButton label="Search (Cmd+Shift+F)" active={searching} disabled={root === null} onClick={toggleSearch}>
           <SearchIcon />
         </IconButton>
@@ -889,21 +983,34 @@ function deleteWarning(node: CatalogNode): string {
 }
 
 /**
- * The one strip of chrome along the bottom. It exists for the console toggle: a drawer with no
+ * The one strip of chrome along the bottom. It exists for the two pane toggles: a pane with no
  * visible handle is a feature nobody finds, and the footer is where every tool in this family
- * puts it.
+ * puts them. Each sits in the corner nearest the pane it opens - the sidebar's on the left, the
+ * console's on the right - so the strip reads as the edges of the window rather than as a row of
+ * buttons.
  */
 function StatusBar({
   consoleOpen,
   onToggleConsole,
+  sidebarOpen,
+  onToggleSidebar,
 }: {
   readonly consoleOpen: boolean;
   readonly onToggleConsole: () => void;
+  readonly sidebarOpen: boolean;
+  readonly onToggleSidebar: () => void;
 }): React.JSX.Element {
   const lines = useRunsStore((state) => state.console.length + state.sideRequests.length);
   const branch = useCatalogStore((state) => state.branch);
   return (
     <div className="flex h-tab shrink-0 items-center gap-2 border-t border-line bg-panel px-2">
+      <IconButton
+        label={sidebarOpen ? SIDEBAR_HIDE_LABEL : SIDEBAR_SHOW_LABEL}
+        active={sidebarOpen}
+        onClick={onToggleSidebar}
+      >
+        <SidebarIcon />
+      </IconButton>
       {/*
         The branch, because the tree's marks are meaningless without it: an `M` on every row is
         alarming until you notice you are on a branch where that is expected. Absent rather than

@@ -42,6 +42,7 @@ The CLI's own design predates the practice.
 | [031](031-an-authored-body-is-re-indented-not-reserialised.md)      | An authored body is re-indented, not reserialised                      |
 | [032](032-the-linux-watcher-is-partial-and-said-so.md)              | The Linux watcher is partial, and says so in prose rather than in code |
 | [033](033-migrating-from-postman-cloud.md)                          | Migration reads Postman's own private API, with Postman's own token    |
+| [034](034-the-sidebar-starts-shut.md)                               | The sidebar starts shut                                                |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -99,5 +100,16 @@ README's first paragraph. It says in its own consequences that it will break wit
 the point of writing it down: the next reader will find a broken feature and needs to know it was
 built that way knowingly, and where to look. It also applies 029's argument to a second process, and
 declines to invent the `.proto` that 006 forbids inventing.
+
+034 is the first record to give something back rather than add something, and the first whose whole
+cost is discoverability. It reverses no earlier record — 007 put the tree on the left and it is still
+on the left — but it does answer 007 on a question 007 did not ask, which is whether the pane should
+be there before you have asked for it. It takes the console drawer's arrangement wholesale, down to
+sharing 024's footer with it, and it is the second time the perf suite has had to be told what the
+app now looks like at launch. It is also the first record to amend the motion rules rather than obey
+them: a horizontally collapsing pane has no transform that expresses it, so it tweens `flex-grow` and
+says in its own text why 017's argument survives that — the spend is one pane for 180ms on an
+explicit gesture, which is the test a progress fill fails. The fence moved with it, since the one
+that existed read components and would never have seen a rule in `app.css`.
 
 `TEMPLATE.md` is the shape of a new one.

@@ -11,6 +11,10 @@
  */
 export {
   ArrowClockwise as RefreshIcon,
+  // The two halves of one button. Vertical because that is the axis a tree folds along: the arrows
+  // meet where the rows are about to close up, and part where they are about to make room.
+  ArrowsInLineVertical as CollapseAllIcon,
+  ArrowsOutLineVertical as ExpandAllIcon,
   ArrowSquareOut as RevealIcon,
   BracketsCurly as FormatIcon,
   Broom as ClearIcon,
@@ -45,6 +49,9 @@ export {
   PlayCircle as RunnerIcon,
   Plus as AddIcon,
   Prohibit as UnsupportedIcon,
+  // The pane itself, drawn as a pane. The toggle is the only thing on screen naming the sidebar
+  // while the sidebar is gone, so it has to be the noun and not a direction.
+  SidebarSimple as SidebarIcon,
   Sliders as SettingsIcon,
   Stack as CollectionIcon,
   Stop as CancelIcon,

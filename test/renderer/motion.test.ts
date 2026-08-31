@@ -54,7 +54,16 @@ const EASE_IN = /\bease-in\b(?!-)/;
  * design system rules out. Not `height`: the console's call detail opens by height and is named in
  * that document as the one exception, so a rule that caught it would be a rule against the docs.
  */
-const LAYOUT_TWEEN = /\btransition-all\b|\btransition-\[[^\]]*\b(?:width|top|left|all)\b/;
+const LAYOUT_TWEEN = /\btransition-\[[^\]]*\b(?:width|top|left|all)\b|\btransition-all\b/;
+/**
+ * The same rule against the stylesheet, which the scan above cannot see: it reads `.tsx`, so a
+ * `transition: width` written in `app.css` would have gone through unremarked. `height` is left out
+ * on purpose — `max-height` would trip a word boundary, and the one height animation in the app is
+ * the console's call detail, which is Motion and not CSS.
+ */
+const LAYOUT_TWEEN_CSS = /transition:[^;}]*\b(?:width|top|left|flex-grow|all)\b[^;}]*/g;
+/** The exception `docs/design-system.md` names, spelled exactly as the rule that is allowed to be it. */
+const SIDEBAR_SLIDE = "transition: flex-grow var(--duration-panel) var(--ease-drawer)";
 const MOTION_CURVE = /ease:\s*\[([^\]]+)\]/g;
 const CSS_CURVE = /cubic-bezier\(([^)]+)\)/g;
 
@@ -209,6 +218,19 @@ describe("the motion tokens", () => {
       .map((source) => source.path);
 
     expect(offenders).toEqual([]);
+  });
+
+  /*
+   * And the one place the rule is broken, held to being exactly one place. A horizontally
+   * collapsing pane has no transform that expresses it — translate and it covers the editor, scale
+   * and the text distorts — so decision 34 spends layout on it and bounds the spend: one pane,
+   * 180ms, armed only for a toggle. This case is what stops the second one being written by
+   * pointing at the first.
+   */
+  it("givenAppCss_whenParsed_thenTheOnlyLayoutTweenIsTheSidebarSlide", () => {
+    const tweens = [...APP_CSS.replaceAll(CSS_COMMENT, "").matchAll(LAYOUT_TWEEN_CSS)].map(([rule]) => rule.trim());
+
+    expect(tweens).toEqual([SIDEBAR_SLIDE]);
   });
 });
 

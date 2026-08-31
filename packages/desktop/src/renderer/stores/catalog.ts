@@ -17,6 +17,7 @@ import {
   PHASES,
   type Catalog,
   type CatalogNode,
+  type CatalogNodeKind,
   type GitFileStatus,
   type GitStatus,
   type SnapshotEnvironment,
@@ -29,6 +30,11 @@ const NO_SELECTION = null;
 const FIRST_REVISION = 0;
 /** Sentinel for "not inside a collapsed subtree". Depths are >= 0, so -1 cannot collide. */
 const NOT_HIDDEN = -1;
+/** A workspace with no collection in it: there is no fold to offer, not a fold that does nothing. */
+const NOTHING_TO_FOLD = null;
+
+/** What one press of a fold-everything control would do to the whole tree. */
+export type TreeFold = "collapse" | "expand" | null;
 
 /**
  * Which rows the sidebar paints, in order.
@@ -48,6 +54,39 @@ function computeVisible(nodes: readonly CatalogNode[], collapsed: ReadonlySet<st
   return visible;
 }
 
+/** The kinds that have a disclosure at all. A request is a leaf and can be neither folded nor not. */
+const GROUP_KINDS: ReadonlySet<CatalogNodeKind> = new Set<CatalogNodeKind>(["collection", "folder"]);
+
+/**
+ * Which way a fold-everything control would go next, or `null` when there is nothing to fold.
+ *
+ * `expand` only once every group is already folded, which makes the button a one-way trip in the
+ * common case and keeps its meaning stable: press it with a tree half open and it closes, press it
+ * again and it opens. The alternative — flipping on "is anything folded" — reverses under you as
+ * soon as you close a single folder by hand.
+ *
+ * Derived here rather than scanned by the header for the reason at the top of this file. The scan
+ * is O(nodes), the same cost as `computeVisible` beside it, and it happens at the same four points;
+ * done in a selector it would instead run on every `select`, which is every click on a row.
+ */
+function computeFold(nodes: readonly CatalogNode[], collapsed: ReadonlySet<string>): TreeFold {
+  let groups = 0;
+  let folded = 0;
+  for (const node of nodes) {
+    if (!GROUP_KINDS.has(node.kind)) continue;
+    groups += 1;
+    if (collapsed.has(node.id)) folded += 1;
+  }
+  if (groups === 0) return NOTHING_TO_FOLD;
+  return groups === folded ? "expand" : "collapse";
+}
+
+function groupIds(nodes: readonly CatalogNode[]): Set<string> {
+  const ids = new Set<string>();
+  for (const node of nodes) if (GROUP_KINDS.has(node.kind)) ids.add(node.id);
+  return ids;
+}
+
 function indexById(nodes: readonly CatalogNode[]): Map<string, CatalogNode> {
   const byId = new Map<string, CatalogNode>();
   for (const node of nodes) byId.set(node.id, node);
@@ -61,6 +100,8 @@ export interface CatalogState {
   byId: Map<string, CatalogNode>;
   collapsed: Set<string>;
   visibleIds: string[];
+  /** What `setAllCollapsed` should be asked for next. See {@link computeFold}. */
+  fold: TreeFold;
   selectedId: string | null;
   environments: SnapshotEnvironment[];
   specs: string[];
@@ -84,6 +125,12 @@ export interface CatalogState {
   /** Restore collapse state for a workspace being reopened, before the first catalog arrives. */
   restoreCollapsed: (ids: readonly string[]) => void;
   toggle: (id: string) => void;
+  /**
+   * Fold or unfold every group at once. Unfolding clears the set outright rather than removing the
+   * ids it knows about, which also drops any left behind by a `restoreCollapsed` for a node that
+   * has since been deleted on disk.
+   */
+  setAllCollapsed: (collapse: boolean) => void;
   select: (id: string | null) => void;
   clear: () => void;
 }
@@ -97,13 +144,17 @@ const EMPTY = {
   byId: new Map<string, CatalogNode>(),
   collapsed: new Set<string>(),
   visibleIds: [],
+  fold: NOTHING_TO_FOLD,
   selectedId: NO_SELECTION,
   environments: [],
   specs: [],
   branch: null,
   gitFiles: NO_FILES,
   gitDecorations: new Map<string, GitDecoration>(),
-} satisfies Omit<CatalogState, "replace" | "applyGit" | "restoreCollapsed" | "toggle" | "select" | "clear">;
+} satisfies Omit<
+  CatalogState,
+  "replace" | "applyGit" | "restoreCollapsed" | "toggle" | "setAllCollapsed" | "select" | "clear"
+>;
 
 export const useCatalogStore = create<CatalogState>((set) => ({
   ...EMPTY,
@@ -119,6 +170,9 @@ export const useCatalogStore = create<CatalogState>((set) => ({
       nodes: catalog.nodes,
       byId: indexById(catalog.nodes),
       visibleIds: computeVisible(catalog.nodes, state.collapsed),
+      // Recomputed on a replace as well as on a fold: a workspace that gains its first collection,
+      // or loses its last, changes what the header's button is allowed to offer.
+      fold: computeFold(catalog.nodes, state.collapsed),
       environments: catalog.environments,
       specs: catalog.specs,
       // Recomputed here as well as in `applyGit`, because a node the status already mentioned may
@@ -146,7 +200,11 @@ export const useCatalogStore = create<CatalogState>((set) => ({
   restoreCollapsed(ids) {
     set((state) => {
       const collapsed = new Set(ids);
-      return { collapsed, visibleIds: computeVisible(state.nodes, collapsed) };
+      return {
+        collapsed,
+        visibleIds: computeVisible(state.nodes, collapsed),
+        fold: computeFold(state.nodes, collapsed),
+      };
     });
   },
 
@@ -155,7 +213,22 @@ export const useCatalogStore = create<CatalogState>((set) => ({
       const collapsed = new Set(state.collapsed);
       if (collapsed.has(id)) collapsed.delete(id);
       else collapsed.add(id);
-      return { collapsed, visibleIds: computeVisible(state.nodes, collapsed) };
+      return {
+        collapsed,
+        visibleIds: computeVisible(state.nodes, collapsed),
+        fold: computeFold(state.nodes, collapsed),
+      };
+    });
+  },
+
+  setAllCollapsed(collapse) {
+    set((state) => {
+      const collapsed = collapse ? groupIds(state.nodes) : new Set<string>();
+      return {
+        collapsed,
+        visibleIds: computeVisible(state.nodes, collapsed),
+        fold: computeFold(state.nodes, collapsed),
+      };
     });
   },
 

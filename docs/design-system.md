@@ -467,13 +467,27 @@ What actually animates:
 - **Sidebar rows, on a folder toggle.** Each row is placed by `translateY` at `index * rowHeight`, so
   opening or closing a folder slides everything below it. The offset is absolute, which is why this
   never runs on a scroll. Position a row with `top` and the slide silently stops happening.
+- **The sidebar itself, opening and shutting.** `flex-grow` on `[data-panel][data-sliding]` at
+  `--duration-panel` on `--ease-drawer`. The one width-ish animation in the app, and the only rule in
+  `app.css` allowed to tween a layout property — see the paragraph below and decision 34. The
+  `data-sliding` half is not optional: the handle drags the same property, and a standing transition
+  would put the pane 180ms behind the pointer.
 
-Everything on that list but the last animates `opacity`, `transform` or colour, because decision 17's
-budgets are blocking-time medians and motion is mostly only affordable as compositor work. The
-console detail is the exception and is allowed to be one: it is inside a drawer that carries no
-budget, and a disclosure that opens by fading reads as a different gesture than one that opens.
-`width`, `top` and `all` still animate nowhere — and `top` is now load-bearing rather than a
-preference, since it is the one property that would turn the sidebar's slide back off.
+Everything on that list but the last two animates `opacity`, `transform` or colour, because decision
+17's budgets are blocking-time medians and motion is mostly only affordable as compositor work. The
+console detail is one exception and is allowed to be one: it is inside a drawer that carries no
+budget, and a disclosure that opens by fading reads as a different gesture than one that opens. The
+sidebar is the other, and is the harder case, because a horizontally collapsing pane has no
+transform that expresses it — translate it and it covers the editor, scale it and the text distorts,
+and either way the editor beside it still has to hand the width back. What makes it affordable is
+that it is bounded: one pane, 180ms, on a gesture with nothing else in flight. That is the test to
+apply to the next one, and it is the test a progress fill fails, which is why `Progress` still uses
+`scaleX`.
+
+So `width`, `top` and `all` animate nowhere, and `flex-grow` animates in exactly one rule. `top` is
+load-bearing rather than a preference, since it is the one property that would turn the sidebar rows'
+slide back off. `test/renderer/motion.test.ts` asserts both halves: no layout tween in any component,
+and exactly one in the stylesheet.
 
 ## What this system does not have
 

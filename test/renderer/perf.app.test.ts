@@ -70,6 +70,17 @@ const ELECTRON_BINARY = join(DESKTOP_ROOT, "node_modules/electron/dist/Electron.
 
 /** A sidebar row. Every selector this file depends on is an ARIA role or a behaviour, not a class. */
 const ROW_SELECTOR = '[role="treeitem"]';
+/**
+ * The footer's sidebar toggle. Selected on the shut half of its name, which is also what makes it
+ * unambiguous: the sidebar keeps a close button of its own, and that one only ever says "Hide".
+ *
+ * The pane starts collapsed under decision 34, and a collapsed pane is zero pixels wide, so every
+ * row below it is present and invisible. Opening it is therefore part of launching, not part of a
+ * test. It costs the start-up row nothing measurable: the button paints with the first frame,
+ * which is already on the critical path to the first row, so the click overlaps the engine's
+ * catalog build rather than following it.
+ */
+const SIDEBAR_TOGGLE_SELECTOR = 'button[aria-label="Show the sidebar (Cmd+B)"]';
 /** A request row: only groups carry `aria-expanded`, so "a leaf of the tree" is the whole test. */
 const REQUEST_ROW_SELECTOR = '[role="treeitem"]:not([aria-expanded])';
 /** Named, because the request editor's own section triggers are `role="tab"` as well. */
@@ -331,6 +342,7 @@ async function launch(root: string): Promise<LaunchedApp> {
     args: [MAIN_ENTRY, `--user-data-dir=${userData}`],
   });
   const page = await app.firstWindow();
+  await page.click(SIDEBAR_TOGGLE_SELECTOR, { timeout: LAUNCH_TIMEOUT_MS });
   await page.waitForSelector(ROW_SELECTOR, { timeout: LAUNCH_TIMEOUT_MS });
   // Read before anything else: every further round trip would be charged to start-up.
   const interactiveAt = await page.evaluate(() => Date.now());

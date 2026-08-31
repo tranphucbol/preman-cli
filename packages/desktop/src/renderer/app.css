@@ -377,4 +377,21 @@
       opacity: 0;
     }
   }
+
+  /* The sidebar opening and shutting, and the one layout property this app tweens on purpose.
+   *
+   * It has to be layout. A pane that collapses horizontally has no transform that expresses it:
+   * translate it and it overlaps the editor, scale it and the text distorts, and the editor beside
+   * it has to give the width back either way. So this is the exception the paragraph in
+   * `docs/design-system.md` now names, and `test/renderer/motion.test.ts` allows this rule and no
+   * other. It is affordable because it is bounded: 180ms, one pane, on a gesture with nothing else
+   * happening — not the per-frame cost of a progress fill, which is why that one still uses scaleX.
+   *
+   * On `[data-panel]` because react-resizable-panels renders its own sized element as the parent
+   * of the one our `className` reaches, and `flex-grow` is where it puts the width. Armed by
+   * `data-sliding` for the length of a toggle only: the handle drags this same property, and a
+   * standing transition would put the pane 180ms behind the pointer. */
+  [data-panel][data-sliding] {
+    transition: flex-grow var(--duration-panel) var(--ease-drawer);
+  }
 }

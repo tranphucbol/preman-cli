@@ -114,6 +114,13 @@ const REQUESTS_PER_COLLECTION = 100;
 const SYNTHETIC_NODE_COUNT = COLLECTION_COUNT * REQUESTS_PER_COLLECTION;
 const ROOT_DEPTH = 0;
 const CHILD_DEPTH = 1;
+/** The first synthetic collection, and an empty folder inside it. See {@link nestedCatalog}. */
+const FIRST_COLLECTION_ID = "postman/collections/c0";
+const NESTED_FOLDER_ID = `${FIRST_COLLECTION_ID}/f0`;
+/** Every group in {@link nestedCatalog}: the fifty collections and that one folder. */
+const NESTED_GROUP_COUNT = COLLECTION_COUNT + 1;
+/** An id no node carries, for the collapse set surviving a node that left the disk. */
+const DEPARTED_ID = "postman/collections/gone";
 const FIRST_REVISION = 1;
 
 // ---------------------------------------------------------------------------------------------
@@ -313,6 +320,26 @@ function syntheticCatalog(): Catalog {
   return { root: "/ws", workspaceId: null, revision: FIRST_REVISION, nodes, environments: [], specs: [] };
 }
 
+/**
+ * The same tree with one folder in it, because "fold everything" that only folded the roots would
+ * pass every assertion a flat two-level tree can make and still leave a folder open underneath.
+ */
+function nestedCatalog(): Catalog {
+  const catalog = syntheticCatalog();
+  const nodes = [...catalog.nodes];
+  // Immediately after its parent collection: the store's one-pass visibility depends on that order.
+  nodes.splice(1, 0, {
+    id: NESTED_FOLDER_ID,
+    kind: "folder",
+    name: "f0",
+    file: `/ws/${NESTED_FOLDER_ID}`,
+    parentId: FIRST_COLLECTION_ID,
+    depth: CHILD_DEPTH,
+    order: ORDER_STEP,
+  });
+  return { ...catalog, nodes };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Suites
 // ---------------------------------------------------------------------------------------------
@@ -349,6 +376,72 @@ describe("the sidebar's row budget", () => {
     const middle = nodes[Math.floor(nodes.length / 2)];
     expect(middle).toBeDefined();
     expect(byId.get(middle?.id ?? "")).toBe(middle);
+  });
+});
+
+describe("folding the whole tree", () => {
+  beforeEach(resetStores);
+  afterEach(resetStores);
+
+  it("givenAnOpenTree_whenCollapsingAll_thenEveryGroupFoldsAndOnlyTheRootsRemain", () => {
+    useCatalogStore.getState().replace(nestedCatalog());
+    expect(useCatalogStore.getState().fold).toBe("collapse");
+
+    useCatalogStore.getState().setAllCollapsed(true);
+
+    // The nested folder is in the set even though nothing could have clicked it: it is inside a
+    // collection that is now shut, so a fold that only walked the visible rows would have missed
+    // it and left the tree half folded the moment the collection was reopened.
+    const state = useCatalogStore.getState();
+    expect(state.collapsed.size).toBe(NESTED_GROUP_COUNT);
+    expect(state.collapsed.has(NESTED_FOLDER_ID)).toBe(true);
+    expect(state.visibleIds).toHaveLength(COLLECTION_COUNT);
+    expect(state.fold).toBe("expand");
+  });
+
+  it("givenAFoldedTree_whenExpandingAll_thenEveryRowIsListedAgain", () => {
+    const catalog = nestedCatalog();
+    useCatalogStore.getState().replace(catalog);
+    useCatalogStore.getState().setAllCollapsed(true);
+
+    useCatalogStore.getState().setAllCollapsed(false);
+
+    const state = useCatalogStore.getState();
+    expect(state.collapsed.size).toBe(0);
+    expect(state.visibleIds).toHaveLength(catalog.nodes.length);
+    expect(state.fold).toBe("collapse");
+  });
+
+  /*
+   * The rule the button's label depends on. Folding one group by hand must not turn the control
+   * into "expand all", or the common press starts reversing under the pointer.
+   */
+  it("givenOneFoldedGroup_whenAskedWhichWay_thenItStillOffersToCollapse", () => {
+    useCatalogStore.getState().replace(nestedCatalog());
+
+    useCatalogStore.getState().toggle(FIRST_COLLECTION_ID);
+
+    expect(useCatalogStore.getState().fold).toBe("collapse");
+  });
+
+  it("givenAWorkspaceWithNoCollections_whenReplaced_thenThereIsNoFoldToOffer", () => {
+    useCatalogStore.getState().replace({ ...syntheticCatalog(), nodes: [] });
+
+    expect(useCatalogStore.getState().fold).toBeNull();
+  });
+
+  /*
+   * A restored session can name a node that has since been deleted on disk, and nothing prunes the
+   * set on a replace. Expanding clears it outright rather than subtracting the ids it knows about,
+   * so the stale entry leaves with the rest instead of being persisted forever.
+   */
+  it("givenACollapsedIdThatNoLongerExists_whenExpandingAll_thenTheSetIsCleared", () => {
+    useCatalogStore.getState().replace(nestedCatalog());
+    useCatalogStore.getState().restoreCollapsed([FIRST_COLLECTION_ID, DEPARTED_ID]);
+
+    useCatalogStore.getState().setAllCollapsed(false);
+
+    expect(useCatalogStore.getState().collapsed.size).toBe(0);
   });
 });
 
