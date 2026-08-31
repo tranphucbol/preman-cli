@@ -131,6 +131,36 @@ describe("editRequestFile", () => {
     expect(readFileSync(file, "utf8")).toContain("X-Added:");
   });
 
+  // The pair grid writes the whole list when a row appears, then addresses that row's cell by
+  // index on the next keystroke. Both edits arrive in one batch, so the second has to be able to
+  // descend into what the first created; unwrapped, it met a raw JS array and `yaml` threw
+  // `Expected YAML collection at queryParams`.
+  it("givenListCreatedByEarlierEdit_whenLaterEditDescendsIntoIt_thenBothApply", async () => {
+    const file = writeCommentedRequest();
+
+    await editRequestFile(file, [
+      { path: ["queryParams"], value: [{ key: "hehe", value: "" }] },
+      { path: ["queryParams", 0, "value"], value: "hoho" },
+    ]);
+    const after = readFileSync(file, "utf8");
+
+    expect(after).toContain("- key: hehe");
+    expect(after).toContain("value: hoho");
+  });
+
+  it("givenMapCreatedByEarlierEdit_whenLaterEditAddsSibling_thenBothApply", async () => {
+    const file = writeCommentedRequest();
+
+    await editRequestFile(file, [
+      { path: ["body"], value: { type: "json" } },
+      { path: ["body", "content"], value: '{"a":1}' },
+    ]);
+    const after = readFileSync(file, "utf8");
+
+    expect(after).toContain("type: json");
+    expect(after).toContain('{"a":1}');
+  });
+
   it("givenUndefinedValue_whenEditRequestFile_thenKeyIsDeleted", async () => {
     const file = writeCommentedRequest();
 

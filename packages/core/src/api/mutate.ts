@@ -99,11 +99,23 @@ function validateEnvironment(file: string, doc: Document): void {
   validateAgainst(file, doc, environmentSchema);
 }
 
+/**
+ * Apply edits in order, each value wrapped as a node first.
+ *
+ * `setIn` stores whatever it is handed, so a plain JS array or object lands in the tree
+ * unwrapped. That serialises correctly, which is why passing raw values looked fine, but it
+ * is invisible to the next edit: `setIn` walks with `isCollection`, a raw array fails that
+ * test while not being `undefined` either, and `yaml` throws
+ * `Expected YAML collection at <key>` instead of descending. A batch can always reach into
+ * what an earlier edit in the same batch created - the pair grid writes the whole list when a
+ * row appears, then addresses `[field, index, "value"]` when the next cell is typed - so the
+ * wrap is not optional.
+ */
 function applyEdits(doc: Document, edits: readonly FieldEdit[]): void {
   for (const edit of edits) {
     if (edit.path.length === 0) throw usage("an edit must name a field", ["the empty path addresses the document"]);
     if (edit.value === undefined) doc.deleteIn(edit.path);
-    else doc.setIn(edit.path, edit.value);
+    else doc.setIn(edit.path, doc.createNode(edit.value));
   }
 }
 
