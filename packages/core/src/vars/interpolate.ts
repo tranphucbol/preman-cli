@@ -27,6 +27,17 @@ export interface InterpolateResult {
 }
 
 /**
+ * The dynamic values one resolution drew, in the order it drew them.
+ *
+ * Handed back to a second resolution of the same text so it draws the same ones. A request is
+ * resolved twice — once for its pre-request scripts to read, once at send time so a variable one
+ * of them set is in what goes on the wire — and without this the `{{$guid}}` a script signed
+ * would not be the `{{$guid}}` that was sent. Positional rather than by name, because two
+ * `{{$guid}}` in one body are deliberately two different guids.
+ */
+export type DynamicSamples = string[];
+
+/**
  * Substitute `{{...}}` tokens in `text`.
  *
  * Resolution is recursive — a variable whose value contains further tokens is
@@ -34,9 +45,10 @@ export interface InterpolateResult {
  * Unresolvable tokens are left verbatim and reported, so the caller can fail
  * loudly instead of sending literal braces over the wire.
  */
-export function interpolate(text: string, store: VariableStore): InterpolateResult {
+export function interpolate(text: string, store: VariableStore, samples: DynamicSamples = []): InterpolateResult {
   const missing = new Set<string>();
   const unsupported = new Set<string>();
+  let drawn = 0;
 
   const expand = (input: string, depth: number, chain: readonly string[]): string => {
     if (depth > MAX_DEPTH) {
@@ -54,7 +66,10 @@ export function interpolate(text: string, store: VariableStore): InterpolateResu
           return token;
         }
         // Evaluated per occurrence, and never re-expanded.
-        return generateDynamicValue(name);
+        const index = drawn;
+        drawn += 1;
+        samples[index] ??= generateDynamicValue(name);
+        return samples[index];
       }
 
       if (chain.includes(name)) {
@@ -74,8 +89,13 @@ export function interpolate(text: string, store: VariableStore): InterpolateResu
 }
 
 /** {@link interpolate}, throwing a single actionable error if anything is unresolved. */
-export function interpolateStrict(text: string, store: VariableStore, label: string): string {
-  const result = interpolate(text, store);
+export function interpolateStrict(
+  text: string,
+  store: VariableStore,
+  label: string,
+  samples: DynamicSamples = [],
+): string {
+  const result = interpolate(text, store, samples);
   if (result.missing.length === 0 && result.unsupported.length === 0) return result.text;
 
   const details: string[] = [];

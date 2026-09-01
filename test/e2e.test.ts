@@ -218,6 +218,100 @@ describe("preman run (end to end against a real gRPC server)", () => {
     }
   });
 
+  /**
+   * The bug this covers: `Deep Echo` names `{{trans_id}}` in its body and a script computes it,
+   * and the value that reached the wire was the one left in the environment file by the *previous*
+   * run. First run of a fresh workspace: literal braces, and a server that says invalid argument.
+   */
+  it("givenAScriptThatSetsAVariableItsOwnBodyNames_whenRun_thenTheWireHasTheScriptsValue", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const request = collectionPath(clone.root, "payment", "nested", "Deep Echo.request.yaml");
+      appendFileSync(
+        request,
+        [
+          "",
+          "scripts:",
+          "  - type: beforeInvoke",
+          "    language: text/javascript",
+          "    code: |-",
+          '      pm.environment.set("trans_id", "set-by-the-script");',
+          "      console.log(pm.request.body.raw);",
+          "",
+        ].join("\n"),
+      );
+
+      const { code } = await runCli([
+        "run",
+        "Deep Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "--json",
+      ]);
+
+      expect(code).toBe(EXIT.OK);
+      expect(received).toHaveLength(1);
+      expect(received[0]?.body.trans_id).toBe("set-by-the-script");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  /**
+   * The price of resolving twice, and why a dynamic value is drawn once and carried. A script
+   * that signs the body it was handed must be signing the body that is sent.
+   */
+  it("givenABodyWithADynamicVariable_whenResolvedTwice_thenTheScriptSawWhatWasSent", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const request = collectionPath(clone.root, "payment", "nested", "Deep Echo.request.yaml");
+      writeFileSync(
+        request,
+        readFileSync(request, "utf8").replace('"trans_id": "{{trans_id}}"', '"trans_id": "{{$guid}}"'),
+      );
+      appendFileSync(
+        request,
+        [
+          "",
+          "scripts:",
+          "  - type: beforeInvoke",
+          "    language: text/javascript",
+          "    code: |-",
+          '      pm.environment.set("mode", "SUCCEED");',
+          "      console.log(JSON.parse(pm.request.body.raw).trans_id);",
+          "",
+        ].join("\n"),
+      );
+
+      const { code, stdout } = await runCli([
+        "run",
+        "Deep Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--no-save",
+        "--json",
+      ]);
+
+      expect(code).toBe(EXIT.OK);
+      const report = JSON.parse(stdout) as { console: { text: string }[] };
+      const logged = report.console.map((line) => line.text).at(-1);
+      expect(logged).toMatch(/^[0-9a-f-]{36}$/);
+      // The script set a variable, so the body was resolved a second time - and drew the same guid.
+      expect(received[0]?.body.trans_id).toBe(logged);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
   it("givenBusinessFailure_whenRun_thenTransportIsOkButExitCodeIsThree", async () => {
     const { code, stdout } = await runCli([
       "run",

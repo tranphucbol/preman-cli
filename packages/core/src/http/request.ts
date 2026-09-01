@@ -2,6 +2,7 @@ import { PremanError } from "@preman/core/errors.js";
 import { LiveBody, LiveHttpRequest, Url } from "@preman/core/scripts/live-request.js";
 import { interpolateStrict } from "@preman/core/vars/interpolate.js";
 import type { VariableStore } from "@preman/core/vars/store.js";
+import { resolveList, resolveListAgain, Template } from "@preman/core/vars/template.js";
 import type { ResolvedAuth } from "@preman/core/workspace/inherit.js";
 import type { HttpRequest } from "@preman/core/workspace/schemas.js";
 import type { FileReader } from "@preman/core/workspace/files.js";
@@ -49,6 +50,16 @@ export interface BuiltLiveHttpRequest {
   /** Structured bodies are materialised before scripts so file selection cannot be scripted. */
   wireBody: PreparedWireBody | undefined;
   warnings: string[];
+  /**
+   * Resolve the request's own templates a second time, after the pre-request scripts have run,
+   * so a variable one of them set is in what goes on the wire. Decision 039.
+   *
+   * Headers, the raw body and urlencoded fields — the parts that are a template and nothing else.
+   * The url and a structured body are not: the first pass merges the query params and the auth
+   * block's own into one url string, and materialises a multipart body from disk, and neither can
+   * be redone from what survives here. Those still resolve once, before the scripts.
+   */
+  resolveAgain: () => void;
 }
 
 const DEFAULT_METHOD = "GET";
@@ -112,13 +123,12 @@ export function buildLiveHttpRequest(options: BuildHttpRequestOptions): BuiltLiv
   warnings.push(...resolved.warnings);
   const url = resolved.url;
 
-  const headers = dropEmptyValues(
-    normalizeProperties(request.headers, `headers in ${request.url}`).map((header) => ({
-      key: header.key,
-      value: header.disabled === true ? header.value : interpolateStrict(header.value, store, `header "${header.key}"`),
-      ...(header.disabled === undefined ? {} : { disabled: header.disabled }),
-    })),
+  const authoredHeaders = resolveList(
+    normalizeProperties(request.headers, `headers in ${request.url}`),
+    store,
+    (key) => `header "${key}"`,
   );
+  const headers = dropEmptyValues(authoredHeaders.entries);
 
   const params = normalizeProperties(request.queryParams, `queryParams in ${request.url}`).map((param) => ({
     key: param.key,
@@ -166,17 +176,13 @@ export function buildLiveHttpRequest(options: BuildHttpRequestOptions): BuiltLiv
     }
   }
   const structuredRaw = typeof structuredWire?.content === "string" ? structuredWire.content : "";
-  let raw = "";
-  if (parsedBody.mode === GRAPHQL_MODE) {
-    raw = structuredRaw;
-  } else if (parsedBody.raw.length > 0) {
-    raw = interpolateStrict(parsedBody.raw, store, "request body");
-  }
-  const urlencoded = (parsedBody.urlencoded ?? []).map(({ key, value, disabled }) => ({
-    key,
-    value: disabled === true ? value : interpolateStrict(value, store, `body field "${key}"`),
-    ...(disabled === undefined ? {} : { disabled }),
-  }));
+  // A graphql body is materialised, not templated, so it has no template to resolve again.
+  const rawTemplate =
+    parsedBody.mode === GRAPHQL_MODE || parsedBody.raw.length === 0
+      ? undefined
+      : new Template(parsedBody.raw, store, "request body");
+  const raw = parsedBody.mode === GRAPHQL_MODE ? structuredRaw : (rawTemplate?.resolved ?? "");
+  const authoredFields = resolveList(parsedBody.urlencoded ?? [], store, (key) => `body field "${key}"`);
   const live = new LiveHttpRequest({
     url: Url.parse(
       url.toString(),
@@ -184,11 +190,18 @@ export function buildLiveHttpRequest(options: BuildHttpRequestOptions): BuiltLiv
     ),
     method,
     headers,
-    body: new LiveBody(parsedBody.mode, raw, urlencoded),
+    body: new LiveBody(parsedBody.mode, raw, authoredFields.entries),
   });
 
   const wireBody = structuredWire === undefined ? undefined : { wire: structuredWire, source: live.body };
-  return { request: live, target: resolved.target, wireBody, warnings };
+  const resolveAgain = (): void => {
+    resolveListAgain(live.headers, authoredHeaders.templates, store);
+    resolveListAgain(live.body.urlencoded, authoredFields.templates, store);
+    // Assigning marks the body changed, which would discard a prepared multipart - but a
+    // prepared body is exactly the case where `rawTemplate` is undefined.
+    if (rawTemplate !== undefined) live.body.raw = rawTemplate.send(live.body.raw, store);
+  };
+  return { request: live, target: resolved.target, wireBody, warnings, resolveAgain };
 }
 
 /** Convert a possibly script-mutated request to wire values without interpolating again. */
