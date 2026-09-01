@@ -2,8 +2,12 @@
  * A bar saying how far something has got, for the one case in this app that has an answer.
  *
  * Not a control and not in the tier table: it takes no input and its height is set here rather than
- * by the caller, the same way `Skeleton` owns its own shape. It is an indicator, and there is
- * exactly one of them.
+ * by the caller, the same way `Skeleton` owns its own shape.
+ *
+ * It is an indicator, and there is exactly one indicator of a *proportion*. `ui/Sparkline.tsx` is
+ * the second indicator and it got in by not being one of these: it has no denominator, so none of
+ * the reasoning below about a ceiling that cannot be revised applies to it. The next one is held to
+ * that distinction rather than to a count. See `docs/decisions/040`.
  *
  * **`total` of `undefined` is a state, not a missing number.** A migration cannot know its own size
  * until it is over (`postman/progress.ts` in core), so the indeterminate form is the honest answer

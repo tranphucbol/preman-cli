@@ -16,6 +16,11 @@
  * was only ever underneath one: with everything in a single column, the four strings a bug report
  * asks for sat below forty-three theme cards. It shares this pane because it has nowhere better to
  * be, not because it is the same subject, and a tab is how that is said.
+ *
+ * Resources is here for the same reason and one more: a Radix tab unmounts when you leave it, and
+ * that unmount is the signal that stops the sampler in the main process. A dedicated overlay would
+ * have cost a menu item, a palette entry, a keybinding and a line of session state to obtain the
+ * same boolean. See `docs/decisions/040`.
  */
 import * as Tabs from "@radix-ui/react-tabs";
 import { useEffect, useState } from "react";
@@ -29,14 +34,17 @@ import {
 } from "@preman/desktop/renderer/appearance/fonts.js";
 import type { Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
+import { formatCpu, formatMemory, loadClass, totalOf } from "@preman/desktop/renderer/model/resources.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
+import { selectHistory, selectSample, useResourcesStore } from "@preman/desktop/renderer/stores/resources.js";
 import { switchWorkspace, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Button, Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
 import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { Sparkline } from "@preman/desktop/renderer/ui/Sparkline.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import { SHARED_PROTO_ROOT } from "@preman/desktop/engine/protocol.js";
-import type { Density, DiagnosticsInfo } from "@preman/desktop/preload/bridge.js";
+import type { Density, DiagnosticsInfo, ProcessReading } from "@preman/desktop/preload/bridge.js";
 
 /** The nine colours a card shows: the three surfaces you look at, then the six verbs you read. */
 const SWATCHES = [
@@ -83,13 +91,14 @@ const NO_OVERRIDE = null;
 
 const ESCAPE = "Escape";
 
-const SETTINGS_TABS = ["appearance", "protos", "diagnostics"] as const;
+const SETTINGS_TABS = ["appearance", "protos", "diagnostics", "resources"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 const SETTINGS_TAB_LABEL: Readonly<Record<SettingsTab, string>> = {
   appearance: "Appearance",
   protos: "Protos",
   diagnostics: "Diagnostics",
+  resources: "Resources",
 };
 
 /**
@@ -161,6 +170,12 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
 
       <Pane value="diagnostics">
         <DiagnosticsSection />
+      </Pane>
+
+      {/* Not `forceMount`, and that is the whole gate: Radix unmounts an inactive tab, the section's
+          effect tears down with it, and main stops sampling. */}
+      <Pane value="resources">
+        <ResourcesSection />
       </Pane>
     </Tabs.Root>
   );
@@ -503,6 +518,150 @@ function DiagnosticsRow({
       <dt className="w-24 shrink-0 text-2xs text-ink-faint">{term}</dt>
       <dd className="flex min-w-0 flex-1 items-center gap-2">{children}</dd>
     </div>
+  );
+}
+
+/** One second of nothing, because the first reading is discarded to make the second one honest. */
+const FIRST_READING = "Taking the first reading…";
+
+/**
+ * The sentence without which this pane generates bug reports.
+ *
+ * `docs/performance.md` has the long version: the total is roughly 372MB on a machine whose private
+ * footprint is nearer 250MB, because Chromium's working set counts the shared framework once in
+ * every process that maps it. Saying so is the alternative to subtracting an estimate nobody can
+ * audit — see `docs/decisions/040`.
+ */
+const MEMORY_CAVEAT =
+  "Working set, as Chromium reports it: the shared framework is counted once in every process that maps it, so the total is larger than the memory the app holds. Activity Monitor adds it up the same way. CPU is a percentage of one core, as Activity Monitor also reports it, so a process using two cores reads 200% and the total is a sum across processes.";
+
+/**
+ * The colour, in words.
+ *
+ * `model/resources.ts` bands CPU green through red by magnitude, which is htop's reading of the
+ * same number and not a claim that anything is wrong. Saying so is not optional: a red row that
+ * means "busy" and is read as "broken" is a bug report, and a legend is the cheapest possible fix.
+ * The total keeps the plain ink tier because it is a sum across processes — five quiet rows add up
+ * to a figure that no per-core band describes.
+ */
+const LOAD_LEGEND =
+  "The line and the CPU figure are green, amber or red by size, not by health: amber is a quarter of a core, red is most of one, and a run looks like red.";
+
+/**
+ * Shape only, no colour, for the same reason `ui/Sparkline.tsx` carries none: `cn` is a plain join
+ * and not `tailwind-merge`, so a colour here plus a colour at the call site both reach the element
+ * and the generated stylesheet's declaration order picks the winner. Three of the five cells below
+ * do override it, so every one of them names its own tier instead.
+ */
+const NUMBER_CELL_CLASS = "text-right font-mono text-2xs tabular-nums";
+const HEAD_CELL_CLASS = "text-2xs font-normal text-ink-faint";
+/** The tier the numbers that are nobody's headline read at: memory, peak, and the absent total. */
+const QUIET_CELL_CLASS = "text-ink-faint";
+const TOTAL_LABEL = "Total";
+/** A sum of two peaks taken at two different moments is not a peak. `model/resources.ts` says why. */
+const NO_TOTAL = "—";
+const NO_SERIES: readonly number[] = [];
+
+/**
+ * What the app costs, while somebody is looking.
+ *
+ * The effect is the gate. Its dependencies are the store's own action identities, which are created
+ * once, so this runs on mount and tears down on unmount and never in between — and the unmount is
+ * whichever comes first of leaving the tab and dismissing the pane. Between those two moments the
+ * main process holds a one-second interval; outside them it holds no timer at all.
+ */
+function ResourcesSection(): React.JSX.Element {
+  const sample = useResourcesStore(selectSample);
+  const history = useResourcesStore(selectHistory);
+  const apply = useResourcesStore((state) => state.apply);
+  const forget = useResourcesStore((state) => state.forget);
+
+  useEffect(() => {
+    const unsubscribe = window.preman.onResourceSample(apply);
+    window.preman.watchResources(true);
+    return () => {
+      window.preman.watchResources(false);
+      unsubscribe();
+      // Forgotten rather than left for the next open. A minute-old line drawn as though it were
+      // current is worse than an empty one, and there is no honest way to draw the gap.
+      forget();
+    };
+  }, [apply, forget]);
+
+  if (sample === null) {
+    return (
+      <Section title="Resources" hint="Sampled once a second, and only while this tab is open.">
+        <p className="text-2xs text-ink-faint">{FIRST_READING}</p>
+      </Section>
+    );
+  }
+
+  const total = totalOf(sample.processes);
+
+  return (
+    <Section title="Resources" hint="Sampled once a second, and only while this tab is open.">
+      <table className="w-full table-fixed">
+        <thead>
+          <tr className="h-row border-b border-line">
+            <th className={cn(HEAD_CELL_CLASS, "text-left")}>Process</th>
+            <th className={cn(HEAD_CELL_CLASS, "w-24 text-left")}>Last minute</th>
+            <th className={cn(HEAD_CELL_CLASS, "w-20 text-right")}>CPU</th>
+            <th className={cn(HEAD_CELL_CLASS, "w-24 text-right")}>Memory</th>
+            <th className={cn(HEAD_CELL_CLASS, "w-24 text-right")}>Peak</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sample.processes.map((process) => (
+            <ResourceRow key={process.pid} reading={process} series={history.get(process.pid) ?? NO_SERIES} />
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="h-row border-t border-line">
+            <th scope="row" className="text-left text-xs font-medium text-ink">
+              {TOTAL_LABEL}
+            </th>
+            <td />
+            <td className={cn(NUMBER_CELL_CLASS, "text-ink")}>{formatCpu(total.cpuPercent)}</td>
+            <td className={cn(NUMBER_CELL_CLASS, "text-ink")}>{formatMemory(total.memoryKb)}</td>
+            <td className={cn(NUMBER_CELL_CLASS, QUIET_CELL_CLASS)}>{NO_TOTAL}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <p className="text-2xs text-ink-faint">{LOAD_LEGEND}</p>
+      <p className="text-2xs text-ink-faint">{MEMORY_CAVEAT}</p>
+    </Section>
+  );
+}
+
+function ResourceRow({
+  reading,
+  series,
+}: {
+  readonly reading: ProcessReading;
+  readonly series: readonly number[];
+}): React.JSX.Element {
+  // One band, read once, worn by the line and by the number it traces. Two calls would be two
+  // chances for the wash and the figure beside it to disagree about which band the row is in.
+  const tone = loadClass(reading.cpuPercent);
+  return (
+    <tr className="h-row">
+      <th scope="row" className="truncate text-left text-xs font-normal text-ink">
+        {reading.label}
+      </th>
+      {/* The cell keeps its width whether or not there is a line in it, so the columns to the right
+          do not move when the first sample lands. */}
+      <td>
+        <div className="h-4 w-20">
+          <Sparkline series={series} className={tone} />
+        </div>
+      </td>
+      <td className={cn(NUMBER_CELL_CLASS, tone)}>{formatCpu(reading.cpuPercent)}</td>
+      {/* Memory stays quiet. It has no ceiling to band against — a process is not at 60% of a
+          working set — and colouring a column that cannot mean anything by it is how the columns
+          that do mean something stop being read. */}
+      <td className={cn(NUMBER_CELL_CLASS, QUIET_CELL_CLASS)}>{formatMemory(reading.memoryKb)}</td>
+      <td className={cn(NUMBER_CELL_CLASS, QUIET_CELL_CLASS)}>{formatMemory(reading.peakMemoryKb)}</td>
+    </tr>
   );
 }
 

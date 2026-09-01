@@ -48,6 +48,7 @@ The CLI's own design predates the practice.
 | [037](037-the-sidebar-starts-open-again.md)                         | The sidebar starts open again                                          |
 | [038](038-a-proto-is-declared-through-a-shared-link.md)             | A proto is declared through a shared link                              |
 | [039](039-a-request-resolves-twice-around-the-scripts.md)           | A request resolves twice, around the scripts                           |
+| [040](040-the-app-measures-itself-only-while-watched.md)            | The app measures itself, only while watched                            |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -162,5 +163,15 @@ order, one pass after the scripts, was refused on the size of the restructure an
 record so that the next reader reopens it deliberately. Its cost is stated as three fields that
 still resolve once and a duplicated key that resolves once, which is the shape of an honest partial
 fix rather than a claim of completeness.
+040 is the second record to answer 016 with an instrument rather than a number, and it is 027's
+argument moved from launch to steady state: the idle RSS row's gap between a 250MB goal and a 450MB
+gate is a per-process fact the app could never show anybody. It is also the first record whose
+central decision is when _not_ to run — the sampler holds no timer unless a pane is looking at it,
+because 017 already found 7-16ms of ambient blocking in the idle app and because the idle RSS
+assertion would have measured the sampler that motivated it. The cost is stated plainly and is the
+one thing the feature cannot do: a spike you were not watching is gone. It reports `workingSetSize`
+uncorrected for the same reason 032 fixed a comment instead of a watcher, and it is the first record
+to argue _for_ a second indicator against `Progress.tsx`'s "there is exactly one of them" — allowed
+not by exception but because that rule is about a proportion and a sparkline has no denominator.
 
 `TEMPLATE.md` is the shape of a new one.
