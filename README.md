@@ -237,6 +237,22 @@ and environments, and runs them. The CLI and the app read and write the same fil
 created in the window runs from the terminal, and a file changed by either one appears in the other
 on its next read.
 
+Every release carries a macOS **arm64** DMG on
+[the releases page](https://github.com/tranphucbol/preman-cli/releases). It is ad-hoc signed rather
+than notarized, because a Developer ID belongs to whoever ships the build and not to this repository
+([ADR 018](docs/decisions/018-what-goes-in-the-packaged-bundle.md)). macOS quarantines anything a
+browser downloaded, and Gatekeeper reports a quarantined ad-hoc-signed app as
+`"preman" is damaged and can't be opened` rather than as merely unsigned — so drag `preman.app` to
+`/Applications`, then clear the attribute the download added:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/preman.app
+```
+
+Nothing inside the app changes; only that attribute is removed. There is no Intel or universal
+build, so an Intel Mac has nothing to run yet
+([ADR 030](docs/decisions/030-ci-asserts-everything-but-the-clock.md)).
+
 It can also create an empty workspace, named from the workspace dropdown, the File menu or the
 command palette, always under `~/.local/share/preman/workspace`; `Open workspace…` remains the way
 to a workspace that already exists anywhere else.

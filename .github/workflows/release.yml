@@ -120,8 +120,14 @@ jobs:
           # the front of the repository offers.
           PRERELEASE: ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }}
         run: |
+          # `--notes` is prepended to what `--generate-notes` produces rather than replacing it, so
+          # the changelog keeps its place under one instruction: Gatekeeper calls a quarantined
+          # ad-hoc-signed app damaged (ADR 018), and the fix ships beside the file that needs it
+          # instead of waiting to be asked for in an issue. The file is the same text as the README's
+          # desktop section, in release-note voice; the checkout above is what puts it here.
           # shellcheck disable=SC2086 # deliberate: unset must vanish, not become an empty argument
-          gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag $PRERELEASE dmg/*.dmg
+          gh release create "$TAG" --title "$TAG" --generate-notes \
+            --notes "$(cat .github/release-notes-macos.md)" --verify-tag $PRERELEASE dmg/*.dmg
 
   # Last, because it is the only step here that cannot be taken back.
   npm:
