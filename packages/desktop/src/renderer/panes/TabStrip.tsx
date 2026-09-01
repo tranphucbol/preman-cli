@@ -11,12 +11,11 @@ import type { MouseEvent } from "react";
 
 import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
-import { methodClass } from "@preman/desktop/renderer/ui/method.js";
+import { GRPC_LABEL, UNSUPPORTED_LABEL, methodClass } from "@preman/desktop/renderer/ui/method.js";
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
 import { useNode } from "@preman/desktop/renderer/stores/catalog.js";
 
 const MIDDLE_BUTTON = 1;
-const UNSUPPORTED_LABEL = "n/a";
 
 /**
  * The tabs only, not the row they sit in. The row is `TabBar` in `App.tsx`, because the
@@ -85,7 +84,7 @@ function TabButton({
       }}
       className={cn(TAB_CLASS, active ? "bg-panel text-ink" : "bg-canvas text-ink-dim hover:bg-hover hover:text-ink")}
     >
-      <TabLabel nodeId={nodeId} title={tab.title} />
+      <TabLabel nodeId={nodeId} />
       <span className="truncate">{tab.title}</span>
       <CloseButton tab={tab} onClose={onClose} />
     </div>
@@ -93,24 +92,25 @@ function TabButton({
 }
 
 /**
- * The label comes from the catalog rather than the tab, so renaming a method in the editor
- * relabels its tab as soon as the file is saved and the catalog comes back.
+ * The same label the sidebar row shows, from the same catalog node, so that clicking a row and
+ * reading the tab it opened do not disagree. Reading it from the catalog rather than from the tab
+ * is also what relabels a tab as soon as its file is saved and the catalog comes back.
  *
- * A label that only repeats the title is dropped. For gRPC the label is the last segment of the
- * method path, and naming a request after the RPC it calls is the obvious thing to do, so the
- * common case would otherwise read "Echo Echo" in a strip whose whole job is telling tabs apart.
- * When the two differ the label is real information and stays.
+ * A tab is narrower than a tree row, which is what settles gRPC: `gRPC` is the whole label, and the
+ * method tail — which used to be it — is not worth the twenty characters it was truncated to. See
+ * `GRPC_LABEL`. It costs the case where two tabs are two RPCs on one service; the title tells those
+ * apart, and it is the title a tab has room for.
  */
-function TabLabel({ nodeId, title }: { readonly nodeId: string; readonly title: string }): React.JSX.Element | null {
+function TabLabel({ nodeId }: { readonly nodeId: string }): React.JSX.Element | null {
   const node = useNode(nodeId);
-  if (node?.label === undefined) return null;
-  if (node.label.toLowerCase() === title.toLowerCase()) return null;
+  if (node === undefined) return null;
   if (node.protocol === "unsupported") {
     return <span className="shrink-0 font-mono text-2xs text-ink-faint">{UNSUPPORTED_LABEL}</span>;
   }
   if (node.protocol === "grpc") {
-    return <span className="max-w-20 shrink-0 truncate font-mono text-2xs text-method-grpc">{node.label}</span>;
+    return <span className="shrink-0 font-mono text-2xs text-method-grpc">{GRPC_LABEL}</span>;
   }
+  if (node.label === undefined) return null;
   return <span className={cn("shrink-0 font-mono text-2xs uppercase", methodClass(node.label))}>{node.label}</span>;
 }
 

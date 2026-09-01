@@ -51,7 +51,7 @@ import { useOpening } from "@preman/desktop/renderer/stores/session.js";
 import { useUnsavedMark } from "@preman/desktop/renderer/stores/tabs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { SkeletonList } from "@preman/desktop/renderer/ui/Skeleton.js";
-import { methodClass } from "@preman/desktop/renderer/ui/method.js";
+import { GRPC_LABEL, UNSUPPORTED_LABEL, methodClass } from "@preman/desktop/renderer/ui/method.js";
 import {
   ContextContent,
   ContextItem,
@@ -135,9 +135,6 @@ const DROP_ANIMATION = { duration: 200, easing: "cubic-bezier(0.23, 1, 0.32, 1)"
 const DRAG_INSTRUCTIONS = "Drag a row with the pointer to move or reorder it.";
 
 const NO_OPS: readonly MutateOp[] = [];
-
-const UNSUPPORTED_LABEL = "n/a";
-const GRPC_LABEL = "gRPC";
 
 /**
  * The row's mark column, and the width reserved for it on every row.
@@ -636,11 +633,7 @@ function NodeIcon({ node, collapsed }: { readonly node: CatalogNode; readonly co
   return collapsed ? <FolderIcon className="text-ink-dim" /> : <FolderOpenIcon className="text-ink-dim" />;
 }
 
-/**
- * The verb. gRPC reads `gRPC` rather than the method tail: the tail can be any length, so it either
- * truncates to nothing useful or it widens the column for every row in the tree. The request name
- * already says which method it is, and the full path is one click away in the editor.
- */
+/** The verb, or what stands in its place. `ui/method.ts` owns both the labels and the colours. */
 function MethodLabel({ node }: { readonly node: CatalogNode }) {
   if (node.protocol === "unsupported") {
     return <span className="font-mono text-2xs text-ink-faint">{UNSUPPORTED_LABEL}</span>;

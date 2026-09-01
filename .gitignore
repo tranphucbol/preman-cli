@@ -14,3 +14,7 @@ packages/cli/LICENSE
 # Plans are working documents; only the template is tracked.
 docs/plans/*
 !docs/plans/TEMPLATE.md
+
+# Merge and pull request description drafts, written per branch by the tooling that opens them.
+# The description lives on the PR once it is created; the file is scratch.
+gdb/
