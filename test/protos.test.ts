@@ -1,4 +1,4 @@
-import { readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProtoCache } from "@preman/core/api/protos.js";
@@ -75,6 +75,21 @@ describe("proto index", () => {
 
     expect(index.methods.map((method) => method.methodPath)).toEqual([ECHO, PING]);
     expect(index.warnings.join("\n")).toContain("broken.proto");
+  });
+
+  it("givenOpenApiSpecDeclared_whenListMethods_thenItIsSkippedWithoutWarning", () => {
+    // Postman's `localResources.specs` holds every local API spec, OpenAPI included. Feeding
+    // one to proto-loader fails with `illegal token 'openapi'`, which is preman's problem
+    // and not the workspace's, so it is dropped rather than reported.
+    clone = cloneFixtureWorkspace();
+    declareSpec(clone.root, "../docs/service-openapi.yaml");
+    mkdirSync(join(clone.root, "docs"), { recursive: true });
+    writeFileSync(join(clone.root, "docs/service-openapi.yaml"), 'openapi: "3.0.0"\n');
+
+    const index = new ProtoCache(clone.root).index();
+
+    expect(index.warnings).toEqual([]);
+    expect(index.methods.map((method) => method.methodPath)).toEqual([ECHO, PING]);
   });
 
   it("givenUnchangedSpec_whenIndexedTwice_thenTheParseIsCached", () => {

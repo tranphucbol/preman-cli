@@ -58,12 +58,13 @@ const ESCAPE_ID = "../../../etc/passwd";
 /** Inside the root, so it fails on its contents rather than on the path check. */
 const MISSING_NODE_ID = "postman/Echo/no-such-request";
 /**
- * An OpenAPI document declared as a proto — the shape of the real case: a workspace whose `docs/`
- * holds one beside its protos warns on every method pick.
+ * A `.proto` that will not parse. It has to actually be a `.proto`: a non-proto entry in
+ * `localResources.specs` is skipped before it ever reaches the loader, so an OpenAPI document
+ * here would produce no warning to log.
  */
 const RESOURCES_FILE = ".postman/resources.yaml";
-const UNPARSEABLE_SPEC = "src/main/proto/echo/openapi.yaml";
-const UNPARSEABLE_SPEC_BODY = "openapi: 3.0.0\n";
+const UNPARSEABLE_SPEC = "src/main/proto/echo/unparseable.proto";
+const UNPARSEABLE_SPEC_BODY = 'syntax = "proto3"; this is not a proto;\n';
 const UNPARSEABLE_SPEC_ENTRY = `    - ../${UNPARSEABLE_SPEC}\n`;
 const ECHO_NODE_ID = "postman/collections/payment/Echo.request.yaml";
 /** The one fixture request with no `metadata` key at all, which is the shape that matters here. */
@@ -591,8 +592,8 @@ describe("the engine host protocol", () => {
 
     /**
      * A spec that will not parse reaches the renderer as `warnings`, which becomes a banner the
-     * user dismisses — and, before this, nothing else. A workspace whose `docs/` holds an OpenAPI
-     * document beside its protos warns on every pick, and the log was empty every time.
+     * user dismisses — and, before this, nothing else. The banner returns on every method pick,
+     * and the log was empty every time, so there was nowhere to read which spec was at fault.
      */
     it("givenASpecThatWillNotParse_whenMethodsListed_thenEachWarningIsLoggedAsAWarning", async () => {
       const repo = cloneFixtureWorkspace();

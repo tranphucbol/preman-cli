@@ -47,6 +47,23 @@ describe("resources", () => {
     expect(resources.includeDirs).toContain(join(FIXTURE_WS, "src/main/proto"));
   });
 
+  it("givenNonProtoSpecDeclared_whenLoaded_thenItIsNeitherASpecNorAnIncludeDir", () => {
+    const cloned = cloneFixtureWorkspace();
+    try {
+      const file = join(cloned.root, ".postman/resources.yaml");
+      writeFileSync(file, `${readFileSync(file, "utf8").trimEnd()}\n    - ../docs/service-openapi.yaml\n`);
+
+      const resources = loadResources(requireWorkspace(cloned.root));
+
+      expect(resources.specs.every((spec) => spec.endsWith(".proto"))).toBe(true);
+      // Its directory must not become an import root either, or a stray `docs/echo.proto`
+      // could win a relative import over the real one.
+      expect(resources.includeDirs).not.toContain(join(cloned.root, "docs"));
+    } finally {
+      cloned.cleanup();
+    }
+  });
+
   it("givenSpecPaths_whenDerivingIncludeDirs_thenProtoRootsComeFirst", () => {
     const root = `${sep}repo`;
     const dirs = deriveIncludeDirs(

@@ -237,7 +237,7 @@ output. Each line is timestamped and carries one of `INFO`, `WARN`, `ERROR` or `
 ```
 2026-08-31T20:36:35.613Z INFO  preman starting: 43.4.1 (electron 43.4.1, chrome 150.0.7871.224, node 24.18.1)
 2026-08-31T20:36:35.644Z INFO  preman-engine-acquiring-core: engine host started for /Users/you/repos/acquiring-core
-2026-08-31T20:36:45.283Z WARN  preman-engine-acquiring-core: proto not loaded: cannot load /Users/you/repos/acquiring-core/docs/openapi.yaml: illegal token 'openapi'
+2026-08-31T20:36:45.283Z WARN  preman-engine-acquiring-core: proto not loaded: cannot read /Users/you/repos/acquiring-core/api/proto/refund.proto: ENOENT
 ```
 
 There is nothing to turn on and nothing to filter, and it holds no traffic at all: no URL, no

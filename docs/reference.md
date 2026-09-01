@@ -233,6 +233,9 @@ gRPC schemas:
   by hand.
 - A `schema` pointing at a Postman API (`{source: "api", apiId, versionId}`) is dropped: it names
   nothing on this machine.
+- Only `.proto` entries in `localResources.specs` are read. Postman lists every local API spec there,
+  OpenAPI documents included, and those name nothing this engine can call — they are skipped without
+  a warning, and their directories are not offered as import roots.
 - A request whose `.proto` is missing still runs everything up to schema resolution and then names the
   file it wanted. Its imports must resolve too: `localResources.specs` contributes each spec's own
   directory as an include root, and a proto whose imports are rooted higher needs that root added by

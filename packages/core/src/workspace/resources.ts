@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { PremanError } from "@preman/core/errors.js";
 import { resourcesFileSchema } from "./schemas.js";
@@ -14,6 +14,19 @@ export interface Resources {
 }
 
 const PROTO_ROOT_NAMES = new Set(["proto", "protos"]);
+
+/**
+ * The only spec kind this engine can load.
+ *
+ * `localResources.specs` is Postman's list of *every* local API spec a workspace declares,
+ * and Postman's API spec feature puts OpenAPI documents in it beside the protos. Handing an
+ * `openapi.yaml` to `@grpc/proto-loader` fails with `illegal token 'openapi'`, so a real repo
+ * would open with one warning per OpenAPI file it legitimately ships. They are dropped
+ * silently rather than warned about: preman having no use for a spec is not the workspace
+ * being wrong. The cost is that a genuine `.proto` misnamed `.txt` is now invisible instead
+ * of loudly unparseable.
+ */
+const PROTO_EXTENSION = ".proto";
 
 const EMPTY_RESOURCES: Resources = { workspaceId: undefined, specs: [], includeDirs: [] };
 
@@ -38,7 +51,9 @@ export function loadResources(ws: Workspace): Resources {
 
   // Spec paths in resources.yaml are relative to the `.postman/` directory itself.
   const specBase = dirname(resourcesPath);
-  const specs = (parsed.data.localResources?.specs ?? []).map((p) => resolve(specBase, p));
+  const specs = (parsed.data.localResources?.specs ?? [])
+    .filter((p) => extname(p).toLowerCase() === PROTO_EXTENSION)
+    .map((p) => resolve(specBase, p));
 
   return {
     workspaceId: parsed.data.workspace?.id,
