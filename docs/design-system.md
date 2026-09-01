@@ -510,6 +510,31 @@ and exactly one in the stylesheet.
   the run list beside it already _is_ the progress, and `--bail` leaves a bar parked at 30% with no
   way to say why. Reach for `Progress` when the wait is long, opaque, and has a denominator that
   cannot be revised; two of those three is a count.
+- **A charting library.** `ui/Sparkline.tsx` is drawn in Settings' Resources tab and nowhere else.
+  It is the second indicator, and the first one that is not a proportion — a CPU history has no
+  denominator, which is the whole reason it is a separate primitive rather than a `Progress` whose
+  total is revised every second. What keeps it affordable is that it never tweens: a fixed
+  `viewBox`, `preserveAspectRatio="none"`, and one repaint per sample of a region the size of a
+  table cell. It is `aria-hidden`, because the number beside it is the content and the line is the
+  gloss. Decision 40 states the test a third indicator has to pass; no `d3`, `recharts` or `visx`
+  is going to pass it, because the cost of a chart here was never the arithmetic.
+
+  It also holds **no colour of its own, not even a default**. The stroke and the wash beneath it are
+  both `currentColor`, so one `text-*` class on the element paints the pair, and the pane hands it
+  the row's CPU band — `text-ok`, `text-warn` or `text-danger`, through `toneClass()` in
+  `model/response.ts` rather than through a second map. That is the whole answer to how a data
+  visualisation follows forty-three themes: it never learns a value, exactly as the rest of the
+  renderer never does. A component that takes a colour from its caller must not also carry one:
+  `cn` is a plain join and does not merge, so both classes survive onto the element and the
+  stylesheet's declaration order silently picks the winner. Two further rules are worth being
+  explicit about, because a chart is where both get broken first. It is not the accent, which is a fill exactly once per pane and belongs to the thing
+  you came there to press; a table of readings has nothing to press. And it is not the
+  `--color-method-*` family, however tempting six audited, mutually distinct hues are as per-process
+  identity colours: those tokens are keyed by verb, `methodClass()` is the one function allowed to
+  read them, and a green row that means "this process" in a tool where green means `GET` is a worse
+  failure than a monochrome table. The bands say _how big_, not _how bad_, and the legend under the
+  table says so in words — colour on a monitor that nobody explained is read as an alarm.
+
 - **Motion on the command palette, or on the open-request strip.** The palette is a 100+/day keyboard
   action and animates never, permanently. The strip needs `layout` rather than `layoutId`, on the
   interaction the 16ms budget is named after. Decision 26, as amended by plan 019, says what each

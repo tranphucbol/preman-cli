@@ -25,24 +25,25 @@ today, macOS: it finds the Electron binary at `node_modules/electron/dist/Electr
 
 ## The budget
 
-| Metric                                            | Budget          | Asserted in                      |
-| ------------------------------------------------- | --------------- | -------------------------------- |
-| cold start to interactive window                  | ≤ 800ms         | `test/renderer/perf.app.test.ts` |
-| open a 5000-request workspace, to first row       | ≤ 4000ms\*†     | `test/renderer/perf.app.test.ts` |
-| the same open, to the window saying it is opening | ≤ 2000ms        | `test/renderer/perf.app.test.ts` |
-| `buildCatalog`, 43 requests                       | ≤ 50ms          | `test/perf.test.ts`              |
-| `buildCatalog`, 1000 requests                     | ≤ 400ms         | `test/perf.test.ts`              |
-| workspace switch, host already warm               | ≤ 100ms         | `test/perf.test.ts`              |
-| console merge, 5000 rows in each of three streams | ≤ 10ms          | `test/perf.test.ts`              |
-| sidebar scroll, 5000 nodes                        | sustained 60fps | `test/renderer/perf.app.test.ts` |
-| total idle RSS, all processes, one workspace open | ≤ 250MB\*\*     | `test/renderer/perf.app.test.ts` |
-| tab switch                                        | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
-| keystroke to paint, any editor or grid            | ≤ 8ms           | `test/renderer/perf.app.test.ts` |
-| open a request tab, editor mounted                | ≤ 8ms†          | `test/renderer/perf.app.test.ts` |
-| theme switch                                      | ≤ 16ms          | `test/renderer/perf.app.test.ts` |
-| density switch                                    | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
-| longest task on main or renderer                  | ≤ 50ms          | `test/renderer/perf.app.test.ts` |
-| send to first response paint, above network time  | ≤ 30ms          | not asserted\*\*\*               |
+| Metric                                            | Budget          | Asserted in                       |
+| ------------------------------------------------- | --------------- | --------------------------------- |
+| cold start to interactive window                  | ≤ 800ms         | `test/renderer/perf.app.test.ts`  |
+| open a 5000-request workspace, to first row       | ≤ 4000ms\*†     | `test/renderer/perf.app.test.ts`  |
+| the same open, to the window saying it is opening | ≤ 2000ms        | `test/renderer/perf.app.test.ts`  |
+| `buildCatalog`, 43 requests                       | ≤ 50ms          | `test/perf.test.ts`               |
+| `buildCatalog`, 1000 requests                     | ≤ 400ms         | `test/perf.test.ts`               |
+| workspace switch, host already warm               | ≤ 100ms         | `test/perf.test.ts`               |
+| console merge, 5000 rows in each of three streams | ≤ 10ms          | `test/perf.test.ts`               |
+| sidebar scroll, 5000 nodes                        | sustained 60fps | `test/renderer/perf.app.test.ts`  |
+| total idle RSS, all processes, one workspace open | ≤ 250MB\*\*     | `test/renderer/perf.app.test.ts`  |
+| tab switch                                        | ≤ 16ms          | `test/renderer/perf.app.test.ts`  |
+| keystroke to paint, any editor or grid            | ≤ 8ms           | `test/renderer/perf.app.test.ts`  |
+| open a request tab, editor mounted                | ≤ 8ms†          | `test/renderer/perf.app.test.ts`  |
+| theme switch                                      | ≤ 16ms          | `test/renderer/perf.app.test.ts`  |
+| density switch                                    | ≤ 50ms          | `test/renderer/perf.app.test.ts`  |
+| longest task on main or renderer                  | ≤ 50ms          | `test/renderer/perf.app.test.ts`  |
+| resource sampling, Resources tab shut             | zero reads      | `test/renderer/resources.test.ts` |
+| send to first response paint, above network time  | ≤ 30ms          | not asserted\*\*\*                |
 
 \* Gated at 4000ms against a goal of 2500ms, because this is the one row that cannot discard its
 first launch: a second launch would find the catalog already built and would measure the warm
@@ -357,6 +358,28 @@ Measured idle total is about 372MB: browser 105, GPU 61, network 25, tab 100, en
 The gate is therefore set above the measured value rather than above the plan's, because a gate
 that cannot pass is not a gate. What it still catches is what the row was defending: a leak, or a
 sixth process nobody meant to spawn.
+
+Settings' Resources tab shows this same breakdown to whoever has the app open, which is why it
+repeats the double-counting caveat in prose under the table. A number that needs three paragraphs
+of explanation is a number that has to carry one sentence of it wherever it is shown, or the next
+person to read 372MB files a leak.
+
+### Resource sampling, zero reads while shut
+
+The one row here whose budget is a count rather than a duration, and the only one of the two
+halves of this file's gate that can be asserted without a clock or a window.
+
+`createResourceSampler` in `packages/desktop/src/main/resources.ts` takes its `read` as an
+argument, so the test counts calls against a fake instead of measuring them. The assertion is that
+advancing the timers by minutes after `watch(false)` produces no reads at all — not few, none.
+
+That is the whole defence of the row above. `app.getAppMetrics()` is a synchronous walk of every
+process in the tree, on the main thread, and a 1Hz version of it that ran whether or not anyone
+had the tab open would land in the longest-task row and in the idle RSS row both, in exchange for
+a readout nobody was looking at. Radix unmounts the tab's content when another tab is selected, so
+the gate is the component's own lifecycle rather than a flag somebody has to remember to clear;
+[decision 40](decisions/040-the-app-measures-itself-only-while-watched.md) says what that costs,
+which is that a spike you were not already watching is gone.
 
 ## Known headroom
 
