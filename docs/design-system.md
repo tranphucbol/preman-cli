@@ -526,7 +526,12 @@ and exactly one in the stylesheet.
   visualisation follows forty-three themes: it never learns a value, exactly as the rest of the
   renderer never does. A component that takes a colour from its caller must not also carry one:
   `cn` is a plain join and does not merge, so both classes survive onto the element and the
-  stylesheet's declaration order silently picks the winner. Two further rules are worth being
+  stylesheet's declaration order silently picks the winner. Read that as the general rule and not
+  as a note about one component, because the Resources table broke it a second time in the same
+  change: a shared cell class held `text-ink-faint`, three of the five cells added a tier or a band
+  on top, and every one of them shipped wearing two colours. It looked right, which is the danger —
+  `ok` is simply declared after `ink-faint` in the generated sheet. A shared class holds shape, and
+  each call site names its own tier. Two further rules are worth being
   explicit about, because a chart is where both get broken first. It is not the accent, which is a fill exactly once per pane and belongs to the thing
   you came there to press; a table of readings has nothing to press. And it is not the
   `--color-method-*` family, however tempting six audited, mutually distinct hues are as per-process

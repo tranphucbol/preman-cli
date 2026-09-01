@@ -547,8 +547,16 @@ const MEMORY_CAVEAT =
 const LOAD_LEGEND =
   "The line and the CPU figure are green, amber or red by size, not by health: amber is a quarter of a core, red is most of one, and a run looks like red.";
 
-const NUMBER_CELL_CLASS = "text-right font-mono text-2xs tabular-nums text-ink-faint";
+/**
+ * Shape only, no colour, for the same reason `ui/Sparkline.tsx` carries none: `cn` is a plain join
+ * and not `tailwind-merge`, so a colour here plus a colour at the call site both reach the element
+ * and the generated stylesheet's declaration order picks the winner. Three of the five cells below
+ * do override it, so every one of them names its own tier instead.
+ */
+const NUMBER_CELL_CLASS = "text-right font-mono text-2xs tabular-nums";
 const HEAD_CELL_CLASS = "text-2xs font-normal text-ink-faint";
+/** The tier the numbers that are nobody's headline read at: memory, peak, and the absent total. */
+const QUIET_CELL_CLASS = "text-ink-faint";
 const TOTAL_LABEL = "Total";
 /** A sum of two peaks taken at two different moments is not a peak. `model/resources.ts` says why. */
 const NO_TOTAL = "—";
@@ -615,7 +623,7 @@ function ResourcesSection(): React.JSX.Element {
             <td />
             <td className={cn(NUMBER_CELL_CLASS, "text-ink")}>{formatCpu(total.cpuPercent)}</td>
             <td className={cn(NUMBER_CELL_CLASS, "text-ink")}>{formatMemory(total.memoryKb)}</td>
-            <td className={NUMBER_CELL_CLASS}>{NO_TOTAL}</td>
+            <td className={cn(NUMBER_CELL_CLASS, QUIET_CELL_CLASS)}>{NO_TOTAL}</td>
           </tr>
         </tfoot>
       </table>
@@ -651,8 +659,8 @@ function ResourceRow({
       {/* Memory stays quiet. It has no ceiling to band against — a process is not at 60% of a
           working set — and colouring a column that cannot mean anything by it is how the columns
           that do mean something stop being read. */}
-      <td className={NUMBER_CELL_CLASS}>{formatMemory(reading.memoryKb)}</td>
-      <td className={NUMBER_CELL_CLASS}>{formatMemory(reading.peakMemoryKb)}</td>
+      <td className={cn(NUMBER_CELL_CLASS, QUIET_CELL_CLASS)}>{formatMemory(reading.memoryKb)}</td>
+      <td className={cn(NUMBER_CELL_CLASS, QUIET_CELL_CLASS)}>{formatMemory(reading.peakMemoryKb)}</td>
     </tr>
   );
 }

@@ -44,6 +44,8 @@ const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
 const LINE_COMMENT = /\/\/.*$/gm;
 const JSX_COMMENT = /\{\/\*[\s\S]*?\*\/\}/g;
 const NOT_FOUND = -1;
+/** The name the pane gives the ink tier its uncoloured number cells opt into. */
+const QUIET_CELL = "QUIET_CELL_CLASS";
 
 /**
  * `SERVICE_NAME_PREFIX`, spelled rather than imported: `hosts.ts` reaches for `electron` and this
@@ -604,6 +606,21 @@ describe("what the tab and the line commit to", () => {
     expect(code(SPARKLINE_SOURCE)).not.toMatch(/className=\{cn\("[^"]*text-/);
   });
 
+  it("givenTheSharedNumberCellClass_whenACellOverridesTheColour_thenTheSharedOneCarriesNone", () => {
+    // The same trap as the line above, one file over, and it was live: the cell held `text-ink-faint`
+    // and the caller added a band, so both reached the element and only the generated stylesheet's
+    // declaration order decided which won. It happened to pick the band. Reorder the tokens in
+    // `app.css` and every CPU figure in the table silently goes grey, with nothing failing.
+    const shared = between(code(PANE_SOURCE), "const NUMBER_CELL_CLASS", ";");
+
+    expect(shared).not.toContain("text-ink");
+    expect(shared).not.toMatch(/text-(ok|warn|danger|glyph)/);
+    // And every cell built from it names a tier, so nothing inherits a colour by accident.
+    for (const cell of code(PANE_SOURCE).match(/cn\(NUMBER_CELL_CLASS[^)]*\)/g) ?? []) {
+      expect(cell).toMatch(/QUIET_CELL_CLASS|"text-ink"|tone/);
+    }
+  });
+
   it("givenAResourceRow_whenDrawn_thenTheLineAndItsNumberWearOneBandReadOnce", () => {
     // Two `loadClass` calls would be two chances for the wash and the figure beside it to disagree.
     const row = between(PANE_SOURCE, "const tone = loadClass(", "</tr>");
@@ -617,11 +634,14 @@ describe("what the tab and the line commit to", () => {
     // A process is not at 60% of a working set. Colouring a column that cannot mean anything by it
     // is how the column that does mean something stops being read.
     const row = between(PANE_SOURCE, "const tone = loadClass(", "</tr>");
-    const memoryCells = row.match(/formatMemory\(reading\.\w+\)/g) ?? [];
+    // Match each cell together with the className that paints it, rather than scanning forward for
+    // the next `)}`: that found the *following* cell's attribute the moment one of them wrapped.
+    const memoryCells = row.match(/<td className=\{[^}]*\}>\s*\{formatMemory\(reading\.\w+\)\}/g) ?? [];
 
     expect(memoryCells).toHaveLength(2);
     for (const cell of memoryCells) {
-      expect(between(row, cell, ")}")).not.toContain("tone");
+      expect(cell).not.toContain("tone");
+      expect(cell).toContain(QUIET_CELL);
     }
   });
 
