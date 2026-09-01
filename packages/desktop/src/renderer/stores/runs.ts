@@ -107,9 +107,17 @@ export interface CallEntry {
   readonly itemKey: string;
 }
 
-/** A request appears once per iteration, so the iteration has to be part of the key. */
-function itemKey(nodeId: string, iteration: number): string {
-  return `${nodeId}#${String(iteration)}`;
+/**
+ * A request appears once per iteration, so the iteration has to be part of the key - and once
+ * per run, so the run does too.
+ *
+ * The run is the part that is easy to leave out and expensive to leave out. Nothing here is
+ * cleared between sends, so pressing Send twice on one request produces two console rows; if
+ * both rows named the same item, the second `request-start` would overwrite the first row's
+ * response, and one caret would open both. That is two bugs from one missing field.
+ */
+export function itemKeyFor(runId: string, nodeId: string, iteration: number): string {
+  return `${runId}\u0000${nodeId}#${String(iteration)}`;
 }
 
 /**
@@ -182,7 +190,7 @@ export const useRunsStore = create<RunsState>((set) => ({
         }
 
         case "request-start": {
-          const key = itemKey(event.nodeId, event.iteration);
+          const key = itemKeyFor(event.runId, event.nodeId, event.iteration);
           const requests = new Map(state.requests);
           requests.set(key, {
             runId: event.runId,

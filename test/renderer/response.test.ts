@@ -42,12 +42,13 @@ import {
   failureCopy,
   isCleanExit,
   mergeConsole,
+  showAllLabel,
   parseSetCookie,
   statusTone,
   testTotals,
   type ConsoleRow,
 } from "@preman/desktop/renderer/model/response.js";
-import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
+import { itemKeyFor, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 
 const MEGABYTE = 1024 * 1024;
 const HUGE_BODY_BYTES = 50 * MEGABYTE;
@@ -291,7 +292,7 @@ describe("what the response pane reads off a run", () => {
     // five-request run reads as five things rather than one flat stream.
     expect(merged().map(labelOf)).toEqual([
       "pre-request",
-      `${PING_ID}#${String(FIRST_ITERATION)}`,
+      itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION),
       "https://auth.example/token",
       "post-response",
     ]);
@@ -352,6 +353,19 @@ describe("what the response pane reads off a run", () => {
     expect(clamped.totalLines).toBe(ONE_REQUEST);
     expect(clamped.shownLines).toBe(ONE_REQUEST);
     expect(clamped.clamped).toBe(true);
+  });
+
+  /**
+   * A seventeen-line gRPC message clamped to twelve used to offer `12 of 17 lines`, which is a
+   * fact rather than an offer, and led to a pane that opens on the response.
+   */
+  it("givenAClampedBody_whenLabelled_thenTheControlNamesWhatItShows", () => {
+    const total = CONSOLE_BODY_LINES + 5;
+    const many = clampBody(Array.from({ length: total }, (_, index) => `line ${String(index)}`).join("\n"));
+    expect(showAllLabel(many)).toBe(`Show all ${String(total)} lines`);
+
+    // Nothing but characters were cut, so a line count would be a lie in both directions.
+    expect(showAllLabel(clampBody("x".repeat(CONSOLE_BODY_CHARS * 4)))).toBe("Show the whole body");
   });
 
   it("givenNoResponse_whenCallStatus_thenNullIsReturned", () => {

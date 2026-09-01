@@ -14,7 +14,7 @@
  * the store.
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { clearConsole } from "@preman/desktop/renderer/actions.js";
 import { formatBytes } from "@preman/desktop/renderer/model/body.js";
@@ -25,6 +25,7 @@ import {
   formatDuration,
   levelTone,
   mergeConsole,
+  showAllLabel,
   sideRequestStatus,
   statusTone,
   toneClass,
@@ -274,7 +275,7 @@ function CallDetail({ item, row }: { readonly item: RequestRun; readonly row: Ex
   return (
     <div className="flex flex-col gap-1.5 pt-0.5 pb-2 pl-5">
       {sent !== null && <Pairs label={sentPairsLabel(sent)} pairs={sentPairs(sent)} />}
-      {sent !== null && <Body label="Request body" text={sentBody(sent)} onReveal={reveal} />}
+      {sent !== null && <Body label="Request body" text={sentBody(sent)} />}
       {head !== null && <Pairs label="Response headers" pairs={head.headers} />}
       {body !== null && (
         <Body
@@ -319,8 +320,17 @@ function Pairs({ label, pairs }: { readonly label: string; readonly pairs: Heade
 }
 
 /**
- * A body, clamped. The footer is the escape hatch rather than a truncation the reader has to
- * guess at: the console owns the bounded view and the response pane keeps the windowed one.
+ * A body, clamped to an opening view the reader can undo.
+ *
+ * Two different things are being withheld here and they used to be spelled as one. The clamp is
+ * the console's own choice, made so a 5,000-line row cannot own the drawer, and it is undone in
+ * place - the reader asked for those lines, they are already in this process, and sending them to
+ * another pane to read seventeen lines of a request they just wrote is a detour. The truncation is
+ * the engine's: `BODY_RETENTION` means the preview is all that arrived, so no amount of pressing
+ * here produces the rest, and only that case is worth handing to the windowed viewer.
+ *
+ * Which is why `onReveal` is optional. A request body is never truncated - preman composed it -
+ * so it has nowhere to send the reader and does not pretend to.
  */
 function Body({
   label,
@@ -333,8 +343,9 @@ function Body({
   readonly text: string;
   readonly bytes?: number;
   readonly truncated?: boolean;
-  readonly onReveal: () => void;
+  readonly onReveal?: () => void;
 }) {
+  const [whole, setWhole] = useState(false);
   const clamped = clampBody(text);
   if (clamped.totalLines === NO_PAIRS) return null;
   return (
@@ -343,12 +354,26 @@ function Body({
         {label}
         {bytes !== undefined && <span className="text-ink-faint"> · {formatBytes(bytes)}</span>}
       </h3>
-      <pre className="font-mono text-2xs break-all whitespace-pre-wrap text-ink">{clamped.text}</pre>
+      <pre className="font-mono text-2xs break-all whitespace-pre-wrap text-ink">{whole ? text : clamped.text}</pre>
       {clamped.clamped && (
-        <button type="button" onClick={onReveal} className="text-2xs text-ink-faint hover:text-ink">
-          {`${clamped.shownLines.toLocaleString()} of ${truncated ? "more than " : ""}${clamped.totalLines.toLocaleString()} lines`}
+        <button
+          type="button"
+          onClick={() => {
+            setWhole(!whole);
+          }}
+          className="block text-2xs text-ink-faint hover:text-ink"
+        >
+          {whole ? SHOW_LESS : showAllLabel(clamped)}
+        </button>
+      )}
+      {truncated && onReveal !== undefined && (
+        <button type="button" onClick={onReveal} className="block text-2xs text-ink-faint hover:text-ink">
+          {REST_IN_PANE}
         </button>
       )}
     </section>
   );
 }
+
+const SHOW_LESS = "Show less";
+const REST_IN_PANE = "The engine kept only this much · open the response pane";

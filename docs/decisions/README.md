@@ -47,6 +47,7 @@ The CLI's own design predates the practice.
 | [036](036-the-log-says-how-bad-it-was.md)                           | The log says how bad it was                                            |
 | [037](037-the-sidebar-starts-open-again.md)                         | The sidebar starts open again                                          |
 | [038](038-a-proto-is-declared-through-a-shared-link.md)             | A proto is declared through a shared link                              |
+| [039](039-a-request-resolves-twice-around-the-scripts.md)           | A request resolves twice, around the scripts                           |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -153,5 +154,13 @@ stopping at the workspace root, which 033 had already named in prose as the reas
 protos still failed, and which nothing asserted until now. The cost it states plainly is the one it
 was warned about while being chosen — a repository-local workspace stops being self-contained — and
 it keeps that cost rather than special-casing it away.
+039 is the first record about what the engine puts on the wire rather than about the app around it,
+and the first taken from a bug report rather than from a design question. It answers what 025 left
+open without contradicting it — 025 said every answer about a token comes from the engine, and said
+nothing about when the engine is asked. The interesting half is what it declined: Postman's own
+order, one pass after the scripts, was refused on the size of the restructure and named in the
+record so that the next reader reopens it deliberately. Its cost is stated as three fields that
+still resolve once and a duplicated key that resolves once, which is the shape of an honest partial
+fix rather than a claim of completeness.
 
 `TEMPLATE.md` is the shape of a new one.

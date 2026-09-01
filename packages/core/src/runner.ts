@@ -41,8 +41,8 @@ import {
 } from "./scripts/live-request.js";
 import type { Property } from "./scripts/property-list.js";
 import type { TlsCertOptions } from "./tls/certs.js";
-import { interpolateStrict } from "./vars/interpolate.js";
 import { VariableStore } from "./vars/store.js";
+import { resolveList, resolveListAgain, Template } from "./vars/template.js";
 import {
   grpcRequestSchema,
   httpRequestSchema,
@@ -87,6 +87,11 @@ const TLS_SCHEME = "grpcs";
 const PLAIN_SCHEME = "grpc";
 /** Stands in for a request body that is not text, so no viewer tries to show it. */
 const BINARY_BODY = "<binary>";
+/**
+ * The url and the method path are read before the second resolution can rescue them - one has to
+ * name a host, the other a method in a schema - so they still fail on the first.
+ */
+const STRICT_FIRST_PASS = { strict: true } as const;
 
 export type { Protocol };
 export { countTests, type TestSummary };
@@ -514,8 +519,11 @@ async function runGrpcRequest(
     protocol: "grpc",
   });
 
-  const methodPath = interpolateStrict(request.methodPath, store, "methodPath");
-  const authoredUrl = options.urlOverride ? options.urlOverride : interpolateStrict(request.url, store, "url");
+  const methodPathTemplate = new Template(request.methodPath, store, "methodPath", STRICT_FIRST_PASS);
+  // With --url the authored one is never read, so an unresolvable {{grpc_url}} must not block it.
+  const override = options.urlOverride;
+  const urlTemplate = override ? undefined : new Template(request.url, store, "url", STRICT_FIRST_PASS);
+  const authoredUrl = urlTemplate?.resolved ?? override ?? "";
   const initialTarget = resolveTarget({
     url: authoredUrl,
     workspaceRoot: workspace.root,
@@ -527,19 +535,16 @@ async function runGrpcRequest(
       ? authoredUrl
       : `${initialTarget.tls ? "grpcs" : "grpc"}://${initialTarget.authority}`;
   // Flattened first, so a map-shaped `metadata:` reaches the wire the same as the array form.
-  const metadataEntries = normalizeProperties(request.metadata, "metadata").map((item) => ({
-    key: item.key,
-    value: item.disabled === true ? item.value : interpolateStrict(item.value, store, `metadata.${item.key}`),
-    ...(item.disabled === undefined ? {} : { disabled: item.disabled }),
-  }));
-  const rawBody = request.message?.content ?? "";
-  const body = rawBody.length === 0 ? "" : interpolateStrict(rawBody, store, "message body");
+  const authored = resolveList(normalizeProperties(request.metadata, "metadata"), store, (key) => `metadata.${key}`);
+  const bodyTemplate = new Template(request.message?.content ?? "", store, "message body");
   const liveRequest = new LiveGrpcRequest({
     url: Url.parse(liveUrlText),
-    methodPath,
-    metadata: metadataEntries,
-    body: new LiveBody(undefined, body),
+    methodPath: methodPathTemplate.resolved,
+    metadata: authored.entries,
+    body: new LiveBody(undefined, bodyTemplate.resolved),
   });
+  // What the scripts are about to be handed, so anything else is theirs and stays theirs.
+  const urlAsBuilt = liveRequest.url.toString();
 
   const auth = resolveAuth(entry, request.auth);
   const authWarnings = applyGrpcAuth({ auth: auth?.auth, metadata: liveRequest.metadata, store });
@@ -564,6 +569,17 @@ async function runGrpcRequest(
 
   // 1. Pre-request scripts edit the already-resolved request in place.
   await sink.run(PRE_SCRIPT_TYPES);
+
+  // 1b. Resolve it again, now that they have had their say. A script sets a variable so the
+  // request it precedes can use it; before this, the value only reached the wire on the next
+  // run, through the environment writeback. Decision 039.
+  liveRequest.methodPath = methodPathTemplate.send(liveRequest.methodPath, store);
+  if (urlTemplate !== undefined && liveRequest.url.toString() === urlAsBuilt) {
+    const resent = urlTemplate.resend(store);
+    if (resent !== urlTemplate.resolved) liveRequest.url = Url.parse(resent);
+  }
+  resolveListAgain(liveRequest.metadata, authored.templates, store);
+  liveRequest.body.raw = bodyTemplate.send(liveRequest.body.raw, store);
 
   const sentMetadata = liveRequest.metadata
     .enabled()
@@ -728,6 +744,10 @@ async function runHttpRequest(
 
   // 1. Scripts edit the interpolated request and rendered auth directly.
   await sink.run(PRE_SCRIPT_TYPES);
+
+  // 1b. The request's own templates resolve again, so a variable a script set is in what is
+  // sent rather than in what the next run sends. Decision 039.
+  live.resolveAgain();
 
   // 2. Finalisation does not interpolate again.
   const built = finaliseHttpRequest(live.request, live.target, live.wireBody);

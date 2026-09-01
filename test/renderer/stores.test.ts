@@ -61,7 +61,7 @@ import {
 } from "@preman/desktop/renderer/persist.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
-import { CONSOLE_MAX_LINES, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
+import { CONSOLE_MAX_LINES, itemKeyFor, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import {
   applyExternalChange,
   createNewWorkspace,
@@ -114,6 +114,7 @@ const RUN_ID = "run-1";
 const ITERATION_COUNT = 2;
 const ITERATED_TOTAL = 4;
 const FIRST_ITERATION = 0;
+const SECOND_ITERATION = 1;
 /** A run has entered one iteration the moment it starts, before any request says which. */
 const FIRST_ITERATION_COUNT = 1;
 const RUN_WARNING = "no environment selected";
@@ -1216,10 +1217,15 @@ describe("what the collection runner reads off a run", () => {
     }
 
     const run = useRunsStore.getState().runs.get(RUN_ID);
-    expect(run?.items).toStrictEqual([`${PING_ID}#0`, `${PROFILE_ID}#0`, `${PING_ID}#1`, `${PROFILE_ID}#1`]);
+    expect(run?.items).toStrictEqual([
+      itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION),
+      itemKeyFor(RUN_ID, PROFILE_ID, FIRST_ITERATION),
+      itemKeyFor(RUN_ID, PING_ID, SECOND_ITERATION),
+      itemKeyFor(RUN_ID, PROFILE_ID, SECOND_ITERATION),
+    ]);
     expect(run?.iterations).toBe(ITERATION_COUNT);
     // The first item focuses itself, so a run shows a response without a click.
-    expect(useRunsStore.getState().activeItemKey).toBe(`${PING_ID}#0`);
+    expect(useRunsStore.getState().activeItemKey).toBe(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION));
   });
 
   /**
@@ -1246,11 +1252,13 @@ describe("what the collection runner reads off a run", () => {
     apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
     apply({ type: "request-start", runId: RUN_ID, nodeId: PROFILE_ID, name: "Profile", iteration: FIRST_ITERATION });
 
-    const untouchedBefore = useRunsStore.getState().requests.get(`${PING_ID}#0`);
+    const untouchedBefore = useRunsStore.getState().requests.get(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION));
     apply({ type: "request-end", runId: RUN_ID, nodeId: PROFILE_ID, exitCode: EXIT_CODES.TEST });
 
-    expect(useRunsStore.getState().requests.get(`${PING_ID}#0`)).toBe(untouchedBefore);
-    expect(useRunsStore.getState().requests.get(`${PROFILE_ID}#0`)?.exitCode).toBe(EXIT_CODES.TEST);
+    expect(useRunsStore.getState().requests.get(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION))).toBe(untouchedBefore);
+    expect(useRunsStore.getState().requests.get(itemKeyFor(RUN_ID, PROFILE_ID, FIRST_ITERATION))?.exitCode).toBe(
+      EXIT_CODES.TEST,
+    );
   });
 
   /**
@@ -1272,7 +1280,7 @@ describe("what the collection runner reads off a run", () => {
     expect(run?.done).toBe(true);
     expect(run?.cancelled).toBe(true);
     expect(run?.warnings).toStrictEqual([RUN_WARNING]);
-    expect(useRunsStore.getState().requests.get(`${PING_ID}#0`)?.status).toBe("done");
+    expect(useRunsStore.getState().requests.get(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION))?.status).toBe("done");
   });
 });
 
@@ -1317,7 +1325,7 @@ describe("what the console reads off a run", () => {
     started(PING_ID);
     apply(sent(PING_ID));
 
-    const key = `${PING_ID}#${String(FIRST_ITERATION)}`;
+    const key = itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION);
     expect(useRunsStore.getState().calls).toStrictEqual([{ runId: RUN_ID, nodeId: PING_ID, seq: 0, itemKey: key }]);
     // A reference, not a copy: the row reads the live item, which is how it repaints as the
     // response lands without the console stream being rebuilt.
@@ -1355,7 +1363,7 @@ describe("what the console reads off a run", () => {
   it("givenExpandedCall_whenToggled_thenItCollapses", () => {
     started(PING_ID);
     apply(sent(PING_ID));
-    const key = `${PING_ID}#${String(FIRST_ITERATION)}`;
+    const key = itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION);
 
     // Expansion lives in the store because the virtualizer unmounts off-screen rows, so
     // row-local state would silently collapse on scroll.
@@ -1364,6 +1372,46 @@ describe("what the console reads off a run", () => {
 
     useRunsStore.getState().toggleCall(key);
     expect(useRunsStore.getState().expandedCalls.has(key)).toBe(false);
+  });
+
+  /**
+   * Pressing Send twice is the commonest thing anyone does with this app, and until the run
+   * became part of the item key it produced two console rows that shared one item: opening
+   * either caret opened both, and both showed the second call's response.
+   */
+  it("givenTheSameRequestSentTwice_whenOneRowIsExpanded_thenTheOtherRowStaysShut", () => {
+    const secondRun = "run-2";
+    started(PING_ID);
+    apply(sent(PING_ID));
+    apply({ type: "run-start", runId: secondRun, total: ITERATED_TOTAL });
+    apply({ type: "request-start", runId: secondRun, nodeId: PING_ID, name: PING_ID, iteration: FIRST_ITERATION });
+    apply({ ...sent(PING_ID), runId: secondRun });
+
+    const first = itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION);
+    const second = itemKeyFor(secondRun, PING_ID, FIRST_ITERATION);
+    expect(useRunsStore.getState().calls.map((call) => call.itemKey)).toStrictEqual([first, second]);
+
+    useRunsStore.getState().toggleCall(second);
+    expect(useRunsStore.getState().expandedCalls.has(first)).toBe(false);
+    expect(useRunsStore.getState().expandedCalls.has(second)).toBe(true);
+  });
+
+  /** The other half of the same bug: the second send used to overwrite the first row's response. */
+  it("givenTheSameRequestSentTwice_whenTheSecondResponds_thenTheFirstRowKeepsItsOwn", () => {
+    const secondRun = "run-2";
+    started(PING_ID);
+    apply(sent(PING_ID));
+    apply({ type: "response-head", runId: RUN_ID, nodeId: PING_ID, status: 200, headers: [], timings: {} });
+    apply({ type: "request-end", runId: RUN_ID, nodeId: PING_ID, exitCode: EXIT_CODES.OK });
+
+    apply({ type: "run-start", runId: secondRun, total: ITERATED_TOTAL });
+    apply({ type: "request-start", runId: secondRun, nodeId: PING_ID, name: PING_ID, iteration: FIRST_ITERATION });
+    apply({ ...sent(PING_ID), runId: secondRun });
+    apply({ type: "response-head", runId: secondRun, nodeId: PING_ID, status: 500, headers: [], timings: {} });
+
+    const requests = useRunsStore.getState().requests;
+    expect(requests.get(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION))?.head?.status).toBe(200);
+    expect(requests.get(itemKeyFor(secondRun, PING_ID, FIRST_ITERATION))?.head?.status).toBe(500);
   });
 
   it("givenExpandedCallsAndLogs_whenConsoleCleared_thenAllThreeStreamsAreEmpty", () => {
@@ -1384,7 +1432,7 @@ describe("what the console reads off a run", () => {
         durationMs: 12,
       },
     });
-    useRunsStore.getState().toggleCall(`${PING_ID}#${String(FIRST_ITERATION)}`);
+    useRunsStore.getState().toggleCall(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION));
 
     useRunsStore.getState().clearConsole();
 

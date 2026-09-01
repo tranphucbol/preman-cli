@@ -561,6 +561,20 @@ export function clampBody(text: string): ClampedBody {
   };
 }
 
+/** Characters were cut but no whole line was, so a line count would say nothing. */
+const SHOW_WHOLE_BODY = "Show the whole body";
+
+/**
+ * What the control under a clamped body says.
+ *
+ * Names what pressing it gets you. The old `12 of 17 lines` was a statement of fact wearing a
+ * button's clothes, which is why it read as the console refusing rather than offering.
+ */
+export function showAllLabel(clamped: ClampedBody): string {
+  if (clamped.shownLines >= clamped.totalLines) return SHOW_WHOLE_BODY;
+  return `Show all ${clamped.totalLines.toLocaleString()} lines`;
+}
+
 /**
  * What a call row's status column says. Mirrors `sideRequestStatus`: a call that never got a
  * response has no code, and `0` there would read as one rather than as the absence of one.

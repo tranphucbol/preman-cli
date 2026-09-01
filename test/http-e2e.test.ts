@@ -393,6 +393,32 @@ describe("structured HTTP bodies", () => {
     }
   });
 
+  /**
+   * The same bug as the gRPC one, from the other transport. A `beforeRequest` script sets the
+   * variable its own body and header name; before the request resolved a second time, both went
+   * out holding whatever the environment file happened to have, and on a fresh workspace that was
+   * nothing at all.
+   */
+  it("givenScriptSettingAVariableItsOwnBodyNames_whenRun_thenTheWireHasTheScriptsValue", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      writeScriptedHttpRequest(ws.root, {
+        method: "POST",
+        headers: 'headers:\n  - key: x-stamp\n    value: "{{stamp}}"',
+        body: 'body:\n  type: text\n  content: \'{"stamp": "{{stamp}}"}\'',
+        script: 'pm.environment.set("stamp", "set-by-the-script");',
+      });
+
+      const { code } = await runCli(clonedArgs(ws.root, "admin/Echo Get Body"));
+
+      expect(code).toBe(EXIT.OK);
+      expect(http.received[0]?.body).toBe('{"stamp": "set-by-the-script"}');
+      expect(http.received[0]?.headers["x-stamp"]).toBe("set-by-the-script");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
   it("givenScriptReplacingFileBody_whenRun_thenScriptBodyWins", async () => {
     const ws = cloneFixtureHttpWorkspace();
     try {
