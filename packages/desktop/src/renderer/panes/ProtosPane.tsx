@@ -383,8 +383,13 @@ function LinkRow({
       >
         {detail}
       </span>
+      {/*
+       * The two states want opposite weights. On a machine that has never linked anything this is
+       * the one action that repairs every spec under the link, so it asks to be pressed. Repointing
+       * a healthy link is read by every workspace naming it, so it stays quiet and is not invited.
+       */}
       <Button
-        variant="quiet"
+        variant={missing ? "primary" : "quiet"}
         disabled={busy}
         onClick={() => {
           void onLocate(state.link);
