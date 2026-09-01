@@ -53,11 +53,13 @@ const DIAGNOSTICS_FIELDS = [
 ] as const;
 
 /**
- * Appearance holds Theme, Density and Type; Diagnostics is the other one, and is not under them.
- * Protos sits between them because where this machine resolves the shared root is neither a
- * matter of taste nor a bug report, and it is the only setting here that restarts every engine.
+ * Appearance holds Theme, Density and Type; the other three are not under them. Protos sits second
+ * because where this machine resolves the shared root is neither a matter of taste nor a bug
+ * report, and it is the only setting here that restarts every engine. Resources is last, and is a
+ * tab rather than a section for a second reason on top of that one: an inactive Radix tab is
+ * unmounted, and that unmount is what stops the sampler in main. Decision 040.
  */
-const TABS = ["appearance", "protos", "diagnostics"] as const;
+const TABS = ["appearance", "protos", "diagnostics", "resources"] as const;
 
 /** A bottom border on a trigger looks like the underline and cannot travel. `design-system.md`. */
 const HAND_ROLLED_UNDERLINE = "border-b-2 border-accent";
@@ -110,7 +112,7 @@ describe("the Settings pane's Diagnostics section", () => {
 });
 
 describe("the Settings pane's tabs", () => {
-  it("givenTheSettingsPane_whenItRenders_thenAppearanceAndDiagnosticsAreTheTwoTabs", () => {
+  it("givenTheSettingsPane_whenItRenders_thenAppearanceDiagnosticsAndResourcesAreTheTabs", () => {
     const found = SETTINGS_TABS.exec(code(SETTINGS));
     expect(found).not.toBeNull();
 
