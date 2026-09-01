@@ -90,6 +90,9 @@ const bridge: PremanBridge = {
   forgetWorkspace: (root: string) => ipcRenderer.invoke(CHANNELS.forgetWorkspace, root) as Promise<void>,
   revealInFileManager: (target: string) => ipcRenderer.invoke(CHANNELS.revealInFileManager, target) as Promise<void>,
   pickDataFile: () => ipcRenderer.invoke(CHANNELS.pickDataFile) as Promise<string | null>,
+  pickProtoFiles: () => ipcRenderer.invoke(CHANNELS.pickProtoFiles) as Promise<string[]>,
+  pickProtoFolder: () => ipcRenderer.invoke(CHANNELS.pickProtoFolder) as Promise<string | null>,
+  pickCheckout: (name: string) => ipcRenderer.invoke(CHANNELS.pickCheckout, name) as Promise<string | null>,
   saveReport: (suggestedName: string, text: string) =>
     ipcRenderer.invoke(CHANNELS.saveReport, suggestedName, text) as Promise<string | null>,
   controlWindow: (action: WindowControl) => {

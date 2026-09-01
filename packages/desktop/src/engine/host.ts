@@ -38,6 +38,7 @@ import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 import { toJunitReport, type RunReport } from "@preman/core/report/junit.js";
 import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
+import { canonicalSharedPath, sharedProtoRoot } from "@preman/core/workspace/links.js";
 import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
 import { toEngineError } from "@preman/desktop/engine/errors.js";
 import {
@@ -564,9 +565,23 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   }
 
   /**
+   * How a chosen method should be written into `schema.location`.
+   *
+   * A proto reached through a shared link is named the canonical way, because that is what
+   * the workspace declared it as and what it means on every machine. Writing the relative
+   * path instead would count `../` segments off how deep this particular checkout sits, so
+   * the same choice would produce a different file on a colleague's disk — the machine
+   * dependence the shared root exists to remove, reintroduced one request at a time
+   * (ADR 038). A proto inside the workspace keeps the relative path: it is already portable,
+   * and the arithmetic can only honestly happen from the request's own directory.
+   */
+  function locationFor(spec: string, from: string): string {
+    return canonicalSharedPath(spec, sharedProtoRoot()) ?? relative(from, spec).split(sep).join(LOCATION_SEPARATOR);
+  }
+
+  /**
    * Every method the declared protos offer, plus the `schema.location` a given request
-   * would need to reach each one. The relative path is computed from the request's own
-   * directory, which is the only place that arithmetic can honestly happen.
+   * would need to reach each one.
    */
   async function listMethods(nodeId: string | undefined): Promise<MethodChoices> {
     const index = (await ensureProtos()).index();
@@ -580,9 +595,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       requestType: method.requestType,
       responseType: method.responseType,
       streaming: method.streaming,
-      ...(from === undefined
-        ? {}
-        : { schemaLocation: relative(from, method.spec).split(sep).join(LOCATION_SEPARATOR) }),
+      ...(from === undefined ? {} : { schemaLocation: locationFor(method.spec, from) }),
     }));
     // The renderer shows these in a banner the user dismisses; the log is where they survive it.
     // A spec that will not parse is the same spec on every open, so this repeats — which is the
@@ -599,6 +612,33 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   async function messageSkeleton(methodPath: string, environment: string | null): Promise<string> {
     const tokens = new Set(readVariables(root, environment).bindings.map((binding) => binding.key));
     return (await ensureProtos()).skeleton(methodPath, tokens);
+  }
+
+  /**
+   * The module type is inferred from the loader rather than written as `typeof import(...)`,
+   * which the import-style rule forbids and which would name the specifier a second time.
+   */
+  async function specsApi() {
+    return import("@preman/core/api/specs.js");
+  }
+
+  type SpecsApi = Awaited<ReturnType<typeof specsApi>>;
+
+  /** Deferred like the rest of the send path: describing or planning specs is a setup action. */
+  async function readSpecs<T>(work: (api: SpecsApi) => T): Promise<T> {
+    return work(await specsApi());
+  }
+
+  /**
+   * Declaring a proto or moving a link changes which files the index should read and where
+   * they live, and `ProtoCache` keys its work by path and mtime — neither of which moved.
+   * Dropping the cache is the honest response: a spec change is a setup action, so paying a
+   * full reload once is cheaper than reasoning about which entries survived.
+   */
+  async function writeSpecs<T>(work: (api: SpecsApi) => T): Promise<T> {
+    const result = await readSpecs(work);
+    protos = undefined;
+    return result;
   }
 
   /** Interpolation without sending, so `{{token}}` can be shown resolved as it is typed. */
@@ -670,6 +710,23 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         return grep(request.query, request.limit);
       case "git-status":
         return readGitStatus(root);
+      case "specs":
+        return readSpecs((api) => api.describeSpecs(root));
+      case "collect-protos":
+        return readSpecs((api) => api.collectProtoFiles(request.dir));
+      case "plan-specs":
+        return readSpecs((api) => api.planSpecs(root, request.files, { overrides: request.overrides }));
+      case "plan-conversion":
+        return readSpecs((api) => api.planSpecConversion(root, { overrides: request.overrides }));
+      case "apply-specs":
+        return writeSpecs((api) => api.applySpecPlan(root, request.plan));
+      case "remove-spec":
+        return writeSpecs((api) => api.removeSpec(root, request.declared));
+      case "link-checkout":
+        return writeSpecs((api) => {
+          api.linkCheckout(request.name, request.target, { repoint: request.repoint });
+          return api.describeSpecs(root);
+        });
       case "body-head":
         return bodies.head(request.handle);
       case "body-window":

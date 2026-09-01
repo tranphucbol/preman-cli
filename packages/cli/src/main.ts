@@ -7,10 +7,12 @@ import { progressWriter } from "@preman/cli/progress.js";
 import { renderEnvironment, renderEnvironmentSet } from "@preman/cli/render/env.js";
 import { renderList } from "@preman/cli/render/list.js";
 import { renderMigration, renderWorkspaceList } from "@preman/cli/render/migrate.js";
+import { renderLinkWrite, renderSpecs } from "@preman/cli/render/protos.js";
 import { hasHumanReporter, renderReports, reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
 import { readEnvironment, writeEnvironmentValue } from "@preman/core/api/environments.js";
 import { describeWorkspace } from "@preman/core/api/inspect.js";
 import { listCloudWorkspaces, migrateCloudWorkspace } from "@preman/core/api/migrate.js";
+import { describeSpecs, linkCheckout } from "@preman/core/api/specs.js";
 import { runSelection } from "@preman/core/api/run.js";
 import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 
@@ -33,6 +35,8 @@ ${pc.bold("usage")}
   preman run <collection|folder>      run every request in it, in order
   preman env show
   preman env set <key> <value>
+  preman protos                       the declared protos and the links they need
+  preman protos link <name> <dir>     point a shared link at a local checkout
   preman migrate --list               list the cloud workspaces Postman can see
   preman migrate --workspace <id|name> --out <dir> [--dry-run]
                                       copy a Postman cloud workspace to disk
@@ -90,6 +94,7 @@ ${pc.bold("options")}
                         or must be empty
       --list            migrate only: list workspaces instead of migrating
       --dry-run         migrate only: print what would be written, write nothing
+      --repoint         protos link only: move a link that already points elsewhere
   -h, --help            show this help
       --version         print the version
 
@@ -216,6 +221,9 @@ const OPTIONS = {
   out: { type: "string" },
   list: { type: "boolean" },
   "dry-run": { type: "boolean" },
+  // `protos link` only. A shared link is read by every workspace that names it, so moving one is
+  // asked for rather than assumed; without this the refusal names both targets and stops.
+  repoint: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
 } as const;
@@ -268,6 +276,28 @@ export async function main(argv: string[]): Promise<ExitCode> {
         return EXIT.OK;
       }
       throw new PremanError(`unknown env subcommand "${sub}"`, { details: ["expected `show` or `set`"] });
+    }
+
+    // Reading is workspace-scoped, linking is machine-scoped: `link` deliberately does not need a
+    // workspace, because the machine that has to run it is usually one where nothing loads yet.
+    case "protos": {
+      const sub = rest[0] ?? "show";
+      if (sub === "show") {
+        process.stdout.write(`${renderSpecs(describeSpecs(dir), { json })}\n`);
+        return EXIT.OK;
+      }
+      if (sub === "link") {
+        const [name, target] = rest.slice(1);
+        if (name === undefined || target === undefined) {
+          throw new PremanError("usage: preman protos link <name> <path-to-checkout>", {
+            details: ["run `preman protos` to see which links are missing"],
+          });
+        }
+        const link = linkCheckout(name, target, { repoint: values.repoint === true });
+        process.stdout.write(`${renderLinkWrite(link, { json })}\n`);
+        return EXIT.OK;
+      }
+      throw new PremanError(`unknown protos subcommand "${sub}"`, { details: ["expected `show` or `link`"] });
     }
 
     case "migrate": {

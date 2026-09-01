@@ -58,6 +58,7 @@ import { MigratePane } from "@preman/desktop/renderer/panes/MigratePane.js";
 import { RequestEditor } from "@preman/desktop/renderer/panes/RequestEditor.js";
 import { ResponsePane } from "@preman/desktop/renderer/panes/ResponsePane.js";
 import { RunnerPane } from "@preman/desktop/renderer/panes/RunnerPane.js";
+import { ProtosPane } from "@preman/desktop/renderer/panes/ProtosPane.js";
 import { SearchPane } from "@preman/desktop/renderer/panes/SearchPane.js";
 import { SettingsPane } from "@preman/desktop/renderer/panes/SettingsPane.js";
 import { Sidebar } from "@preman/desktop/renderer/panes/Sidebar.js";
@@ -173,6 +174,7 @@ const NO_ENVIRONMENTS_YET = "No environments yet";
 const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "search", label: "Search the workspace", detail: "⌘⇧F" },
   { kind: "command", id: "variables", label: "Variables", detail: "command" },
+  { kind: "command", id: "protos", label: "Protos", detail: "command" },
   { kind: "command", id: "sidebar", label: "Toggle sidebar", detail: "⌘B" },
   { kind: "command", id: "console", label: "Toggle console", detail: "command" },
   { kind: "command", id: "save", label: "Save", detail: "⌘S" },
@@ -313,6 +315,9 @@ export function App(): React.JSX.Element {
           return;
         case "variables":
           useOverlayStore.getState().showVariables();
+          return;
+        case "protos":
+          useOverlayStore.getState().showProtos();
           return;
         case "sidebar":
           toggleSidebar();
@@ -1146,8 +1151,8 @@ function EditorPane({
 }
 
 /**
- * Which of the three non-file panes is up. Exhaustive on `kind`, so a fourth one is a type error
- * here rather than a blank editor area at runtime.
+ * Which of the non-file panes is up. Exhaustive on `kind`, so a new one is a type error here
+ * rather than a blank editor area at runtime.
  */
 function OverlayPane({
   overlay,
@@ -1159,6 +1164,8 @@ function OverlayPane({
   switch (overlay.kind) {
     case "variables":
       return <VariablesPane onDismiss={onDismiss} />;
+    case "protos":
+      return <ProtosPane onDismiss={onDismiss} />;
     case "runner":
       return <RunnerPane nodeId={overlay.nodeId} onDismiss={onDismiss} />;
     case "settings":

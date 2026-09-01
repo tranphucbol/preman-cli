@@ -14,8 +14,18 @@ import type { GitFileStatus, GitStatus } from "@preman/core/api/git.js";
 import type { GrepMatch, GrepResult } from "@preman/core/api/grep.js";
 import type { FieldEdit, RequestKind } from "@preman/core/api/mutate.js";
 import type { TextPreview } from "@preman/core/api/preview.js";
+import type {
+  DeclaredSpec,
+  LinkAction,
+  LinkOverride,
+  PlannedLink,
+  PlannedSpec,
+  SpecPlan,
+  SpecsView,
+} from "@preman/core/api/specs.js";
 import type { VariableBinding, VariableLayer, VariableView } from "@preman/core/api/variables.js";
 import type { ExitCode } from "@preman/core/errors.js";
+import type { SharedLink } from "@preman/core/workspace/links.js";
 import type { Scope } from "@preman/core/vars/store.js";
 
 export type {
@@ -26,6 +36,7 @@ export type {
   CatalogNode,
   CatalogNodeKind,
   CatalogProtocol,
+  DeclaredSpec,
   ExitCode,
   FailureStage,
   FieldEdit,
@@ -33,10 +44,17 @@ export type {
   GitStatus,
   GrepMatch,
   GrepResult,
+  LinkAction,
+  LinkOverride,
+  PlannedLink,
+  PlannedSpec,
   RequestKind,
   RunEvent,
   Scope,
+  SharedLink,
   SnapshotEnvironment,
+  SpecPlan,
+  SpecsView,
   TextPreview,
   VariableBinding,
   VariableLayer,
@@ -197,6 +215,26 @@ export type EngineRequest =
   | { id: number; kind: "message-skeleton"; methodPath: string; environment: string | null }
   | { id: number; kind: "grep"; query: string; limit?: number }
   | { id: number; kind: "git-status" }
+  /** Which protos this workspace declares, and which shared links they need to resolve. */
+  | { id: number; kind: "specs" }
+  /** Every `.proto` under a directory, so picking a folder is one round trip and not a walk. */
+  | { id: number; kind: "collect-protos"; dir: string }
+  /**
+   * What declaring these files would write, without writing it: the links it would create,
+   * the path each spec would get, and whether each one actually loads. Staged rather than
+   * applied because creating a link is a side effect on a directory other workspaces share.
+   */
+  | { id: number; kind: "plan-specs"; files: string[]; overrides?: Record<string, LinkOverride> }
+  /** The same, for specs already declared off a link. What the reviewable "convert all" reads. */
+  | { id: number; kind: "plan-conversion"; overrides?: Record<string, LinkOverride> }
+  | { id: number; kind: "apply-specs"; plan: SpecPlan }
+  /** Unlinks the spec from `resources.yaml`. Never deletes the link: another workspace may hold it. */
+  | { id: number; kind: "remove-spec"; declared: string }
+  /**
+   * Points a shared link at a checkout on this machine. The repair half of the design: the
+   * spec paths are already correct, they just need somewhere local to land.
+   */
+  | { id: number; kind: "link-checkout"; name: string; target: string; repoint?: boolean }
   | { id: number; kind: "body-head"; handle: string }
   | { id: number; kind: "body-window"; handle: string; offset: number; length?: number }
   | { id: number; kind: "body-search"; handle: string; query: string; limit?: number }
@@ -235,6 +273,14 @@ export interface EngineResults {
   "message-skeleton": string;
   grep: GrepResult;
   "git-status": GitStatus;
+  specs: SpecsView;
+  "collect-protos": string[];
+  "plan-specs": SpecPlan;
+  "plan-conversion": SpecPlan;
+  /** The re-read view, so applying a plan cannot leave the pane showing what it replaced. */
+  "apply-specs": SpecsView;
+  "remove-spec": SpecsView;
+  "link-checkout": SpecsView;
   "body-head": BodyHead;
   "body-window": BodyWindow;
   "body-search": BodyMatch[];
@@ -486,3 +532,31 @@ export const BODY_FORMAT_LIMIT_BYTES = 2 * 1024 * 1024;
  * `node:path`. `test/desktop.protocol.test.ts` pins it to core.
  */
 export const GROUP_DEFINITION_SUFFIX = "/.resources/definition.yaml";
+
+/**
+ * Where a declared spec path says its checkout lives.
+ *
+ * Core's (`workspace/links.ts`), duplicated here because the settings pane shows it as the
+ * placeholder under an empty override field - the value a reader needs in order to decide
+ * whether to type anything at all. `test/desktop.protocol.test.ts` pins it to core.
+ *
+ * Worth being precise about what an override does and does not change: this string is what
+ * gets *written* into `resources.yaml` on every machine, and the override only says where
+ * *this* machine resolves it. That asymmetry is the whole reason a shared root is portable
+ * at all, so a pane that offers the override has to show the constant beside it.
+ */
+export const SHARED_PROTO_ROOT = "/Users/Shared/postman-protos";
+
+/**
+ * The variable a host reads that root from.
+ *
+ * Also core's, and duplicated for a reason worth stating precisely because the obvious one turns
+ * out to be wrong. Main sets this on `process.env` before it forks anything, and it first read
+ * the name straight from `@preman/core/workspace/links.js`. That was measured, on the suspicion
+ * that 033's bundle trap had been walked into again: `dist/main/main.js` is 51.68 kB with the
+ * core import and 52.04 kB without it, so rolldown was shaking it out and there were no bytes to
+ * save. What is left is the graph rather than its weight - main reaches into core for exactly one
+ * thing, an error class, and a second reach for a string is the kind of edge that is easy to add
+ * and hard to notice. Pinned to core in the same test.
+ */
+export const SHARED_PROTO_ROOT_ENV = "PREMAN_SHARED_PROTO_ROOT";

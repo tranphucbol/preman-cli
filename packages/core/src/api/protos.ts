@@ -352,7 +352,7 @@ export class ProtoCache {
     const methods: ProtoMethod[] = [];
     const warnings: string[] = [];
     for (const spec of resources.specs) {
-      const cached = this.load(spec, resources.includeDirs);
+      const cached = this.load(spec, resources.includeDirsFor(spec));
       methods.push(...cached.methods);
       if (cached.warning !== undefined) warnings.push(cached.warning);
     }

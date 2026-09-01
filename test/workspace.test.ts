@@ -10,6 +10,7 @@ import {
   loadGlobals,
   saveEnvironmentValues,
 } from "@preman/core/workspace/environments.js";
+import { canonicalSharedPath, DEFAULT_SHARED_PROTO_ROOT, resolveSharedPath } from "@preman/core/workspace/links.js";
 import { deriveIncludeDirs, loadResources } from "@preman/core/workspace/resources.js";
 import { PremanError } from "@preman/core/errors.js";
 import {
@@ -75,6 +76,63 @@ describe("resources", () => {
     expect(protoRoots).toEqual([join(root, "src/main/proto"), join(root, "src/test/proto")]);
     // Bounded by the workspace root; never escapes it.
     expect(dirs.every((d) => d === root || d.startsWith(root + sep))).toBe(true);
+  });
+
+  it("givenSpecUnderSharedLink_whenDerivingIncludeDirs_thenWalksUpToTheLink", () => {
+    const shared = `${sep}shared`;
+    const dirs = deriveIncludeDirs([join(shared, "zas-spec/api/zas/admin/admin.proto")], `${sep}repo`, shared);
+    // The link stands for a checkout, so its whole tree is offered — which is what lets
+    // a package-qualified `import "zas/common.proto"` resolve against `api`.
+    expect(dirs).toEqual([
+      join(shared, "zas-spec"),
+      join(shared, "zas-spec/api"),
+      join(shared, "zas-spec/api/zas"),
+      join(shared, "zas-spec/api/zas/admin"),
+    ]);
+    // Never the shared root itself: that would let one checkout's proto satisfy another's import.
+    expect(dirs).not.toContain(shared);
+  });
+
+  it("givenSpecOutsideWorkspaceAndSharedRoot_whenDerivingIncludeDirs_thenOnlyItsOwnDirectory", () => {
+    const dirs = deriveIncludeDirs(
+      [join(`${sep}elsewhere`, "zas-spec/api/zas/admin/admin.proto")],
+      `${sep}repo`,
+      `${sep}shared`,
+    );
+    // Walking an arbitrary absolute path further would offer $HOME as an import root.
+    expect(dirs).toEqual([join(`${sep}elsewhere`, "zas-spec/api/zas/admin")]);
+  });
+});
+
+describe("shared links", () => {
+  const LOCAL = "/opt/protos";
+  const ON_LINK = join(LOCAL, "zas-spec", "api/zas/admin/admin.proto");
+  const CANONICAL = join(DEFAULT_SHARED_PROTO_ROOT, "zas-spec", "api/zas/admin/admin.proto");
+
+  it("givenAResolvedPathOnALink_whenMadeCanonical_thenItIsWrittenWithTheDefaultRoot", () => {
+    expect(canonicalSharedPath(ON_LINK, LOCAL)).toBe(CANONICAL);
+  });
+
+  it("givenAPathOutsideTheSharedRoot_whenMadeCanonical_thenItIsNotOnALink", () => {
+    expect(canonicalSharedPath("/repos/zas-spec/api/zas/admin/admin.proto", LOCAL)).toBeUndefined();
+  });
+
+  it("givenTheSharedRootItself_whenMadeCanonical_thenItIsNotOnALink", () => {
+    expect(canonicalSharedPath(LOCAL, LOCAL)).toBeUndefined();
+  });
+
+  /**
+   * The pair is what keeps an overridden root portable: the picker writes what
+   * `canonicalSharedPath` says, and every reader takes it back through `resolveSharedPath`.
+   * If they ever stop being inverses, a workspace declares one file and opens another.
+   */
+  it("givenACanonicalPath_whenResolvedAndMadeCanonicalAgain_thenItRoundTrips", () => {
+    expect(resolveSharedPath(CANONICAL, LOCAL)).toBe(ON_LINK);
+    expect(canonicalSharedPath(resolveSharedPath(CANONICAL, LOCAL), LOCAL)).toBe(CANONICAL);
+  });
+
+  it("givenTheDefaultRoot_whenMadeCanonical_thenThePathIsUnchanged", () => {
+    expect(canonicalSharedPath(CANONICAL, DEFAULT_SHARED_PROTO_ROOT)).toBe(CANONICAL);
   });
 });
 

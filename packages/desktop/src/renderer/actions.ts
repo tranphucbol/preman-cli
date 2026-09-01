@@ -9,9 +9,12 @@ import type {
   BodyMatch,
   BodyWindow,
   GrepResult,
+  LinkOverride,
   MethodChoices,
   MutateOp,
   ReportFormat,
+  SpecPlan,
+  SpecsView,
   TextPreview,
   VariableView,
   VariableWrite,
@@ -392,6 +395,140 @@ export async function messageSkeleton(methodPath: string): Promise<Result<string
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }
+}
+
+/**
+ * The protos a workspace declares, the links they are reached through, and which of those links
+ * this machine is missing.
+ *
+ * Re-read rather than cached, because a link is a thing on disk that another process - or another
+ * window, or `ln -s` in a terminal - can change without telling anyone. The pane that shows it is
+ * the pane that fixes it, so a stale answer is one that offers the wrong repair.
+ */
+export async function readSpecs(): Promise<Result<SpecsView>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    return { ok: true, value: await engine.send("specs", {}) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * What adding these files would do, without doing any of it.
+ *
+ * Every write in this pane goes plan-then-apply rather than straight through, because both halves
+ * of what an add decides are things the user may want to overrule: which checkout a link points at,
+ * and what that link is called. A plan is also the only honest place to say a proto will not load -
+ * core resolves the include dirs a spec *would* get through its link, so the answer is the real one
+ * and not a guess made before the link exists.
+ */
+export async function planSpecs(
+  files: readonly string[],
+  overrides: Record<string, LinkOverride> = {},
+): Promise<Result<SpecPlan>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    return { ok: true, value: await engine.send("plan-specs", { files: [...files], overrides }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * What moving the already-declared specs onto shared links would do.
+ *
+ * The same plan shape as an add, deliberately: converting is adding, with the old entry named as
+ * the one being replaced. A workspace written by hand - or by an older preman - carries paths to
+ * *this* machine's checkouts, and this is what turns them into paths that mean the same thing
+ * everywhere.
+ */
+export async function planConversion(overrides: Record<string, LinkOverride> = {}): Promise<Result<SpecPlan>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    return { ok: true, value: await engine.send("plan-conversion", { overrides }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * Create the links and write the specs.
+ *
+ * Answers with the re-read view for the reason `writeVariable` does: the pane would otherwise have
+ * to re-derive which links now resolve, and would be wrong the moment the disk disagreed.
+ */
+export async function applySpecs(plan: SpecPlan): Promise<Result<SpecsView>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    return { ok: true, value: await engine.send("apply-specs", { plan }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/** Undeclare one spec. The link it was reached through is left alone; other workspaces use it. */
+export async function removeSpec(declared: string): Promise<Result<SpecsView>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    return { ok: true, value: await engine.send("remove-spec", { declared }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * Point one link at a checkout on this machine.
+ *
+ * This is the whole payoff of declaring specs through a shared root: a colleague who clones a
+ * workspace fixes every spec under a repository with one directory pick, instead of editing as
+ * many absolute paths as there are protos.
+ */
+export async function linkCheckout(name: string, target: string, repoint = false): Promise<Result<SpecsView>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    return { ok: true, value: await engine.send("link-checkout", { name, target, repoint }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * Every `.proto` under a directory, found by the engine.
+ *
+ * The walk is the engine's because the renderer may not read the disk, and it is a walk at all
+ * because the repositories this feature exists for declare twenty to thirty-five protos each.
+ * Picking those one at a time through a dialog is the task, not a step in it.
+ */
+export async function collectProtos(dir: string): Promise<Result<string[]>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    return { ok: true, value: await engine.send("collect-protos", { dir }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/** Proto files chosen by the user. Empty when they cancelled, or picked nothing; the same answer. */
+export async function pickProtoFiles(): Promise<string[]> {
+  return window.preman.pickProtoFiles();
+}
+
+/** A directory to walk for protos. `null` if the pick was cancelled. */
+export async function pickProtoFolder(): Promise<string | null> {
+  return window.preman.pickProtoFolder();
+}
+
+/** The checkout a named link should point at. `null` if the pick was cancelled. */
+export async function pickCheckout(name: string): Promise<string | null> {
+  return window.preman.pickCheckout(name);
 }
 
 /**

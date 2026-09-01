@@ -71,6 +71,8 @@ preman run [<collection/request>]   run one request
 preman run <collection|folder>      run every request in order
 preman env show
 preman env set <key> <value>
+preman protos                       list the declared .proto files, grouped by shared link
+preman protos link <name> <dir>     point a shared link at a checkout on this machine
 preman migrate --list               list the Postman cloud workspaces in reach
 preman migrate --workspace <id|name> --out <dir>
 ```
@@ -103,6 +105,7 @@ Common options:
 | `--reporter-json-export <path>`  | Write the JSON report to a file                                                |
 | `--reporter-junit-export <path>` | Write the JUnit report to a file                                               |
 | `--json`                         | Alias for `--reporter json`                                                    |
+| `--repoint`                      | `protos link` only: move a link that already points elsewhere                  |
 | `-v, --verbose`                  | Show request, response, script, and transport details                          |
 
 Run `preman --help` for every option.
@@ -120,6 +123,7 @@ Run `preman --help` for every option.
 - `pm.test`, `pm.expect`, cookies, `pm.sendRequest`, mutable `pm.request`, and sandbox `require()`
 - Postman's common script libraries, including Lodash, CryptoJS, Moment, Cheerio, XML2JS, and UUID
 - Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
+- Declaring `.proto` files from a file browser, through a shared link that resolves on any machine
 - Migrating a Postman cloud workspace onto disk, gRPC included
 - Environment writeback and JSON output for CI
 - JUnit reports for GitLab, Jenkins, and other CI test-report consumers
@@ -135,6 +139,44 @@ a collection run are reported instead of being executed.
 
 See [the reference](docs/reference.md) for selection rules, variable precedence, protocol behavior,
 scripts, assertions, exit codes, and schema resolution.
+
+## Protos
+
+A gRPC request finds its method through the `.proto` files the workspace declares in
+`.postman/resources.yaml`. In the app, **Protos** in the command palette — or the link button beside
+a gRPC request's method picker — browses for them.
+
+Every declared path runs through a symlink farm at `/Users/Shared/postman-protos`, one link per
+repository, named after it:
+
+```yaml
+localResources:
+  specs:
+    - /Users/Shared/postman-protos/zas-spec/api/zas/admin/admin.proto
+    - /Users/Shared/postman-protos/acquiring-core/api/proto/admin.proto
+```
+
+That path is the same string on every machine, which an absolute path to your home directory is
+not. What differs per machine is one symlink per repository, and both front ends tell you which ones
+are missing by name. On a fresh checkout:
+
+```sh
+preman protos                                    # what is declared, and which links are absent
+preman protos link zas-spec ~/repos/zas-spec     # one link covers every proto in that repository
+```
+
+In the app the same repair is a **Locate…** button beside each missing link. Adding a proto stages a
+plan first: it names the link it would create, shows the path it would write, and loads each `.proto`
+so an unresolvable `import` surfaces before anything is written. Nothing reaches disk until you
+apply it.
+
+The link points at the checkout's root, so imports resolve exactly as they do inside the repository.
+A workspace whose specs are still plain relative or absolute paths keeps working; **Move onto
+links…** converts them in one reviewed step.
+
+Set `PREMAN_SHARED_PROTO_ROOT`, or the field in the app's settings, if `/Users/Shared` is not
+writable on your machine. Only where this machine _looks_ moves — what the workspace records is
+always the default, so the file stays portable.
 
 ## Migrating from Postman cloud
 

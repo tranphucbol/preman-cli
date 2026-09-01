@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
 
@@ -7,6 +8,10 @@ import { FORMAT_LIMIT_BYTES as CORE_FORMAT_LIMIT_BYTES } from "@preman/core/api/
 import { ORDER_ABSENT as CORE_ORDER_ABSENT } from "@preman/core/api/catalog.js";
 import { EXIT } from "@preman/core/errors.js";
 import { TOKEN_SOURCE as CORE_TOKEN_SOURCE } from "@preman/core/vars/interpolate.js";
+import {
+  DEFAULT_SHARED_PROTO_ROOT,
+  SHARED_PROTO_ROOT_ENV as CORE_SHARED_PROTO_ROOT_ENV,
+} from "@preman/core/workspace/links.js";
 import { DEFINITION_FILE, ORDER_STEP as CORE_ORDER_STEP, RESOURCES_DIR } from "@preman/core/workspace/paths.js";
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
 import type {
@@ -30,6 +35,8 @@ import {
   ORDER_STEP,
   PHASE_PREFIX,
   PHASES,
+  SHARED_PROTO_ROOT,
+  SHARED_PROTO_ROOT_ENV,
   VARIABLE_TOKEN_SOURCE,
   isEnginePush,
 } from "@preman/desktop/engine/protocol.js";
@@ -76,6 +83,11 @@ const PING_METHOD = "test.echo.EchoService.Ping";
 const ECHO_SPEC_LABEL = "src/main/proto/echo/echo.proto";
 /** Exactly what `Ping.request.yaml` already carries, which is the point of the assertion. */
 const PING_LOCATION = "../../../src/main/proto/echo/echo.proto";
+/** What the fixture's specs are declared as, and what they become once the workspace is linked. */
+const SPEC_PREFIX = "../src/main/proto/echo/";
+const LINK_NAME = "ws";
+const LINKED_PREFIX = join(DEFAULT_SHARED_PROTO_ROOT, LINK_NAME, "src/main/proto/echo") + "/";
+const LINKED_ECHO_LOCATION = `${LINKED_PREFIX}echo.proto`;
 const GIT_SETTLE_MS = 10_000;
 /**
  * Node's recursive `fs.watch` on Linux holds one inotify watch per file, and a `rename` over that
@@ -571,6 +583,34 @@ describe("the engine host protocol", () => {
       // Byte for byte what the fixture already has: picking a method is two field edits,
       // and the app must arrive at the path a human would have typed.
       expect(choices.methods[0]?.schemaLocation).toBe(PING_LOCATION);
+    });
+
+    /**
+     * The relative path is only portable while the proto is inside the workspace. Against a
+     * linked one it counts `../` off how deep this checkout sits, so two people who cloned to
+     * different directories would write two different files from the same click (ADR 038).
+     */
+    it("givenASpecOnASharedLink_whenMethodsListed_thenTheLocationIsCanonicalRatherThanRelative", async () => {
+      const repo = cloneFixtureWorkspace();
+      const shared = mkdtempSync(join(tmpdir(), "preman-shared-"));
+      const before = process.env[SHARED_PROTO_ROOT_ENV];
+      process.env[SHARED_PROTO_ROOT_ENV] = shared;
+      try {
+        symlinkSync(repo.root, join(shared, LINK_NAME), "dir");
+        const resources = join(repo.root, RESOURCES_FILE);
+        writeFileSync(resources, readFileSync(resources, "utf8").replaceAll(SPEC_PREFIX, LINKED_PREFIX), "utf8");
+        const app = harnessFor(repo.root);
+
+        const choices = await app.send("list-methods", { nodeId: PING_ID });
+
+        expect(choices.warnings).toEqual([]);
+        expect(choices.methods[0]?.schemaLocation).toBe(LINKED_ECHO_LOCATION);
+        app.host.dispose();
+      } finally {
+        if (before === undefined) delete process.env[SHARED_PROTO_ROOT_ENV];
+        else process.env[SHARED_PROTO_ROOT_ENV] = before;
+        rmSync(shared, { recursive: true, force: true });
+      }
     });
 
     it("givenMethodAndEnvironment_whenSkeletonRequested_thenStringFieldsNamedAfterVariablesUseTokens", async () => {
@@ -1320,6 +1360,19 @@ describe("the wire's copies of core's constants", () => {
     // The git overlay turns a changed definition file into a decoration on its folder row by
     // stripping this tail. A drifted copy would leave every folder undecorated and silent.
     expect(GROUP_DEFINITION_SUFFIX).toBe(`/${RESOURCES_DIR}/${DEFINITION_FILE}`);
+  });
+
+  it("givenProtocolSharedProtoRoot_whenComparedToCore_thenTheSettingsPaneShowsWhatIsWritten", () => {
+    // The settings pane offers this as the placeholder under an empty override, meaning "leave it
+    // blank and you get this". A drifted copy would name a directory the engine never resolves.
+    expect(SHARED_PROTO_ROOT).toBe(DEFAULT_SHARED_PROTO_ROOT);
+  });
+
+  it("givenProtocolSharedRootVariable_whenComparedToCore_thenAForkedHostReadsWhatMainWrote", () => {
+    // Main sets this on `process.env` and a host inherits it at fork, so the two names never meet
+    // in one module. A drifted copy would leave every host resolving the default while the
+    // settings pane insisted the override had been applied.
+    expect(SHARED_PROTO_ROOT_ENV).toBe(CORE_SHARED_PROTO_ROOT_ENV);
   });
 
   it("givenCoreTokenSource_whenComparedToTheWire_thenTheyMatch", () => {

@@ -3,6 +3,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as protoLoader from "@grpc/proto-loader";
 import type { MethodDefinition, PackageDefinition, ServiceDefinition } from "@grpc/proto-loader";
 import { PremanError } from "@preman/core/errors.js";
+import { resolveSharedPath, sharedProtoRoot } from "@preman/core/workspace/links.js";
 
 /**
  * Load options are load-bearing for this repo's payloads:
@@ -42,7 +43,14 @@ export interface ResolveMethodOptions {
   methodDescriptor: string | undefined;
   /** `methodPath`, e.g. `pe.aev2.ExchangeService.Exchange` or `/pe.aev2.ExchangeService/Exchange`. */
   methodPath: string;
-  includeDirs: string[];
+  /**
+   * The include dirs to load a given `.proto` with.
+   *
+   * A resolver rather than a list because the answer depends on which proto is being
+   * loaded: it has to offer that file's own tree before the rest of the workspace, or
+   * another declared repository's `common.proto` answers its import. See `Resources`.
+   */
+  includeDirsFor: (protoPath: string) => string[];
   /** Forces the descriptor path, skipping the `.proto` file entirely. */
   preferDescriptor?: boolean;
 }
@@ -135,6 +143,21 @@ export function isServiceDefinition(entry: unknown): entry is ServiceDefinition 
 }
 
 /**
+ * Where a request's `schema.location` actually reads from on this machine.
+ *
+ * A relative location is resolved against the request, which is what Postman writes and
+ * what a proto living inside the workspace wants. An absolute one is taken as given —
+ * except that a path under {@link DEFAULT_SHARED_PROTO_ROOT} is a canonical declaration
+ * rather than a literal location, so a machine that moved its shared root swaps the prefix
+ * on the way in. Without this, overriding the root would break every request that names a
+ * linked proto while leaving `resources.yaml` working, which is a confusing half-failure.
+ */
+function schemaPathFor(schemaLocation: string, requestFilePath: string): string {
+  const located = isAbsolute(schemaLocation) ? schemaLocation : resolve(dirname(requestFilePath), schemaLocation);
+  return resolveSharedPath(located, sharedProtoRoot());
+}
+
+/**
  * Resolve `methodPath` to an invocable {@link MethodDefinition}.
  *
  * Prefers the `.proto` file on disk (authoritative, always current). Falls back
@@ -147,11 +170,7 @@ export function resolveMethod(options: ResolveMethodOptions): ResolvedMethod {
   const { serviceName, methodName } = splitMethodPath(options.methodPath);
   const warnings: string[] = [];
 
-  const protoPath = options.schemaLocation
-    ? isAbsolute(options.schemaLocation)
-      ? options.schemaLocation
-      : resolve(dirname(options.requestFilePath), options.schemaLocation)
-    : undefined;
+  const protoPath = options.schemaLocation ? schemaPathFor(options.schemaLocation, options.requestFilePath) : undefined;
 
   let pkg: PackageDefinition | undefined;
   let source: SchemaSource = "proto-file";
@@ -159,7 +178,7 @@ export function resolveMethod(options: ResolveMethodOptions): ResolvedMethod {
   const useProtoFile = !options.preferDescriptor && protoPath !== undefined && existsSync(protoPath);
   if (useProtoFile) {
     try {
-      pkg = loadFromProtoFile(protoPath, options.includeDirs);
+      pkg = loadFromProtoFile(protoPath, options.includeDirsFor(protoPath));
     } catch (cause) {
       if (!options.methodDescriptor) throw cause;
       warnings.push(`could not load ${protoPath}, falling back to the embedded descriptor`);

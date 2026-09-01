@@ -28,6 +28,12 @@ export const CHANNELS = {
   forgetWorkspace: "preman:forget-workspace",
   revealInFileManager: "preman:reveal",
   pickDataFile: "preman:pick-data-file",
+  /** A native dialog for one or more `.proto` files to declare. */
+  pickProtoFiles: "preman:pick-proto-files",
+  /** A native dialog for a directory to sweep for `.proto` files. */
+  pickProtoFolder: "preman:pick-proto-folder",
+  /** A native dialog for the checkout a named shared link should point at. */
+  pickCheckout: "preman:pick-checkout",
   saveReport: "preman:save-report",
   windowControl: "preman:window-control",
   readSession: "preman:read-session",
@@ -116,6 +122,16 @@ export interface Preferences {
   fontSans: string | null;
   canvas: string;
   barHeightPx: number;
+  /**
+   * Where this machine keeps its shared proto links, or `null` for the directory core defaults to.
+   *
+   * A preference rather than a workspace setting on purpose: the point of the shared root is that
+   * a declared spec path means the same thing everywhere, so the path written into
+   * `resources.yaml` is always the default one and this only says where *this* machine resolves
+   * it. A locked-down machine that cannot write to the default needs somewhere else to put its
+   * links; it does not need its colleagues' workspaces to know that.
+   */
+  sharedProtoRoot: string | null;
 }
 
 /** The editor's size in `app.css` today, so a fresh install renders exactly as it does now. */
@@ -134,6 +150,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   fontSans: null,
   canvas: DEFAULT_CANVAS,
   barHeightPx: TITLE_BAR_HEIGHT_PX,
+  sharedProtoRoot: null,
 };
 
 /** The two things about the window itself that a preference change moves. */
@@ -365,6 +382,24 @@ export interface PremanBridge {
    * the workspace: iteration data is commonly kept beside a test suite, not inside it.
    */
   pickDataFile(): Promise<string | null>;
+  /**
+   * `.proto` files to declare, filtered to the one extension the engine will accept.
+   *
+   * Multi-select because the task these serve is declaring a repository's protos, and the
+   * repositories this was built against carry twenty-four and thirty-five of them. Resolves to
+   * an empty array when the user cancelled, so a cancel and a pick of nothing read alike.
+   */
+  pickProtoFiles(): Promise<string[]>;
+  /**
+   * A directory to sweep for `.proto` files. The sweep itself is the engine's, not this
+   * dialog's — the renderer never walks a file system.
+   */
+  pickProtoFolder(): Promise<string | null>;
+  /**
+   * Where a named shared link should point. `name` is only shown, so a machine that is missing
+   * three links can be told which one it is being asked about.
+   */
+  pickCheckout(name: string): Promise<string | null>;
   /**
    * A native save dialog for an already-rendered report. The renderer never names a file
    * system location, and the main process does the writing. Resolves to the path written,

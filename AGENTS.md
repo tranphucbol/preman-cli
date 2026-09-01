@@ -34,8 +34,11 @@ packages/core/                   @preman/core - the engine, private, bundled fro
     select.ts                    SelectionPort + failOnAmbiguity, the only ambiguity escape
     inspect.ts                   describeWorkspace -> WorkspaceSnapshot
     environments.ts              read/write one environment value
+    specs.ts                     declare a .proto: plan links, load-check, write resources.yaml
   src/runner.ts                  orchestration: scripts -> interpolate -> invoke -> writeback
   src/workspace/                 discovery, resources, collections/groups, environments, zod schemas
+    links.ts                     the shared proto root and its symlinks; 038 says why a spec runs
+                                 through one, and resources.ts stops its include-dir climb there
   src/vars/                      scoped store, {{token}} interpolation, dynamic vars
   src/scripts/                   node:vm sandbox (pm shim), chai + gRPC assertions
   src/grpc/                      schema resolution, target/TLS, unary invoke
@@ -68,7 +71,7 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
                                  editorTheme (the editor's chrome, reaching nothing so it is
                                  testable), template (the {{token}}-aware JSON language)
     panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid, ResponsePane,
-                                 BodyViewer, ResponseFailure, ConsoleDrawer, SettingsPane
+                                 BodyViewer, ResponseFailure, ConsoleDrawer, SettingsPane, ProtosPane
   scripts/                       run by hand, never at build time
     audit.ts                     the contrast arithmetic; also asserted by test/renderer/themes
     generate-themes.ts           palettes/*.json -> src/renderer/appearance/themes/
