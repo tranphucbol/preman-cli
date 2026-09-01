@@ -1,9 +1,11 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PremanError } from "@preman/core/errors.js";
 import { listMethods, resolveMethod, splitMethodPath } from "@preman/core/grpc/schema.js";
 import { parseAuthority, readLocalGrpcPort, resolveTarget, shouldUseTls } from "@preman/core/grpc/target.js";
+import { DEFAULT_SHARED_PROTO_ROOT, SHARED_PROTO_ROOT_ENV } from "@preman/core/workspace/links.js";
 import { FIXTURE_INCLUDE_DIR, FIXTURE_WS, FIXTURES_DIR, requestPath } from "./helpers.js";
 
 /** The real base64 FileDescriptorSet captured by Postman for pe.aev2.ExchangeService.Exchange. */
@@ -40,10 +42,35 @@ describe("splitMethodPath", () => {
 describe("resolveMethod", () => {
   const base = {
     requestFilePath: requestPath("Echo.request.yaml"),
-    includeDirs: [FIXTURE_INCLUDE_DIR],
+    includeDirsFor: () => [FIXTURE_INCLUDE_DIR],
     methodDescriptor: undefined,
     preferDescriptor: false,
   };
+
+  /**
+   * The picker writes the canonical path, so a machine that moved its shared root has to
+   * read it back through the local one. Overriding the root must not break the requests
+   * while leaving `resources.yaml` working.
+   */
+  it("givenCanonicalSharedLocation_whenResolvedOnAMachineThatMovedItsRoot_thenTheProtoIsStillFound", () => {
+    const shared = mkdtempSync(join(tmpdir(), "preman-shared-"));
+    const before = process.env[SHARED_PROTO_ROOT_ENV];
+    process.env[SHARED_PROTO_ROOT_ENV] = shared;
+    try {
+      symlinkSync(FIXTURE_WS, join(shared, "ws"), "dir");
+      const resolved = resolveMethod({
+        ...base,
+        schemaLocation: join(DEFAULT_SHARED_PROTO_ROOT, "ws", "src/main/proto/echo/echo.proto"),
+        methodPath: "test.echo.EchoService.Echo",
+      });
+
+      expect(resolved.source).toBe("proto-file");
+    } finally {
+      if (before === undefined) delete process.env[SHARED_PROTO_ROOT_ENV];
+      else process.env[SHARED_PROTO_ROOT_ENV] = before;
+      rmSync(shared, { recursive: true, force: true });
+    }
+  });
 
   it("givenProtoFileWithRootRelativeImport_whenResolved_thenLoadsViaIncludeDirs", () => {
     const resolved = resolveMethod({

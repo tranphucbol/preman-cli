@@ -52,8 +52,12 @@ const DIAGNOSTICS_FIELDS = [
   "nodeVersion",
 ] as const;
 
-/** Appearance holds Theme, Density and Type; Diagnostics is the other one, and is not under them. */
-const TABS = ["appearance", "diagnostics"] as const;
+/**
+ * Appearance holds Theme, Density and Type; Diagnostics is the other one, and is not under them.
+ * Protos sits between them because where this machine resolves the shared root is neither a
+ * matter of taste nor a bug report, and it is the only setting here that restarts every engine.
+ */
+const TABS = ["appearance", "protos", "diagnostics"] as const;
 
 /** A bottom border on a trigger looks like the underline and cannot travel. `design-system.md`. */
 const HAND_ROLLED_UNDERLINE = "border-b-2 border-accent";

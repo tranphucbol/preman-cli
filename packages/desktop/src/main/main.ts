@@ -27,7 +27,7 @@ import { createDiagnostics, type Diagnostics } from "@preman/desktop/main/diagno
 import { createHostRegistry, type HostRegistry } from "@preman/desktop/main/hosts.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
 import { createWorkspace } from "@preman/desktop/main/workspaces.js";
-import { markPhase, PHASES, type LogLevel } from "@preman/desktop/engine/protocol.js";
+import { markPhase, PHASES, SHARED_PROTO_ROOT_ENV, type LogLevel } from "@preman/desktop/engine/protocol.js";
 import {
   CHANNELS,
   TRAFFIC_LIGHT_HEIGHT_PX,
@@ -68,6 +68,15 @@ const DATA_DIALOG_TITLE = "Choose iteration data";
 const DATA_FILTER_NAME = "Iteration data";
 /** What core's `loadIterationData` reads. Offering more would only produce a refusal later. */
 const ITERATION_DATA_EXTENSIONS = ["json", "csv"] as const;
+const PROTO_DIALOG_TITLE = "Choose .proto files to declare";
+const PROTO_FILTER_NAME = "Protocol buffers";
+/** What `collectProtoFiles` and `isProtoFile` accept. Offering more would only produce a refusal. */
+const PROTO_EXTENSIONS = ["proto"] as const;
+const PROTO_FOLDER_DIALOG_TITLE = "Choose a directory to search for .proto files";
+const PROTO_FOLDER_DIALOG_BUTTON = "Search here";
+const CHECKOUT_DIALOG_TITLE_PREFIX = "Locate the ";
+const CHECKOUT_DIALOG_TITLE_SUFFIX = " checkout";
+const CHECKOUT_DIALOG_BUTTON = "Link to this";
 const REPORT_DIALOG_TITLE = "Export run report";
 const REPORT_ENCODING = "utf8";
 const MIGRATE_DIALOG_TITLE = "Choose an empty directory for the migrated workspace";
@@ -363,6 +372,54 @@ async function pickDataFileDialog(): Promise<string | null> {
 }
 
 /**
+ * The `.proto` files to declare. Unfiltered by location on purpose: the whole point of the
+ * shared root is that the file being picked is in another checkout entirely.
+ */
+async function pickProtoFilesDialog(): Promise<string[]> {
+  const parent = window;
+  if (parent === undefined) return [];
+  const picked = await dialog.showOpenDialog(parent, {
+    title: PROTO_DIALOG_TITLE,
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: PROTO_FILTER_NAME, extensions: [...PROTO_EXTENSIONS] }],
+  });
+  return picked.canceled ? [] : picked.filePaths;
+}
+
+/**
+ * A directory to sweep. The walk is the engine's — this only names the root, so a cancelled
+ * dialog costs nothing and a chosen one is still reviewed before anything is written.
+ */
+async function pickProtoFolderDialog(): Promise<string | null> {
+  const parent = window;
+  if (parent === undefined) return null;
+  const picked = await dialog.showOpenDialog(parent, {
+    title: PROTO_FOLDER_DIALOG_TITLE,
+    buttonLabel: PROTO_FOLDER_DIALOG_BUTTON,
+    properties: ["openDirectory"],
+  });
+  const dir = picked.filePaths[0];
+  return picked.canceled || dir === undefined ? null : dir;
+}
+
+/**
+ * The checkout a missing shared link should point at. Named in the title rather than inferred,
+ * because the machine that is missing links is usually missing several and they are told apart
+ * by nothing but their names.
+ */
+async function pickCheckoutDialog(name: string): Promise<string | null> {
+  const parent = window;
+  if (parent === undefined) return null;
+  const picked = await dialog.showOpenDialog(parent, {
+    title: `${CHECKOUT_DIALOG_TITLE_PREFIX}${name}${CHECKOUT_DIALOG_TITLE_SUFFIX}`,
+    buttonLabel: CHECKOUT_DIALOG_BUTTON,
+    properties: ["openDirectory"],
+  });
+  const dir = picked.filePaths[0];
+  return picked.canceled || dir === undefined ? null : dir;
+}
+
+/**
  * Write an already-rendered report wherever the user says. The bytes come from the engine
  * and the path from the dialog, so the renderer never names a file system location.
  */
@@ -471,6 +528,19 @@ function handle<Args extends unknown[], Result>(
   });
 }
 
+/**
+ * Put this machine's shared proto root where an engine host will find it.
+ *
+ * The environment rather than an argument, because the value is read deep inside core — a
+ * workspace's include directories depend on it — and threading it through every caller of
+ * `loadResources` would put a front end's preference in five signatures that have no other
+ * reason to know one exists. A host inherits this at fork, so a change has to reap them.
+ */
+function applySharedProtoRoot(root: string | null): void {
+  if (root === null) delete process.env[SHARED_PROTO_ROOT_ENV];
+  else process.env[SHARED_PROTO_ROOT_ENV] = root;
+}
+
 function registerIpc(): void {
   handle(CHANNELS.listWorkspaces, (): WorkspaceHandle[] => requireStore().handles());
 
@@ -558,6 +628,12 @@ function registerIpc(): void {
 
   handle(CHANNELS.pickDataFile, () => pickDataFileDialog());
 
+  handle(CHANNELS.pickProtoFiles, () => pickProtoFilesDialog());
+
+  handle(CHANNELS.pickProtoFolder, () => pickProtoFolderDialog());
+
+  handle(CHANNELS.pickCheckout, (_event: IpcMainInvokeEvent, name: string) => pickCheckoutDialog(name));
+
   handle(CHANNELS.saveReport, (_event: IpcMainInvokeEvent, suggestedName: string, text: string) =>
     saveReportDialog(suggestedName, text),
   );
@@ -578,9 +654,17 @@ function registerIpc(): void {
   });
 
   handle(CHANNELS.savePreferences, (_event: IpcMainInvokeEvent, next: Preferences) => {
-    requireStore().update((state) => {
+    const store = requireStore();
+    const moved = store.read().preferences.sharedProtoRoot !== next.sharedProtoRoot;
+    store.update((state) => {
       state.preferences = next;
     });
+    if (!moved) return;
+    // A host reads the shared root from its environment, which is fixed at fork. Reaping the
+    // live ones is what makes the new value take effect; the renderer re-opens its workspace
+    // over `openWorkspace`, which respawns exactly the host it needs and no others.
+    applySharedProtoRoot(next.sharedProtoRoot);
+    requireHosts().closeAll();
   });
 
   ipcMain.on(CHANNELS.setWindowChrome, (_event, chrome: WindowChrome) => {
@@ -608,6 +692,9 @@ function start(): void {
   if (app.dock !== undefined && dockIcon !== undefined) app.dock.setIcon(dockIcon);
 
   store = createAppStore(app.getPath("userData"));
+  // Before the registry, because a host inherits this process's environment at fork and the
+  // shared proto root reaches core no other way.
+  applySharedProtoRoot(store.read().preferences.sharedProtoRoot);
   // Before the registry, because the registry writes through it from its first fork. `logs` is
   // `~/Library/Logs/preman` on macOS and the equivalent elsewhere — resolved after `setName`, so
   // an unpackaged run and an installed one keep one file between them rather than two.

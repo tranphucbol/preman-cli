@@ -49,6 +49,7 @@ import { formatJsonTemplate } from "@preman/desktop/renderer/model/format.js";
 import type { PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { flushPending } from "@preman/desktop/renderer/pending.js";
 import { useAncestors, useNode } from "@preman/desktop/renderer/stores/catalog.js";
+import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
 import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import {
   BODY_VIEWS,
@@ -85,6 +86,7 @@ import {
   GenerateIcon,
   GLYPH_CLASS,
   InsecureIcon,
+  LinkIcon,
   PickerIcon,
   SaveIcon,
   SecureIcon,
@@ -240,6 +242,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
   );
 
   const picker = useMethodPicker(tab.nodeId, apply, onFail);
+  const showProtos = useOverlayStore((state) => state.showProtos);
   // The target row is the one part of this pane that is on screen whatever the sub-tab is, so it
   // owns its own box rather than borrowing one from a pane that may be unmounted.
   const box = useTokenBox();
@@ -342,6 +345,12 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
                 method whose proto this workspace does not declare. */}
             <IconButton label="Pick a method" onClick={picker.show}>
               <PickerIcon />
+            </IconButton>
+            {/* The other half of the same sentence. A method missing from the picker means its
+                proto is not declared here, and this is the door to declaring it - reachable
+                without knowing that "Protos" is a command. */}
+            <IconButton label="Manage protos" onClick={showProtos}>
+              <LinkIcon />
             </IconButton>
           </div>
         ) : null}

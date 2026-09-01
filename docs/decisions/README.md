@@ -46,6 +46,7 @@ The CLI's own design predates the practice.
 | [035](035-the-log-contains-no-traffic.md)                           | The log contains no traffic                                            |
 | [036](036-the-log-says-how-bad-it-was.md)                           | The log says how bad it was                                            |
 | [037](037-the-sidebar-starts-open-again.md)                         | The sidebar starts open again                                          |
+| [038](038-a-proto-is-declared-through-a-shared-link.md)             | A proto is declared through a shared link                              |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -141,5 +142,16 @@ pane's default has now been argued twice and both halves are here to read. It al
 034 was buying, which 034 could only assert — with the tree mounting in the first render again, the
 5000-node start-up budget went from comfortable to marginal, and the record says so rather than
 quietly moving the number.
+
+038 is the first record to take up something an earlier one built, measured and threw away. 033
+implemented symlink-rewriting for the migrator, watched it take 28 resolving requests to 82, and
+rejected it anyway, because a migrated file should say what Postman said. That half stands and
+migration still writes Postman's paths verbatim; what 038 changes is that a person choosing a file
+and confirming a named plan is not a migrator rewriting 188 requests nobody has read. It is also the
+second record after 036 whose real subject is a bug the feature would have spread: `deriveIncludeDirs`
+stopping at the workspace root, which 033 had already named in prose as the reason most migrated
+protos still failed, and which nothing asserted until now. The cost it states plainly is the one it
+was warned about while being chosen — a repository-local workspace stops being self-contained — and
+it keeps that cost rather than special-casing it away.
 
 `TEMPLATE.md` is the shape of a new one.

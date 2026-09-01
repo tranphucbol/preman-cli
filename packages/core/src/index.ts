@@ -89,6 +89,30 @@ export {
 } from "@preman/core/api/variables.js";
 export { previewText, type TextPreview } from "@preman/core/api/preview.js";
 export {
+  applySpecPlan,
+  collectProtoFiles,
+  describeSpecs,
+  isProtoFile,
+  linkCheckout,
+  planSpecConversion,
+  planSpecs,
+  removeSpec,
+  type DeclaredSpec,
+  type LinkAction,
+  type LinkOverride,
+  type PlanOptions,
+  type PlannedLink,
+  type PlannedSpec,
+  type SpecPlan,
+  type SpecsView,
+} from "@preman/core/api/specs.js";
+export {
+  DEFAULT_SHARED_PROTO_ROOT,
+  SHARED_PROTO_ROOT_ENV,
+  sharedProtoRoot,
+  type SharedLink,
+} from "@preman/core/workspace/links.js";
+export {
   listCloudWorkspaces,
   migrateCloudWorkspace,
   type MigrateArgs,

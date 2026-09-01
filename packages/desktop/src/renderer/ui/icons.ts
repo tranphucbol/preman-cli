@@ -37,6 +37,10 @@ export {
   GitBranch as BranchIcon,
   Globe as EnvironmentIcon,
   Key as AuthIcon,
+  // A chain link, for the thing that is literally a symlink. The noun is the same on both sides
+  // of the screen, which is what makes "the acquiring-core link is missing" a sentence about a
+  // row the user can see rather than about the filesystem.
+  LinkSimple as LinkIcon,
   ListMagnifyingGlass as PaletteIcon,
   LockSimple as SecureIcon,
   LockSimpleOpen as InsecureIcon,

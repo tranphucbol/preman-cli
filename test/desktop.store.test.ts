@@ -46,6 +46,7 @@ const CHOSEN: Preferences = {
   fontSans: null,
   canvas: "#2e3440",
   barHeightPx: 36,
+  sharedProtoRoot: null,
 };
 
 afterEach(() => {

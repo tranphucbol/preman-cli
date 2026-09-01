@@ -30,11 +30,12 @@ import {
 import type { Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
-import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import { switchWorkspace, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Button, Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
 import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
+import { SHARED_PROTO_ROOT } from "@preman/desktop/engine/protocol.js";
 import type { Density, DiagnosticsInfo } from "@preman/desktop/preload/bridge.js";
 
 /** The nine colours a card shows: the three surfaces you look at, then the six verbs you read. */
@@ -74,13 +75,20 @@ const EMPTY = "";
 
 const MISSING_FONT_HINT = "Not installed on this machine — the shipped stack is being used instead.";
 
+const SHARED_ROOT_FIELD_ID = "settings-shared-proto-root";
+const SHARED_ROOT_HINT = "Where a declared proto path is resolved to a checkout on this machine.";
+const SHARED_ROOT_NOTE =
+  "Workspaces always record the default. Overriding it only moves where this machine looks, and re-opens the workspace.";
+const NO_OVERRIDE = null;
+
 const ESCAPE = "Escape";
 
-const SETTINGS_TABS = ["appearance", "diagnostics"] as const;
+const SETTINGS_TABS = ["appearance", "protos", "diagnostics"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 const SETTINGS_TAB_LABEL: Readonly<Record<SettingsTab, string>> = {
   appearance: "Appearance",
+  protos: "Protos",
   diagnostics: "Diagnostics",
 };
 
@@ -142,6 +150,13 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
         <ThemeSection />
         <DensitySection />
         <FontSection />
+      </Pane>
+
+      {/* Its own tab rather than a fourth card under Appearance: where this machine resolves the
+          shared proto root is not a matter of taste, and it is the one setting here that restarts
+          every engine when it moves. */}
+      <Pane value="protos">
+        <ProtosSection />
       </Pane>
 
       <Pane value="diagnostics">
@@ -352,6 +367,69 @@ const ENGINE_RUNNING = "Running";
 const ENGINE_STOPPED = "Stopped";
 /** Before the one `invoke` settles. It is a local round trip, so this is a frame, not a wait. */
 const UNKNOWN_VALUE = "…";
+
+/**
+ * Where this machine resolves a shared proto link.
+ *
+ * The one control in this pane that is not about appearance, and the one that breaks the pane's
+ * own no-Cancel rule in spirit: it commits on blur rather than per keystroke, because a half-typed
+ * path is a path to nowhere and every workspace would re-open against it.
+ *
+ * The asymmetry is the point, and the hint says it: `SHARED_PROTO_ROOT` is what gets written into
+ * `resources.yaml` on every machine, and this only says where *this* one looks. Nobody should need
+ * it. It exists for a machine whose `/Users/Shared` is not writable, which is a real thing on a
+ * managed laptop and an unfixable one from inside the app.
+ *
+ * Saving it closes every engine, because a host reads the root from its environment at fork and
+ * cannot be told about a new one. The workspace is re-opened here rather than left to the user,
+ * since the alternative is a window whose sidebar is correct and whose engine is gone.
+ */
+function ProtosSection(): React.JSX.Element {
+  const shared = useAppearanceStore((state) => state.preferences.sharedProtoRoot);
+  const preferences = useAppearanceStore((state) => state.preferences);
+  const setPreferences = useAppearanceStore((state) => state.setPreferences);
+  const root = useSessionStore((state) => state.root);
+  const [draft, setDraft] = useState(shared ?? EMPTY);
+
+  function commit(next: string | null): void {
+    if (next === shared) return;
+    setPreferences({ ...preferences, sharedProtoRoot: next });
+    if (root !== null) void switchWorkspace(root);
+  }
+
+  return (
+    <Section title="Protos" hint={SHARED_ROOT_HINT}>
+      <Labelled label="Shared proto root" htmlFor={SHARED_ROOT_FIELD_ID} hint={SHARED_ROOT_NOTE}>
+        <div className="flex items-center gap-2">
+          <input
+            id={SHARED_ROOT_FIELD_ID}
+            spellCheck={false}
+            placeholder={SHARED_PROTO_ROOT}
+            value={draft}
+            className="h-control-lg w-full min-w-0 rounded-sm border border-line-strong bg-control px-2 font-mono text-2xs text-ink placeholder:text-ink-faint"
+            onChange={(changed) => {
+              setDraft(changed.target.value);
+            }}
+            onBlur={() => {
+              const clean = draft.trim();
+              commit(clean === EMPTY ? NO_OVERRIDE : clean);
+            }}
+          />
+          <Button
+            variant="neutral"
+            disabled={shared === NO_OVERRIDE}
+            onClick={() => {
+              setDraft(EMPTY);
+              commit(NO_OVERRIDE);
+            }}
+          >
+            Use the default
+          </Button>
+        </div>
+      </Labelled>
+    </Section>
+  );
+}
 
 /**
  * The four versions a bug report needs, and where to find the log.

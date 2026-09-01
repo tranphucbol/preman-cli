@@ -585,7 +585,7 @@ async function runGrpcRequest(
     schemaLocation: request.schema?.location,
     methodDescriptor: request.methodDescriptor,
     methodPath: liveRequest.methodPath,
-    includeDirs: resources.includeDirs,
+    includeDirsFor: resources.includeDirsFor,
     preferDescriptor: options.preferDescriptor,
   });
 
