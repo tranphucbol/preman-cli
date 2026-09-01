@@ -22,7 +22,13 @@ import { CHANNELS, type HostFailure } from "@preman/desktop/preload/bridge.js";
 const HOST_IDLE_MS = 5 * 60_000;
 const HOST_RESPAWN_LIMIT = 3;
 const CLEAN_EXIT_CODE = 0;
-const SERVICE_NAME_PREFIX = "preman-engine-";
+/**
+ * Exported because it is the only way back: `getAppMetrics` reports a host as an anonymous
+ * `Utility` with this name on it, and stripping the prefix is what turns that row into the
+ * workspace it belongs to. `resources.ts` takes it as an argument rather than importing it, so that
+ * module can be tested without this one's `electron`.
+ */
+export const SERVICE_NAME_PREFIX = "preman-engine-";
 const SERVICE_NAME_UNSAFE = /[^A-Za-z0-9_-]+/g;
 const SERVICE_NAME_REPLACEMENT = "-";
 /**

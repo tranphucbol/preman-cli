@@ -6,7 +6,7 @@
  * renderer asks its own engine host over a port this file only hands over.
  */
 import { existsSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { cpus, homedir } from "node:os";
 import { join } from "node:path";
 import {
   app,
@@ -24,7 +24,8 @@ import {
 import { PremanError } from "@preman/core/errors.js";
 import type * as MigrationApi from "@preman/core/api/migrate.js";
 import { createDiagnostics, type Diagnostics } from "@preman/desktop/main/diagnostics.js";
-import { createHostRegistry, type HostRegistry } from "@preman/desktop/main/hosts.js";
+import { createHostRegistry, SERVICE_NAME_PREFIX, type HostRegistry } from "@preman/desktop/main/hosts.js";
+import { createResourceSampler, type ResourceSampler } from "@preman/desktop/main/resources.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
 import { createWorkspace } from "@preman/desktop/main/workspaces.js";
 import { markPhase, PHASES, SHARED_PROTO_ROOT_ENV, type LogLevel } from "@preman/desktop/engine/protocol.js";
@@ -100,6 +101,12 @@ let window: BrowserWindow | undefined;
 let hosts: HostRegistry | undefined;
 let store: AppStore | undefined;
 let diagnostics: Diagnostics | undefined;
+/**
+ * The only thing in this process that does periodic work, and it does none unless a pane has said
+ * it is looking. Held here rather than inside `createWindow` so that a window closing can stop it:
+ * an interval that outlives its only reader is the thing `docs/decisions/040` exists to avoid.
+ */
+let sampler: ResourceSampler | undefined;
 
 /**
  * Say something, and keep it if there is anywhere to keep it.
@@ -671,6 +678,13 @@ function registerIpc(): void {
     applyWindowChrome(chrome);
   });
 
+  // `on` and not `handle`: there is nothing to answer with, because the answer is the next push.
+  // A message that arrives with no sampler — before `start()` finished, after the window went —
+  // is dropped rather than raised: the renderer's only recourse would be to ask again.
+  ipcMain.on(CHANNELS.watchResources, (_event, watching: boolean) => {
+    sampler?.watch(watching);
+  });
+
   ipcMain.on(CHANNELS.windowControl, (_event, action: WindowControl) => {
     if (window === undefined) return;
     if (action === "close") window.close();
@@ -711,6 +725,20 @@ function start(): void {
     write: note,
     writeReport: (report) => requireDiagnostics().writeReport(report),
   });
+  sampler = createResourceSampler({
+    read: () => app.getAppMetrics(),
+    // Guarded, unlike `migrateProgress` above: that one is called from inside an `invoke` the
+    // renderer is awaiting, so a window that is gone has already rejected it. This one is a timer,
+    // and the gap between `close` and the `closed` that stops it is a real second.
+    send: (sample) => {
+      if (window === undefined || window.webContents.isDestroyed()) return;
+      window.webContents.send(CHANNELS.resourceSample, sample);
+    },
+    enginePrefix: SERVICE_NAME_PREFIX,
+    // Read once. A machine does not gain cores while the app is open, and Chromium divided by this
+    // same count when it computed the percentage this converts back. See `resources.ts`.
+    cores: cpus().length,
+  });
 
   registerIpc();
   buildMenu();
@@ -737,6 +765,9 @@ function start(): void {
 
   window.on("closed", () => {
     window = undefined;
+    // Nobody sent a `watchResources(false)`, because the renderer that would have sent it is gone.
+    // On macOS the app survives this, so an unstopped timer would sample a closed app until quit.
+    sampler?.stop();
   });
 }
 

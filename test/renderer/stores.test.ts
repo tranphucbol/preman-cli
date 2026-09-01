@@ -190,6 +190,8 @@ function fakeBridge(): FakeBridge {
       return Promise.resolve(migrateResult);
     },
     onMigrateProgress: () => () => undefined,
+    onResourceSample: () => () => undefined,
+    watchResources: () => undefined,
     listWorkspaces: () => {
       listCalls += 1;
       return Promise.resolve([]);

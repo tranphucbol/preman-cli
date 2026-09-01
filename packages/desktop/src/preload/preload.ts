@@ -20,6 +20,7 @@ import {
   type MigrationProgress,
   type Preferences,
   type PremanBridge,
+  type ResourceSample,
   type SessionSnapshot,
   type WindowChrome,
   type WindowControl,
@@ -147,6 +148,22 @@ const bridge: PremanBridge = {
     };
   },
   diagnostics: () => ipcRenderer.invoke(CHANNELS.readDiagnostics) as Promise<DiagnosticsInfo>,
+  onResourceSample(listener) {
+    const handler = (_event: IpcRendererEvent, sample: ResourceSample): void => {
+      listener(sample);
+    };
+    ipcRenderer.on(CHANNELS.resourceSample, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.resourceSample, handler);
+    };
+  },
+  // Deliberately not paired with the subscription above. Unsubscribing is a renderer-side fact and
+  // stopping the sampler is a main-side one, and collapsing them would mean a component that
+  // re-subscribes on a callback identity change also stopping and restarting main's interval —
+  // which would re-prime, and throw away the first second of every re-render.
+  watchResources: (watching: boolean) => {
+    ipcRenderer.send(CHANNELS.watchResources, watching);
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

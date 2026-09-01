@@ -67,6 +67,22 @@ export const CHANNELS = {
    * synchronous channel, and a section the user has to open a pane to see is not it.
    */
   readDiagnostics: "preman:read-diagnostics",
+  /**
+   * Main to renderer, once a second while the Settings pane's Resources tab is open.
+   *
+   * A push rather than a reply, for the same reason `migrateProgress` is one: a single reading is
+   * not the answer. `percentCPUUsage` is an average over the interval since that process was last
+   * sampled, so a sample only means anything as the next one in a series.
+   */
+  resourceSample: "preman:resource-sample",
+  /**
+   * Renderer to main, when the Resources tab mounts and again when it unmounts.
+   *
+   * Fire-and-forget, like `setWindowChrome`: the acknowledgement is the next push. This is the
+   * whole gate — outside these two messages main holds no sampling timer, so an app with the tab
+   * shut costs exactly what it did before `docs/decisions/040`.
+   */
+  watchResources: "preman:watch-resources",
 } as const;
 
 export type WindowControl = "minimise" | "maximise" | "close";
@@ -333,6 +349,32 @@ export interface DiagnosticsInfo {
   readonly nodeVersion: string;
 }
 
+/**
+ * One process, once.
+ *
+ * Already labelled, and deliberately: the renderer has no business knowing that Chromium calls a
+ * window a `Tab`, and the name of an engine host is a fact about `hosts.ts`. Main resolves both, so
+ * the only thing that crosses is a row someone can read.
+ *
+ * `cpuPercent` is a percentage of one core, so a busy process reads above 100 and nothing caps it.
+ * `memoryKb` is Chromium's working set uncorrected, which counts the shared framework once in every
+ * process that maps it; `docs/decisions/040` argues for reporting it that way and saying so in the
+ * pane rather than subtracting an estimate nobody can audit.
+ */
+export interface ProcessReading {
+  readonly pid: number;
+  readonly label: string;
+  readonly cpuPercent: number;
+  readonly memoryKb: number;
+  readonly peakMemoryKb: number;
+}
+
+/** Every process, at one instant. `takenAt` is `Date.now()` in main, and is only ever displayed. */
+export interface ResourceSample {
+  readonly takenAt: number;
+  readonly processes: readonly ProcessReading[];
+}
+
 /** A host that will not come back. Carries `details[]` for the same reason `EngineError` does. */
 export interface HostFailure {
   root: string;
@@ -458,4 +500,21 @@ export interface PremanBridge {
    * nothing pays for it until someone opens the pane that shows it.
    */
   diagnostics(): Promise<DiagnosticsInfo>;
+  /**
+   * Every process's CPU and memory, once a second, for the Settings pane's Resources tab. Returns
+   * an unsubscribe function.
+   *
+   * Only arrives between `watchResources(true)` and `watchResources(false)`. Nothing is buffered
+   * while nobody is listening, so the first sample after subscribing is the first second measured
+   * and not a replay — see `docs/decisions/040` for why a spike you were not watching is gone.
+   */
+  onResourceSample(listener: (sample: ResourceSample) => void): () => void;
+  /**
+   * Start or stop sampling. The one thing in this surface the renderer says to make main do work.
+   *
+   * Paired with the mount and unmount of the tab that draws it, rather than left on: `app.getAppMetrics`
+   * walks the process list, and the reading it feeds is a repaint per second of a pane nobody has
+   * opened. Decision 017 found 7-16ms of ambient blocking in the idle app already.
+   */
+  watchResources(watching: boolean): void;
 }
