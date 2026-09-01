@@ -11,7 +11,13 @@
  * nine swatches say what the next hour will look like. The six method colours are in there because
  * they are the app's most-read colour signal and the hardest part of a palette to derive well —
  * this is the row that shows a theme whose verbs came out too close together.
+ *
+ * Diagnostics is a tab rather than a fourth section, because it is not an appearance preference and
+ * was only ever underneath one: with everything in a single column, the four strings a bug report
+ * asks for sat below forty-three theme cards. It shares this pane because it has nowhere better to
+ * be, not because it is the same subject, and a tab is how that is said.
  */
+import * as Tabs from "@radix-ui/react-tabs";
 import { useEffect, useState } from "react";
 
 import { DENSITIES, densityTokens } from "@preman/desktop/renderer/appearance/density.js";
@@ -28,6 +34,7 @@ import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Button, Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
 import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import type { Density, DiagnosticsInfo } from "@preman/desktop/preload/bridge.js";
 
 /** The nine colours a card shows: the three surfaces you look at, then the six verbs you read. */
@@ -69,7 +76,24 @@ const MISSING_FONT_HINT = "Not installed on this machine — the shipped stack i
 
 const ESCAPE = "Escape";
 
+const SETTINGS_TABS = ["appearance", "diagnostics"] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number];
+
+const SETTINGS_TAB_LABEL: Readonly<Record<SettingsTab, string>> = {
+  appearance: "Appearance",
+  diagnostics: "Diagnostics",
+};
+
+/**
+ * Not remembered between openings. The pane is unmounted on dismiss, so this resets to Appearance
+ * every time, which is the tab that answers the question the pane is opened for.
+ */
+const DEFAULT_SETTINGS_TAB: SettingsTab = "appearance";
+
 export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }): React.JSX.Element {
+  const [tab, setTab] = useState<SettingsTab>(DEFAULT_SETTINGS_TAB);
+  const underline = useTabUnderline();
+
   /*
    * Escape leaves. Bound while this pane is mounted rather than at the window, because the runner
    * and the variable manager have work in them that a stray Escape should not throw away, and this
@@ -89,25 +113,56 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
   }, [onDismiss]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <Tabs.Root
+      value={tab}
+      onValueChange={(next) => {
+        setTab(next as SettingsTab);
+      }}
+      className="flex min-h-0 flex-1 flex-col"
+    >
+      {/* The title row no longer carries "Appearance and diagnostics": the two triggers below say
+          the same sentence, and a subtitle that names the tabs is the sentence written twice. */}
       <div className="flex h-tab shrink-0 items-center gap-2 border-b border-line px-gutter">
         <span className="text-xs font-medium text-ink">Settings</span>
-        <span className="truncate text-2xs text-ink-faint">Appearance and diagnostics</span>
         <div className="flex-1" />
         <IconButton label="Close settings" onClick={onDismiss}>
           <CloseIcon />
         </IconButton>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-gutter">
-        <div className="flex max-w-4xl flex-col gap-6">
-          <ThemeSection />
-          <DensitySection />
-          <FontSection />
-          <DiagnosticsSection />
-        </div>
-      </div>
-    </div>
+      <Tabs.List className="flex shrink-0 items-center border-b border-line px-gutter" aria-label="Settings sections">
+        {SETTINGS_TABS.map((each) => (
+          <TabTrigger key={each} value={each} active={each === tab} underline={underline}>
+            {SETTINGS_TAB_LABEL[each]}
+          </TabTrigger>
+        ))}
+      </Tabs.List>
+
+      <Pane value="appearance">
+        <ThemeSection />
+        <DensitySection />
+        <FontSection />
+      </Pane>
+
+      <Pane value="diagnostics">
+        <DiagnosticsSection />
+      </Pane>
+    </Tabs.Root>
+  );
+}
+
+/**
+ * Each tab owns its own scroller rather than sharing one below the list, so arriving at Diagnostics
+ * does not inherit however far down the theme grid the last visit had scrolled.
+ */
+function Pane({ value, children }: { readonly value: SettingsTab; readonly children: React.ReactNode }) {
+  return (
+    <Tabs.Content
+      value={value}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-gutter focus:outline-none"
+    >
+      <div className="flex max-w-4xl flex-col gap-6">{children}</div>
+    </Tabs.Content>
   );
 }
 

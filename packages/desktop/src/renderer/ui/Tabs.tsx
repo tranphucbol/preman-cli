@@ -1,9 +1,10 @@
 /**
  * The tab trigger, and the one underline that travels between them.
  *
- * Three groups render this: the request editor's section tabs, its Edit/Preview switch, and the
- * response tabs. All three used to declare the same class string - twice, in two files - which is
- * how three controls that are one visual idea drift apart. They share it here instead.
+ * Four groups render this: the request editor's section tabs, its Edit/Preview switch, the response
+ * tabs, and the settings pane's Appearance/Diagnostics switch. The first three used to declare the
+ * same class string - twice, in two files - which is how controls that are one visual idea drift
+ * apart. They share it here instead, and the fourth was written against it rather than beside it.
  *
  * The underline is an element rather than the trigger's own bottom border, because a border cannot
  * travel. Motion projects the outgoing element's box onto the incoming one, so the accent bar

@@ -34,9 +34,11 @@ import {
 import {
   AddIcon,
   BranchIcon,
+  CheckIcon,
   CollapseAllIcon,
   CollectionIcon,
   ConsoleIcon,
+  CopyIcon,
   EnvironmentIcon,
   ExpandAllIcon,
   ICON_DEFAULTS,
@@ -1311,11 +1313,16 @@ function FailureBanner({
   );
 }
 
+/** How long the copy button shows "Copied" before it reverts to naming the action. */
+const COPY_FEEDBACK_MS = 1500;
+
 /**
  * One banner shape for every failure.
  *
  * `details` is rendered rather than summarised because it is carried the whole way from core's
- * `PremanError`, the CLI prints it, and a GUI that drops it is worse than the CLI.
+ * `PremanError`, the CLI prints it, and a GUI that drops it is worse than the CLI. `danger` gets a
+ * copy button beside its action for the same reason: a transport failure or a host crash carries
+ * the one string worth pasting into a bug report, and `warn` (today, only "degraded") never does.
  */
 function Banner({
   tone,
@@ -1347,7 +1354,47 @@ function Banner({
           </p>
         ))}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="flex shrink-0 items-center gap-1">
+        {tone === "danger" && <CopyErrorButton message={message} details={details} />}
+        {children}
+      </div>
     </m.div>
+  );
+}
+
+/**
+ * Copies `message` and `details` as the reader would want to paste them: one line each, message
+ * first. A timeout rather than a store flag - this is one button's own transient state, and giving
+ * it to `useSessionStore` would make every banner re-render when any one of them was clicked.
+ */
+function CopyErrorButton({
+  message,
+  details,
+}: {
+  readonly message: string;
+  readonly details: readonly string[];
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeout.current !== null) clearTimeout(timeout.current);
+    };
+  }, []);
+
+  const onClick = useCallback(() => {
+    void navigator.clipboard.writeText([message, ...details].join("\n"));
+    setCopied(true);
+    if (timeout.current !== null) clearTimeout(timeout.current);
+    timeout.current = setTimeout(() => {
+      setCopied(false);
+    }, COPY_FEEDBACK_MS);
+  }, [message, details]);
+
+  return (
+    <IconButton label={copied ? "Copied" : "Copy error"} onClick={onClick}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </IconButton>
   );
 }

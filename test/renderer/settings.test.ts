@@ -28,6 +28,10 @@ const NOTHING = "";
 
 /** The section's body, from its `function` line to the first close at column zero. */
 const DIAGNOSTICS_SECTION = /function DiagnosticsSection\(\)[\s\S]*?\n\}\n/;
+/** The tab list the pane is split by. */
+const SETTINGS_TABS = /const SETTINGS_TABS = \[([^\]]*)\] as const/;
+/** Every `"quoted"` string in a matched fragment. */
+const QUOTED = /"([^"]*)"/g;
 const DIAGNOSTICS_INFO = /export interface DiagnosticsInfo \{([\s\S]*?)\n\}/;
 /** Every `readonly name:` in an interface body. */
 const FIELD = /readonly (\w+):/g;
@@ -47,6 +51,12 @@ const DIAGNOSTICS_FIELDS = [
   "chromeVersion",
   "nodeVersion",
 ] as const;
+
+/** Appearance holds Theme, Density and Type; Diagnostics is the other one, and is not under them. */
+const TABS = ["appearance", "diagnostics"] as const;
+
+/** A bottom border on a trigger looks like the underline and cannot travel. `design-system.md`. */
+const HAND_ROLLED_UNDERLINE = "border-b-2 border-accent";
 
 function code(source: string): string {
   return source.replace(BLOCK_COMMENT, NOTHING).replace(LINE_COMMENT, NOTHING);
@@ -92,5 +102,27 @@ describe("the Settings pane's Diagnostics section", () => {
 
     expect(fields).toEqual([...DIAGNOSTICS_FIELDS]);
     expect(section()).not.toContain("lines");
+  });
+});
+
+describe("the Settings pane's tabs", () => {
+  it("givenTheSettingsPane_whenItRenders_thenAppearanceAndDiagnosticsAreTheTwoTabs", () => {
+    const found = SETTINGS_TABS.exec(code(SETTINGS));
+    expect(found).not.toBeNull();
+
+    const tabs = [...(found?.[1] ?? NOTHING).matchAll(QUOTED)].map(([, name]) => name);
+
+    // Diagnostics is its own tab rather than a fourth section under forty-three theme cards.
+    expect(tabs).toEqual([...TABS]);
+  });
+
+  it("givenTheTabTriggers_whenTheyRender_thenTheyUseTheAppsOwnUnderline", () => {
+    const source = code(SETTINGS);
+
+    // The travelling underline belongs to `ui/Tabs.tsx`. A pane that paints its own gets one that
+    // looks right and does not move, which is the failure `design-system.md` names.
+    expect(source).toContain("TabTrigger");
+    expect(source).toContain("useTabUnderline");
+    expect(source).not.toContain(HAND_ROLLED_UNDERLINE);
   });
 });

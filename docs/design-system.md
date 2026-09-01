@@ -460,8 +460,10 @@ What actually animates:
   overlay-pane swap.
 - **The disclosure caret**, in the sidebar and the console drawer, and dnd-kit's drop animation.
 - **The active tab's underline**, which travels rather than blinking. `ui/Tabs.tsx` owns the trigger
-  and the underline for all three tab groups; reach for `TabTrigger`, never for a bottom border on a
-  trigger, or the underline will look right and not move.
+  and the underline for all four tab groups — the request editor's sections, its Edit/Preview
+  switch, the response tabs, and `SettingsPane`'s Appearance/Diagnostics switch; reach for
+  `TabTrigger`, never for a bottom border on a trigger, or the underline will look right and not
+  move.
 - **The console's call detail**, opening and shutting by height. The one height animation in the app,
   and the one exit animation outside a banner.
 - **Sidebar rows, on a folder toggle.** Each row is placed by `translateY` at `index * rowHeight`, so
