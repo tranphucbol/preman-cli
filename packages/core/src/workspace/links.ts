@@ -61,6 +61,28 @@ export function declaredSharedPath(name: string, rest: string): string {
 }
 
 /**
+ * Where a spec declared through a link reads from without one, when the link names the
+ * checkout the workspace itself is in.
+ *
+ * A workspace that lives inside the repository whose protos it declares is holding the
+ * answer to its own missing link: the link is named after a checkout's directory, and
+ * that checkout is the one the engine walked up through to find `.postman/`. So the
+ * declaration is re-read against the checkout instead of against the shared root, and
+ * a fresh clone needs no setup at all (ADR 042).
+ *
+ * Deliberately not folded into {@link resolveSharedPath}: that function and
+ * {@link canonicalSharedPath} are asserted inverses over one root each, and a second
+ * root inside the pair would make a workspace declare one file and open another.
+ */
+export function ownCheckoutPath(declared: string, sharedRoot: string, repoRoot: string): string | undefined {
+  const rel = relative(sharedRoot, resolve(declared));
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return undefined;
+  const [name, ...rest] = rel.split(sep);
+  if (name !== linkNameForRepo(repoRoot)) return undefined;
+  return join(repoRoot, ...rest);
+}
+
+/**
  * How a resolved path should be written down, or `undefined` when it is not on a link.
  *
  * The inverse of {@link resolveSharedPath}: the index reports where a proto was read
@@ -70,11 +92,21 @@ export function declaredSharedPath(name: string, rest: string): string {
  * relative path from the request to a linked proto would count `../` segments off how
  * deep this checkout happens to sit, which is exactly the machine-dependence the shared
  * root removes.
+ *
+ * `repoRoot` is the second root the *resolver* gained in ADR 042, and it is here so that the
+ * writer does not gain one: a proto read out of the workspace's own checkout is still written
+ * as a path through the link that names that checkout. Without it, the picker would write a
+ * relative location for exactly the workspaces this fallback serves, and the machine dependence
+ * ADR 038 removed would come back one request at a time.
  */
-export function canonicalSharedPath(path: string, sharedRoot: string): string | undefined {
-  const rel = relative(sharedRoot, resolve(path));
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return undefined;
-  return join(DEFAULT_SHARED_PROTO_ROOT, rel);
+export function canonicalSharedPath(path: string, sharedRoot: string, repoRoot?: string): string | undefined {
+  const resolved = resolve(path);
+  const rel = relative(sharedRoot, resolved);
+  if (rel !== "" && !rel.startsWith("..") && !isAbsolute(rel)) return join(DEFAULT_SHARED_PROTO_ROOT, rel);
+  if (repoRoot === undefined) return undefined;
+  const fromRepo = relative(repoRoot, resolved);
+  if (fromRepo === "" || fromRepo.startsWith("..") || isAbsolute(fromRepo)) return undefined;
+  return declaredSharedPath(linkNameForRepo(repoRoot), fromRepo);
 }
 
 /** What marks the top of a checkout: a directory in a clone, a file in a worktree. */

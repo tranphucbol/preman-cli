@@ -33,7 +33,13 @@ import {
   writeSharedLink,
   type SharedLink,
 } from "@preman/core/workspace/links.js";
-import { deriveIncludeDirs, loadResources, PROTO_EXTENSION } from "@preman/core/workspace/resources.js";
+import {
+  deriveIncludeDirs,
+  loadResources,
+  PROTO_EXTENSION,
+  resolveDeclaredSpec,
+  type SpecVia,
+} from "@preman/core/workspace/resources.js";
 
 /** Path separator used inside resources.yaml, which is a committed file and so is posix. */
 const LOCATION_SEPARATOR = "/";
@@ -52,6 +58,16 @@ export interface DeclaredSpec {
   exists: boolean;
   /** The shared link it is reached through, when it is on one. */
   link: string | undefined;
+  /**
+   * Which root answered: the link, the checkout the workspace itself is in, or both.
+   *
+   * Reported rather than hidden behind `exists`. A spec that resolved through the checkout alone
+   * has nothing wrong with it, but the link it names is still worth creating for a workspace that
+   * is not inside this repository — and a silently green row is how that never happens. `both` is
+   * the machine where the link was made: it points at this same checkout, so which root answered
+   * is a distinction with no difference and the front ends say nothing (ADR 042).
+   */
+  via: SpecVia;
 }
 
 export interface SpecsView {
@@ -65,8 +81,20 @@ export interface SpecsView {
   /**
    * Link names this workspace's specs need that are missing or dangling on this
    * machine. Fixing one of these fixes every spec underneath it at once.
+   *
+   * A name whose specs all resolved out of the workspace's own checkout is not in here: there is
+   * nothing for the reader to repair. The name is still carried by the spec rows, because a
+   * workspace elsewhere on this machine may need the link that this one does not.
    */
   unresolvedLinks: string[];
+  /**
+   * The checkout the workspace itself is in, when it is in one.
+   *
+   * Computed here rather than in each front end: both need it for the same two things — the link
+   * name it would take, and the path to pre-fill instead of asking someone to find a directory
+   * the engine is already standing in (ADR 042).
+   */
+  ownCheckout: string | undefined;
 }
 
 /**
@@ -174,9 +202,15 @@ export function describeSpecs(dir: string): SpecsView {
   const resourcesPath = resourcesPathFor(ws);
   const base = dirname(resourcesPath);
 
+  const ownCheckout = repoRootFor(ws.root);
+
   const specs = declaredSpecs(resourcesPath).map((declared): DeclaredSpec => {
-    const path = resolveSharedPath(resolve(base, declared), sharedRoot);
-    return { declared, path, exists: existsSync(path), link: linkNameFor(path, sharedRoot) };
+    const declaredPath = resolve(base, declared);
+    const { path, via } = resolveDeclaredSpec(declaredPath, sharedRoot, ownCheckout);
+    // The link name is the one the *declaration* names, whichever root answered it: that is what
+    // `preman protos link` takes, and it does not stop being the answer for a second workspace.
+    const link = linkNameFor(resolveSharedPath(declaredPath, sharedRoot), sharedRoot);
+    return { declared, path, exists: existsSync(path), link, via };
   });
 
   const unresolved = new Set<string>();
@@ -193,6 +227,7 @@ export function describeSpecs(dir: string): SpecsView {
     specs,
     links: listSharedLinks(sharedRoot),
     unresolvedLinks: [...unresolved].sort(),
+    ownCheckout,
   };
 }
 

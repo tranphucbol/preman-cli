@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { PremanError } from "@preman/core/errors.js";
-import { linkRootFor, resolveSharedPath, sharedProtoRoot } from "./links.js";
+import { linkRootFor, ownCheckoutPath, repoRootFor, resolveSharedPath, sharedProtoRoot } from "./links.js";
 import { resourcesFileSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
 
@@ -45,6 +45,41 @@ const PROTO_ROOT_NAMES = new Set(["proto", "protos"]);
  */
 export const PROTO_EXTENSION = ".proto";
 
+/** Which of the resolver's two roots answered for one declared spec. */
+/**
+ * Which root a declaration was read from — and, when it was the checkout, whether the link
+ * held the file too. `both` exists so that a reader is only told about the checkout when the
+ * telling is news: on the machine where the link was made it points at that same checkout, and
+ * labelling all 24 rows there says nothing (ADR 042).
+ */
+export type SpecVia = "link" | "own-checkout" | "both";
+
+export interface ResolvedSpec {
+  /** Where the declaration reads from on this machine. */
+  path: string;
+  via: SpecVia;
+}
+
+/**
+ * Reads one declared spec against the two roots a workspace has: the shared link, and the
+ * checkout the workspace itself sits in.
+ *
+ * The checkout is tried first, and only wins when the file is actually there. Trying it
+ * first is what makes a repo-local workspace resolve identically on every machine: were the
+ * link to win, a clone's protos would depend on machine-wide state the clone cannot see, so
+ * editing a `.proto` on a feature branch would silently read some other checkout's copy.
+ * Falling through when the file is absent is the escape hatch that makes that safe — a spec
+ * deleted on this branch, or one that genuinely lives in another repository, resolves exactly
+ * as it does today (ADR 042).
+ */
+export function resolveDeclaredSpec(declared: string, sharedRoot: string, repoRoot: string | undefined): ResolvedSpec {
+  const linked = resolveSharedPath(declared, sharedRoot);
+  if (repoRoot === undefined) return { path: linked, via: "link" };
+  const own = ownCheckoutPath(linked, sharedRoot, repoRoot);
+  if (own === undefined || !existsSync(own)) return { path: linked, via: "link" };
+  return { path: own, via: existsSync(linked) ? "both" : "own-checkout" };
+}
+
 const EMPTY_RESOURCES: Resources = {
   workspaceId: undefined,
   specs: [],
@@ -74,17 +109,20 @@ export function loadResources(ws: Workspace): Resources {
   // Spec paths in resources.yaml are relative to the `.postman/` directory itself.
   const specBase = dirname(resourcesPath);
   const sharedRoot = sharedProtoRoot();
+  // One climb for the whole file, not one per spec: this is the catalog path, and `repoRootFor`
+  // costs an `existsSync` per ancestor level.
+  const repoRoot = repoRootFor(ws.root);
   const specs = (parsed.data.localResources?.specs ?? [])
     .filter((p) => extname(p).toLowerCase() === PROTO_EXTENSION)
-    .map((p) => resolveSharedPath(resolve(specBase, p), sharedRoot));
+    .map((p) => resolveDeclaredSpec(resolve(specBase, p), sharedRoot, repoRoot).path);
 
-  const pooled = deriveIncludeDirs(specs, ws.root, sharedRoot);
+  const pooled = deriveIncludeDirs(specs, ws.root, sharedRoot, repoRoot);
 
   return {
     workspaceId: parsed.data.workspace?.id,
     specs,
     includeDirs: pooled,
-    includeDirsFor: (spec) => [...new Set([...deriveIncludeDirs([spec], ws.root, sharedRoot), ...pooled])],
+    includeDirsFor: (spec) => [...new Set([...deriveIncludeDirs([spec], ws.root, sharedRoot, repoRoot), ...pooled])],
   };
 }
 
@@ -97,6 +135,12 @@ export function loadResources(ws: Workspace): Resources {
  * tree is a legitimate set of import roots, and stopping there reproduces exactly the
  * include dirs that same repo gets when the workspace lives inside it.
  *
+ * A spec that is under the workspace's own checkout but outside the workspace root walks to
+ * that checkout, for the same reason: the fallback in {@link resolveDeclaredSpec} reads it out
+ * of the checkout, and a checkout read directly has to offer the same import roots as the same
+ * checkout read through a link, or the include dirs depend on whether someone ran
+ * `preman protos link`.
+ *
  * Anything else contributes only the directory it sits in. Walking an arbitrary
  * absolute path further would offer `$HOME` as an import root and let one repo's proto
  * satisfy another's import by accident — and it cannot be inferred from the filesystem
@@ -108,8 +152,11 @@ export function loadResources(ws: Workspace): Resources {
  * `import "zas/common.proto"` fails until its checkout is reachable through the
  * shared root.
  */
-function walkBoundary(dir: string, root: string, sharedRoot: string): string {
+function walkBoundary(dir: string, root: string, sharedRoot: string, repoRoot: string | undefined): string {
   if (!relative(root, dir).startsWith("..")) return root;
+  // Only reached by a workspace nested below its checkout: when `root` *is* the checkout, the
+  // case above already answered.
+  if (repoRoot !== undefined && !relative(repoRoot, dir).startsWith("..")) return repoRoot;
   return linkRootFor(dir, sharedRoot) ?? dir;
 }
 
@@ -127,12 +174,17 @@ function walkBoundary(dir: string, root: string, sharedRoot: string): string {
  * Within the list, directories literally named `proto` are tried first, then
  * shallower before deeper.
  */
-export function deriveIncludeDirs(specPaths: string[], root: string, sharedRoot: string = sharedProtoRoot()): string[] {
+export function deriveIncludeDirs(
+  specPaths: string[],
+  root: string,
+  sharedRoot: string = sharedProtoRoot(),
+  repoRoot?: string,
+): string[] {
   const found = new Set<string>();
 
   for (const spec of specPaths) {
     const start = dirname(resolve(spec));
-    const stop = walkBoundary(start, root, sharedRoot);
+    const stop = walkBoundary(start, root, sharedRoot, repoRoot);
     let dir = start;
     for (;;) {
       found.add(dir);

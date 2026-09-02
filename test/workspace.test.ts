@@ -10,7 +10,12 @@ import {
   loadGlobals,
   saveEnvironmentValues,
 } from "@preman/core/workspace/environments.js";
-import { canonicalSharedPath, DEFAULT_SHARED_PROTO_ROOT, resolveSharedPath } from "@preman/core/workspace/links.js";
+import {
+  canonicalSharedPath,
+  DEFAULT_SHARED_PROTO_ROOT,
+  ownCheckoutPath,
+  resolveSharedPath,
+} from "@preman/core/workspace/links.js";
 import { deriveIncludeDirs, loadResources } from "@preman/core/workspace/resources.js";
 import { PremanError } from "@preman/core/errors.js";
 import {
@@ -133,6 +138,78 @@ describe("shared links", () => {
 
   it("givenTheDefaultRoot_whenMadeCanonical_thenThePathIsUnchanged", () => {
     expect(canonicalSharedPath(CANONICAL, DEFAULT_SHARED_PROTO_ROOT)).toBe(CANONICAL);
+  });
+});
+
+/**
+ * The workspace's own checkout as the resolver's second root (ADR 042). Asserted over paths
+ * rather than over a real clone: `ownCheckoutPath` reads no filesystem, and the cases that need
+ * a `.git` marker and a resolved file live in `specs.test.ts`.
+ */
+describe("the own checkout", () => {
+  const LOCAL = "/opt/protos";
+  const CHECKOUT = "/Users/bob/work/refund-core";
+  const REST = "api/acquiring_refund/v1/refund.proto";
+  const DECLARED = join(LOCAL, "refund-core", REST);
+
+  it("givenALinkNameMatchingTheCheckout_whenResolved_thenItReadsFromTheCheckout", () => {
+    expect(ownCheckoutPath(DECLARED, LOCAL, CHECKOUT)).toBe(join(CHECKOUT, REST));
+  });
+
+  it("givenALinkNameNotMatchingTheCheckout_whenResolved_thenItIsNotOnTheCheckout", () => {
+    // Decision 4 is exact: a clone in a differently-named directory gets nothing automatic,
+    // because a near-miss on a link name is a guess and `refund-core-clients` is a real link.
+    expect(ownCheckoutPath(DECLARED, LOCAL, `${CHECKOUT}-fix`)).toBeUndefined();
+    expect(ownCheckoutPath(join(LOCAL, "refund-core-clients", "payment.proto"), LOCAL, CHECKOUT)).toBeUndefined();
+  });
+
+  it("givenTheSharedRootItself_whenResolvedAgainstACheckout_thenItIsUndefined", () => {
+    expect(ownCheckoutPath(LOCAL, LOCAL, CHECKOUT)).toBeUndefined();
+    expect(ownCheckoutPath("/repos/refund-core/api/refund.proto", LOCAL, CHECKOUT)).toBeUndefined();
+  });
+
+  it("givenACheckoutPath_whenMadeCanonical_thenItIsWrittenWithTheDefaultRoot", () => {
+    // The resolver gained a root; the writer did not. A proto read out of the checkout is still
+    // declared through the link that names it, or the picker leaks a path only this clone reads.
+    expect(canonicalSharedPath(join(CHECKOUT, REST), LOCAL, CHECKOUT)).toBe(
+      join(DEFAULT_SHARED_PROTO_ROOT, "refund-core", REST),
+    );
+  });
+
+  it("givenACheckoutPath_whenResolvedAndMadeCanonicalAgain_thenItRoundTrips", () => {
+    const canonical = join(DEFAULT_SHARED_PROTO_ROOT, "refund-core", REST);
+    const read = ownCheckoutPath(resolveSharedPath(canonical, LOCAL), LOCAL, CHECKOUT);
+    expect(read).toBe(join(CHECKOUT, REST));
+    expect(canonicalSharedPath(read ?? "", LOCAL, CHECKOUT)).toBe(canonical);
+  });
+
+  it("givenAPathUnderNeitherRoot_whenMadeCanonical_thenItIsNotOnALink", () => {
+    expect(canonicalSharedPath("/repos/zas-spec/api/admin.proto", LOCAL, CHECKOUT)).toBeUndefined();
+    expect(canonicalSharedPath(CHECKOUT, LOCAL, CHECKOUT)).toBeUndefined();
+  });
+
+  it("givenASpecUnderTheCheckoutButOutsideTheWorkspace_whenDerivingIncludeDirs_thenItClimbsToTheCheckout", () => {
+    const workspace = join(CHECKOUT, "tools/workspace");
+    const dirs = deriveIncludeDirs([join(CHECKOUT, "pkg/client/paylater/payment.proto")], workspace, LOCAL, CHECKOUT);
+
+    // The same import roots the link would have given, which is the equality ADR 038 rests on.
+    expect(dirs).toEqual([
+      CHECKOUT,
+      join(CHECKOUT, "pkg"),
+      join(CHECKOUT, "pkg/client"),
+      join(CHECKOUT, "pkg/client/paylater"),
+    ]);
+  });
+
+  it("givenNoCheckout_whenDerivingIncludeDirs_thenTheBoundariesAreUnchanged", () => {
+    const spec = join(`${sep}elsewhere`, "zas-spec/api/zas/admin/admin.proto");
+    expect(deriveIncludeDirs([spec], `${sep}repo`, LOCAL, undefined)).toEqual([
+      join(`${sep}elsewhere`, "zas-spec/api/zas/admin"),
+    ]);
+    // And a checkout that the spec is not under changes nothing either.
+    expect(deriveIncludeDirs([spec], `${sep}repo`, LOCAL, CHECKOUT)).toEqual([
+      join(`${sep}elsewhere`, "zas-spec/api/zas/admin"),
+    ]);
   });
 });
 

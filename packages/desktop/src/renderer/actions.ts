@@ -526,9 +526,15 @@ export async function pickProtoFolder(): Promise<string | null> {
   return window.preman.pickProtoFolder();
 }
 
-/** The checkout a named link should point at. `null` if the pick was cancelled. */
-export async function pickCheckout(name: string): Promise<string | null> {
-  return window.preman.pickCheckout(name);
+/**
+ * The checkout a named link should point at. `null` if the pick was cancelled.
+ *
+ * `startIn` is where the dialog opens rather than what it answers: the workspace's own checkout
+ * is the likeliest target for a repo-local workspace, and an empty dialog is what turns decision
+ * 4's exact name match into a directory hunt (ADR 042).
+ */
+export async function pickCheckout(name: string, startIn: string | null): Promise<string | null> {
+  return window.preman.pickCheckout(name, startIn);
 }
 
 /**

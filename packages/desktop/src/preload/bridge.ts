@@ -439,9 +439,10 @@ export interface PremanBridge {
   pickProtoFolder(): Promise<string | null>;
   /**
    * Where a named shared link should point. `name` is only shown, so a machine that is missing
-   * three links can be told which one it is being asked about.
+   * three links can be told which one it is being asked about. `startIn` is where the dialog
+   * opens, which is the workspace's own checkout when it has one.
    */
-  pickCheckout(name: string): Promise<string | null>;
+  pickCheckout(name: string, startIn: string | null): Promise<string | null>;
   /**
    * A native save dialog for an already-rendered report. The renderer never names a file
    * system location, and the main process does the writing. Resolves to the path written,
