@@ -33,9 +33,33 @@ export const NO_BODY: BodyType = "none";
 /**
  * Script slots, keyed by the `type` core reads. gRPC and HTTP name their pre-call slot
  * differently, which is Postman's doing, not ours.
+ *
+ * Each slot also carries every `type` spelling core's `packages/core/src/scripts/chain.ts`
+ * accepts for that phase, matched case-insensitively. The Postman filesystem format (and this
+ * editor's own request description text) write the post-call phase as `afterResponse`, not the
+ * `test` label this editor writes for a new slot; without the alias, `readScripts` cannot find
+ * that entry, so the "After response" tab renders empty even though the script exists and runs.
+ * The renderer may not import `@preman/core` (see AGENTS.md), so these sets are copied from
+ * chain.ts's `PRE_SCRIPT_TYPES`/`POST_SCRIPT_TYPES` by hand and must be kept in sync with it.
  */
-export const HTTP_SCRIPT_TYPES = ["prerequest", "test"] as const;
-export const GRPC_SCRIPT_TYPES = ["beforeInvoke", "test"] as const;
+const PRE_SCRIPT_ALIASES = new Set(["beforeinvoke", "beforerequest", "prerequest", "pre-request"]);
+const POST_SCRIPT_ALIASES = new Set(["afterresponse", "test", "postresponse", "post-response"]);
+
+export interface ScriptTypeDef {
+  /** The `type` this editor writes when it creates a slot that does not exist yet. */
+  readonly canonical: string;
+  /** Every lower-cased `type` value core treats as this phase. */
+  readonly aliases: ReadonlySet<string>;
+}
+
+export const HTTP_SCRIPT_TYPES: readonly ScriptTypeDef[] = [
+  { canonical: "prerequest", aliases: PRE_SCRIPT_ALIASES },
+  { canonical: "test", aliases: POST_SCRIPT_ALIASES },
+];
+export const GRPC_SCRIPT_TYPES: readonly ScriptTypeDef[] = [
+  { canonical: "beforeInvoke", aliases: PRE_SCRIPT_ALIASES },
+  { canonical: "test", aliases: POST_SCRIPT_ALIASES },
+];
 
 export const FIELD = {
   name: ["name"],
@@ -405,13 +429,13 @@ export interface ScriptSlot {
   readonly at: number | null;
 }
 
-export function readScripts(data: unknown, types: readonly string[]): readonly ScriptSlot[] {
+export function readScripts(data: unknown, types: readonly ScriptTypeDef[]): readonly ScriptSlot[] {
   const raw = at(data, ["scripts"]);
   const existing = Array.isArray(raw) ? raw : [];
-  return types.map((type) => {
-    const index = existing.findIndex((entry) => text(record(entry)?.["type"]) === type);
+  return types.map((def) => {
+    const index = existing.findIndex((entry) => def.aliases.has(text(record(entry)?.["type"]).trim().toLowerCase()));
     const holder = index === -1 ? null : record(existing[index]);
-    return { type, code: text(holder?.["code"]), at: index === -1 ? null : index };
+    return { type: def.canonical, code: text(holder?.["code"]), at: index === -1 ? null : index };
   });
 }
 

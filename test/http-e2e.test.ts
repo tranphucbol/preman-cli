@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "@preman/cli/main.js";
@@ -156,6 +156,65 @@ describe("preman run (end to end against a real HTTP server)", () => {
     expect(http.received[0]?.method).toBe("GET");
     expect(http.received[0]?.body).toBe('{"kept": "verbatim"}');
     expect(report.request_headers["content-type"]).toBe("text/plain");
+  });
+
+  /**
+   * Decision 041, the HTTP half. The status line and body are already in hand, so the throw is
+   * recorded against the response instead of replacing it - and `--no-save` is deliberately
+   * absent, because the writeback is the half of this that a throw used to skip.
+   */
+  it("givenATestScriptThatThrows_whenRun_thenTheResponseIsStillReportedAndSaved", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      appendFileSync(
+        `${collectionPath(ws.root, "admin", "Echo Get Body")}.request.yaml`,
+        [
+          "",
+          "scripts:",
+          "  - type: test",
+          "    language: javascript",
+          "    code: |-",
+          '      pm.test("status is 200", () => pm.expect(pm.response.code).to.equal(200));',
+          '      pm.environment.set("echo_seen", "yes");',
+          '      throw new Error("order amount must be a non-negative safe integer");',
+          "",
+        ].join("\n"),
+      );
+
+      const { code, stdout } = await runCli([
+        "run",
+        "admin/Echo Get Body",
+        "-d",
+        ws.root,
+        "-e",
+        "QC",
+        "--var",
+        `http_url=${http.origin}`,
+        "--json",
+      ]);
+
+      expect(code).toBe(EXIT.TEST);
+
+      const report = JSON.parse(stdout) as HttpReport & {
+        tests: Array<{ name: string; status: string; error: string | null }>;
+        savedVars: Record<string, string>;
+        savedTo: string | null;
+      };
+
+      expect(report.status.code).toBe(200);
+      expect(report.response).not.toBeNull();
+      expect(report.tests[0]).toMatchObject({ name: "status is 200", status: "passed" });
+      expect(report.tests[1]).toMatchObject({
+        name: 'script "test"',
+        status: "failed",
+        error: "order amount must be a non-negative safe integer",
+      });
+      expect(report.testSummary).toMatchObject({ passed: 1, failed: 1 });
+      expect(report.savedVars.echo_seen).toBe("yes");
+      expect(readFileSync(report.savedTo!, "utf8")).toContain("echo_seen");
+    } finally {
+      ws.cleanup();
+    }
   });
 
   it("givenAUrlencodedBodySignedByAScript_whenRun_thenTheFormReachesTheWireEncoded", async () => {

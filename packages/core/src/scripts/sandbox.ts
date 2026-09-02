@@ -319,6 +319,10 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
    * Decision 6: a throw from an inherited script means a shared precondition is broken, so
    * the whole group stops and the message names the owner. A request's own throw keeps its
    * existing wording and its per-request `status: "error"`.
+   *
+   * `abortsGroup` is also how the runner tells the two apart after a response has arrived:
+   * decision 041 records a request's own throw as a failed test so the response still reports,
+   * and leaves an inherited one to propagate as before.
    */
   const inherited = origin.level !== "request";
   const scriptError = (message: string, details: string[] = gathered()): PremanError =>

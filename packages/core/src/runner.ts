@@ -388,11 +388,36 @@ function requestEvents(options: Pick<RunOptions, "sink" | "bodies" | "workspace"
   };
 }
 
+/**
+ * What `run` does with a throw from a request's own script.
+ *
+ * Before the call there is nothing to report but the failure, so it propagates and the request
+ * ends without an outcome. After it the response is already in hand, and discarding it would
+ * hide the very body the script was inspecting and skip the writeback that follows - so the
+ * throw is recorded as a failed test and the request still reports. Decision 041.
+ *
+ * An inherited script propagates either way: a broken shared precondition is not this request's
+ * result to report, and decision 6 stops the whole group on it.
+ */
+const PROPAGATE_THROW = "propagate";
+const RECORD_THROW = "record";
+type ScriptThrowPolicy = typeof PROPAGATE_THROW | typeof RECORD_THROW;
+
+/**
+ * `runScript` wraps a throw as `script "<phase>" failed: <message>`, which is what the CLI's
+ * one-line error path prints. The recorded test already names the phase, so the prefix is
+ * dropped rather than printed twice; an unrecognised shape is kept whole.
+ */
+function scriptFailureDetail(rawType: string, message: string): string {
+  const prefix = `script "${rawType}" failed: `;
+  return message.startsWith(prefix) ? message.slice(prefix.length) : message;
+}
+
 interface ScriptSink {
   consoleLines: ConsoleLine[];
   tests: TestResult[];
   sideRequests: SideRequestRecord[];
-  run: (types: Set<string>, response?: ScriptResponseInfo) => Promise<void>;
+  run: (types: Set<string>, response?: ScriptResponseInfo, onThrow?: ScriptThrowPolicy) => Promise<void>;
 }
 
 interface ScriptSinkOptions {
@@ -425,29 +450,64 @@ function scriptSink(options: ScriptSinkOptions): ScriptSink {
   const tests: TestResult[] = [];
   const sideRequests: SideRequestRecord[] = [];
 
-  const run = async (types: Set<string>, response?: ScriptResponseInfo): Promise<void> => {
+  /**
+   * Collected as the script emits them rather than from the value `runScript` returns: a script
+   * that throws never returns one, and the lines and assertions it managed first are exactly
+   * what explains the failure. Wrapping the caller's observer keeps the one announcement point
+   * the sandbox already guarantees.
+   */
+  const collect: Required<ScriptObserver> = {
+    onLog: (line) => {
+      consoleLines.push(line);
+      options.observer?.onLog?.(line);
+    },
+    onTest: (result) => {
+      tests.push(result);
+      options.observer?.onTest?.(result);
+    },
+    onSideRequest: (record) => {
+      sideRequests.push(record);
+      options.observer?.onSideRequest?.(record);
+    },
+  };
+
+  const run = async (
+    types: Set<string>,
+    response?: ScriptResponseInfo,
+    onThrow: ScriptThrowPolicy = PROPAGATE_THROW,
+  ): Promise<void> => {
     for (const script of options.scripts) {
       if (!types.has(script.event)) continue;
-      const result = await runScript({
-        code: script.code,
-        store: options.store,
-        cookies: options.cookies,
-        // `rawType`, not `event`: `pm.info.eventName` must read what the file says.
-        info: { requestName: options.requestName, eventName: script.rawType },
-        origin: script.origin,
-        request: options.request(),
-        timeoutMs: options.scriptTimeoutMs,
-        requestTimeoutMs: options.requestTimeoutMs,
-        safeEval: options.safeEval,
-        iteration: options.iteration,
-        iterationCount: options.iterationCount,
-        tlsCerts: options.tlsCerts,
-        ...(options.observer === undefined ? {} : { observer: options.observer }),
-        ...(response === undefined ? {} : { response }),
-      });
-      consoleLines.push(...result.logs);
-      tests.push(...result.tests);
-      sideRequests.push(...result.sideRequests);
+      try {
+        await runScript({
+          code: script.code,
+          store: options.store,
+          cookies: options.cookies,
+          // `rawType`, not `event`: `pm.info.eventName` must read what the file says.
+          info: { requestName: options.requestName, eventName: script.rawType },
+          origin: script.origin,
+          request: options.request(),
+          timeoutMs: options.scriptTimeoutMs,
+          requestTimeoutMs: options.requestTimeoutMs,
+          safeEval: options.safeEval,
+          iteration: options.iteration,
+          iterationCount: options.iterationCount,
+          tlsCerts: options.tlsCerts,
+          observer: collect,
+          ...(response === undefined ? {} : { response }),
+        });
+      } catch (cause) {
+        if (onThrow === PROPAGATE_THROW || (cause instanceof PremanError && cause.abortsGroup)) throw cause;
+        collect.onTest({
+          name: `script "${script.rawType}"`,
+          status: "failed",
+          error: scriptFailureDetail(script.rawType, toErrorInfo(cause).message),
+          origin: script.origin,
+        });
+        // The scripts of one phase build on each other - a library rehydrated by the first is
+        // read by the second - so the rest would only report cascades of this same failure.
+        return;
+      }
     }
   };
 
@@ -664,8 +724,8 @@ async function runGrpcRequest(
       metadata: invoke.metadata,
       trailers: invoke.trailers,
     };
-    await sink.run(MESSAGE_SCRIPT_TYPES, response);
-    await sink.run(POST_SCRIPT_TYPES, response);
+    await sink.run(MESSAGE_SCRIPT_TYPES, response, RECORD_THROW);
+    await sink.run(POST_SCRIPT_TYPES, response, RECORD_THROW);
   } else if (hasScriptOf(chain.scripts, POST_SCRIPT_TYPES)) {
     warnings.push("afterResponse scripts skipped: the call failed at the transport level");
   }
@@ -793,15 +853,19 @@ async function runHttpRequest(
       warnings.push("afterResponse scripts skipped: no response was received");
     }
   } else {
-    await sink.run(POST_SCRIPT_TYPES, {
-      protocol: "http",
-      code: invoke.statusCode,
-      codeName: invoke.statusMessage,
-      message: invoke.message,
-      durationMs: invoke.durationMs,
-      body: invoke.body,
-      headers: invoke.headers,
-    });
+    await sink.run(
+      POST_SCRIPT_TYPES,
+      {
+        protocol: "http",
+        code: invoke.statusCode,
+        codeName: invoke.statusMessage,
+        message: invoke.message,
+        durationMs: invoke.durationMs,
+        body: invoke.body,
+        headers: invoke.headers,
+      },
+      RECORD_THROW,
+    );
   }
 
   // 5. Persist variables the scripts changed, post-response ones included.

@@ -49,6 +49,7 @@ The CLI's own design predates the practice.
 | [038](038-a-proto-is-declared-through-a-shared-link.md)             | A proto is declared through a shared link                              |
 | [039](039-a-request-resolves-twice-around-the-scripts.md)           | A request resolves twice, around the scripts                           |
 | [040](040-the-app-measures-itself-only-while-watched.md)            | The app measures itself, only while watched                            |
+| [041](041-a-throw-after-the-response-is-a-failed-test.md)           | A throw after the response is a failed test                            |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -173,5 +174,16 @@ one thing the feature cannot do: a spike you were not watching is gone. It repor
 uncorrected for the same reason 032 fixed a comment instead of a watcher, and it is the first record
 to argue _for_ a second indicator against `Progress.tsx`'s "there is exactly one of them" — allowed
 not by exception but because that rule is about a proportion and a sparkline has no denominator.
+
+041 is the second engine record taken from a bug report, and like 039 it is about the moment either
+side of the scripts rather than about the app. It is the first to argue that an error should be
+demoted: a post-response throw stops being a dead run and becomes one failed assertion about a
+response that had already arrived, which is what the reporters were always able to say and were
+never given. Its mechanism is a listener rather than a new return type — the sandbox already
+announced every assertion as it happened, and 039's lesson about not restructuring what already
+works applied twice over, once to `runScript`'s throw and once to `PremanError.abortsGroup`, which
+was already the flag that separates a request's own failure from an inherited one. The cost is
+stated as the thing the fix buys and cannot un-buy: a script that throws halfway now persists the
+variables it set before it threw.
 
 `TEMPLATE.md` is the shape of a new one.

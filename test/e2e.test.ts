@@ -263,6 +263,78 @@ describe("preman run (end to end against a real gRPC server)", () => {
   });
 
   /**
+   * Decision 041. The call succeeded and the body is already in hand, so a throw from the
+   * request's own post-response script is one failed assertion about that response - not a
+   * reason to report nothing. What used to be lost: the response, the assertions the script
+   * managed first, and the environment writeback.
+   */
+  it("givenAnAfterResponseScriptThatThrows_whenRun_thenTheResponseIsStillReportedAndSaved", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const request = collectionPath(clone.root, "payment", "nested", "Deep Echo.request.yaml");
+      appendFileSync(
+        request,
+        [
+          "",
+          "scripts:",
+          "  - type: afterResponse",
+          "    language: text/javascript",
+          "    code: |-",
+          '      pm.test("grpc status is OK", () => pm.expect(pm.response.code).to.equal(0));',
+          '      pm.environment.set("deep_echo_seen", "yes");',
+          '      throw new Error("order amount must be a non-negative safe integer");',
+          "",
+        ].join("\n"),
+      );
+
+      const { code, stdout } = await runCli([
+        "run",
+        "Deep Echo",
+        "-d",
+        clone.root,
+        "-e",
+        "LOCAL",
+        "--url",
+        target(),
+        "--json",
+      ]);
+
+      // A failed assertion, not a dead run: the same exit code any other failing test gives.
+      expect(code).toBe(EXIT.TEST);
+
+      const report = JSON.parse(stdout) as {
+        response: Record<string, unknown>;
+        tests: Array<{ name: string; status: string; error: string | null }>;
+        testSummary: { passed: number; failed: number };
+        savedVars: Record<string, string>;
+        savedTo: string | null;
+      };
+
+      // The call happened and its body is in the report rather than thrown away with the error.
+      expect(received).toHaveLength(1);
+      expect(report.response.echoed).toBe("deep");
+
+      // The assertion the script managed before it threw survives it.
+      expect(report.tests[0]).toMatchObject({ name: "grpc status is OK", status: "passed" });
+
+      // And the throw itself reads as a failed test naming the phase, carrying its message.
+      expect(report.tests[1]).toMatchObject({
+        name: 'script "afterResponse"',
+        status: "failed",
+        error: "order amount must be a non-negative safe integer",
+      });
+      expect(report.testSummary).toMatchObject({ passed: 1, failed: 1 });
+
+      // The writeback the throw used to skip.
+      expect(report.savedVars.deep_echo_seen).toBe("yes");
+      expect(report.savedTo).not.toBeNull();
+      expect(readFileSync(report.savedTo!, "utf8")).toContain("deep_echo_seen");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  /**
    * The price of resolving twice, and why a dynamic value is drawn once and carried. A script
    * that signs the body it was handed must be signing the body that is sent.
    */
@@ -1644,6 +1716,35 @@ describe("group-level scripts (gRPC)", () => {
       expect(report.exitCode).toBe(EXIT.CLI);
       expect(code).toBe(EXIT.CLI);
       expect(received).toHaveLength(0);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  /**
+   * The carve-out decision 041 does not make. A request's own post-response throw is one
+   * failed assertion about a response it can still report; an inherited one is the same broken
+   * shared precondition it was before the response arrived, so decision 6 still stops the group.
+   */
+  it("givenInheritedPostScriptThrows_whenGroupRuns_thenGroupStillAbortsAfterTheResponse", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      writeDefinition(
+        clone.root,
+        "payment",
+        definitionWithScript("payment", "grpc:afterResponse", 'throw new Error("shared teardown broke");'),
+      );
+
+      const { code, stdout } = await runCli(paymentGroup(clone.root));
+
+      const report = JSON.parse(stdout) as GroupReport;
+      expect(report.items.map((i) => [i.request.path, i.status])).toEqual([["payment/Ping", "error"]]);
+      expect(report.items[0]?.error?.message).toContain("collection payment script");
+      expect(report.items[0]?.error?.message).toContain("shared teardown broke");
+      expect(report.bailReason).toBe("inherited-script");
+      expect(code).toBe(EXIT.CLI);
+      // The call itself went out - this aborts on the way back, not on the way in.
+      expect(received).toHaveLength(1);
     } finally {
       clone.cleanup();
     }
