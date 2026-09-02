@@ -299,6 +299,17 @@ If the file is missing or cannot be loaded, `preman` falls back to the base64 `m
 stored in the request and prints a warning. The descriptor is a snapshot from when the request was
 saved and may be stale or contain only one method. `--descriptor` forces this path.
 
+A path under `/Users/Shared/postman-protos` — in `localResources.specs` or in a request's
+`schema.location` — is a declaration rather than a literal location, and it is read against two
+roots. The link is one. The other is the checkout the workspace itself is in, used when the link's
+name is that checkout's own directory name and the file is actually there, so a workspace committed
+inside the repository whose protos it declares resolves them on a clone with no links at all. A file
+absent from that checkout falls through to the link, a name that is not the checkout's directory name
+never matches, and include directories climb to whichever of the two roots answered. `preman protos`
+says a spec came from the checkout only when the link did not hold it too, so the machine the link
+was made on prints what it always printed; nothing about what is _written_ changes, including from
+the app's method picker.
+
 ### Target resolution
 
 The target is selected in this order:
