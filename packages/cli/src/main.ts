@@ -14,6 +14,7 @@ import { describeWorkspace } from "@preman/core/api/inspect.js";
 import { listCloudWorkspaces, migrateCloudWorkspace } from "@preman/core/api/migrate.js";
 import { describeSpecs, linkCheckout } from "@preman/core/api/specs.js";
 import { runSelection } from "@preman/core/api/run.js";
+import { findWorkspace } from "@preman/core/workspace/discover.js";
 import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 
 declare const __PREMAN_VERSION__: string;
@@ -294,7 +295,10 @@ export async function main(argv: string[]): Promise<ExitCode> {
           });
         }
         const link = linkCheckout(name, target, { repoint: values.repoint === true });
-        process.stdout.write(`${renderLinkWrite(link, { json })}\n`);
+        // How much of the workspace the write repaired, when there is one to ask: a link pointing
+        // one directory off from the checkout reports `0 of 23` instead of reading as success.
+        const view = findWorkspace(dir) === null ? undefined : describeSpecs(dir);
+        process.stdout.write(`${renderLinkWrite(link, view, { json })}\n`);
         return EXIT.OK;
       }
       throw new PremanError(`unknown protos subcommand "${sub}"`, { details: ["expected `show` or `link`"] });

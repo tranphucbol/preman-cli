@@ -74,6 +74,8 @@ const NO_SPECS_HINT = "This workspace declares no protos yet.";
 const NO_PLAN_HINT = "Every proto picked is already declared.";
 /** A spec whose file is not on this machine cannot be linked, so its line is left as written. */
 const LEFT_ALONE = "not on this machine";
+const LOCATE_LABEL = "Locate…";
+const REPOINT_LABEL = "Repoint…";
 
 /**
  * How a plan got started, which is the only thing separating an add from a conversion once the
@@ -197,7 +199,7 @@ export function ProtosPane({ onDismiss }: { readonly onDismiss: () => void }): R
 
   const locate = useCallback(
     async (link: SharedLink): Promise<void> => {
-      const target = await pickCheckout(link.name);
+      const target = await pickCheckout(link.name, view?.ownCheckout ?? null);
       if (target === null) return;
       await guard(async () => {
         // Repointing is always allowed from this button: the link is already on screen with its
@@ -212,7 +214,7 @@ export function ProtosPane({ onDismiss }: { readonly onDismiss: () => void }): R
         return null;
       });
     },
-    [guard],
+    [guard, view?.ownCheckout],
   );
 
   const drop = useCallback(
@@ -370,6 +372,9 @@ function LinkRow({
   readonly onLocate: (link: SharedLink) => Promise<void>;
 }) {
   const { name, detail, missing } = state;
+  // Nothing to repoint when the entry is not there at all - which now includes the healthy case
+  // where the link is absent because the workspace's own checkout answered for it (ADR 042).
+  const label = state.link.resolves ? REPOINT_LABEL : LOCATE_LABEL;
 
   return (
     <div className="flex h-row items-center gap-2 border-b border-line px-gutter hover:bg-hover">
@@ -395,7 +400,7 @@ function LinkRow({
           void onLocate(state.link);
         }}
       >
-        {missing ? "Locate…" : "Repoint…"}
+        {label}
       </Button>
     </div>
   );

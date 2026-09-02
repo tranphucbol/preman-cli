@@ -6,7 +6,9 @@ import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
 import { progressWriter, type ProgressStream } from "@preman/cli/progress.js";
 import { renderGroupOutcome, renderOutcome } from "@preman/cli/render/outcome.js";
 import { renderProgress } from "@preman/cli/render/migrate.js";
+import { renderLinkWrite, renderSpecs } from "@preman/cli/render/protos.js";
 import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
+import type { DeclaredSpec, SpecsView } from "@preman/core/api/specs.js";
 import type { MigrationPhase, MigrationProgress } from "@preman/core";
 import type { GroupRunOutcome, RunOutcome } from "@preman/core/runner.js";
 
@@ -438,5 +440,127 @@ describe("progressWriter", () => {
     expect(written).toHaveLength(2);
     expect(written.every((chunk) => chunk.endsWith("\n"))).toBe(true);
     expect(written.some((chunk) => chunk.includes("\r"))).toBe(false);
+  });
+});
+
+/**
+ * The protos view, which is the only render whose subject is a machine's setup rather than a run.
+ * Built from literals rather than from a workspace: what is asserted here is the wording a person
+ * repairs their machine from, and nothing about it needs a `.git` or a shared root to exist.
+ */
+describe("renderSpecs", () => {
+  const SHARED = "/Users/Shared/postman-protos";
+  const CHECKOUT = "/Users/bob/work/refund-core";
+  const PLAIN = { json: false };
+
+  function spec(link: string, rest: string, extra: Partial<DeclaredSpec> = {}): DeclaredSpec {
+    const declared = `${SHARED}/${link}/${rest}`;
+    return { declared, path: declared, exists: true, link, via: "link", ...extra };
+  }
+
+  function view(specs: readonly DeclaredSpec[], extra: Partial<SpecsView> = {}): SpecsView {
+    return {
+      root: CHECKOUT,
+      resourcesPath: `${CHECKOUT}/.postman/resources.yaml`,
+      sharedRoot: SHARED,
+      specs: [...specs],
+      links: [],
+      unresolvedLinks: [],
+      ownCheckout: undefined,
+      ...extra,
+    };
+  }
+
+  it("givenAMissingLinkForTheOwnCheckout_whenRendered_thenTheCommandCarriesTheRealPath", () => {
+    const rendered = renderSpecs(
+      view([spec("refund-core", "api/refund.proto", { exists: false })], {
+        unresolvedLinks: ["refund-core"],
+        ownCheckout: CHECKOUT,
+      }),
+      PLAIN,
+    );
+
+    expect(rendered).toContain(`preman protos link refund-core ${CHECKOUT}`);
+    expect(rendered).not.toContain("<path-to-checkout>");
+  });
+
+  it("givenAMissingLinkForAnotherRepository_whenRendered_thenThePlaceholderIsKept", () => {
+    // No checkout to stand in, which is every workspace that is not inside a repository.
+    const rendered = renderSpecs(
+      view([spec("zas-spec", "api/admin.proto", { exists: false })], { unresolvedLinks: ["zas-spec"] }),
+      PLAIN,
+    );
+
+    expect(rendered).toContain("preman protos link zas-spec <path-to-checkout>");
+  });
+
+  it("givenSpecsFromTheOwnCheckout_whenRendered_thenTheLinkNameIsStillShown", () => {
+    // Decision 9: the link is not needed here and is still needed by a workspace elsewhere, so
+    // the name a person would type stays on screen rather than the row reading as plain healthy.
+    const rendered = renderSpecs(
+      view(
+        [
+          spec("refund-core", "api/refund.proto", { path: `${CHECKOUT}/api/refund.proto`, via: "own-checkout" }),
+          spec("refund-core", "api/query.proto", { path: `${CHECKOUT}/api/query.proto`, via: "own-checkout" }),
+        ],
+        { ownCheckout: CHECKOUT },
+      ),
+      PLAIN,
+    );
+
+    expect(rendered).toContain("refund-core");
+    expect(rendered).toContain("own checkout");
+    expect(rendered).not.toContain("(missing)");
+    expect(rendered).not.toContain("link(s) to fix");
+  });
+
+  it("givenALinkThatHoldsTheSpecsToo_whenRendered_thenNoRowIsLabelled", () => {
+    // The machine the link was made on. Labelling every row there is noise, not information:
+    // the link resolves and it points at this same checkout.
+    const rendered = renderSpecs(
+      view(
+        [
+          spec("refund-core", "api/refund.proto", { path: `${CHECKOUT}/api/refund.proto`, via: "both" }),
+          spec("refund-core", "api/query.proto", { path: `${CHECKOUT}/api/query.proto`, via: "both" }),
+        ],
+        { ownCheckout: CHECKOUT, links: [{ name: "refund-core", target: CHECKOUT, resolves: true }] },
+      ),
+      PLAIN,
+    );
+
+    expect(rendered).toContain(`refund-core -> ${CHECKOUT}`);
+    expect(rendered).not.toContain("own checkout");
+  });
+
+  it("givenALinkWriteThatResolvesEverySpec_whenRendered_thenItSaysAllOfThem", () => {
+    const written = renderLinkWrite(
+      { name: "refund-core", target: CHECKOUT, resolves: true },
+      view([spec("refund-core", "api/refund.proto"), spec("refund-core", "api/query.proto")]),
+      PLAIN,
+    );
+
+    expect(written).toContain("2 of 2 specs now resolve");
+  });
+
+  it("givenALinkWriteThatResolvesNothing_whenRendered_thenItSaysNoneOfThem", () => {
+    // The wrong-checkout signal. `linked refund-core -> …/pkg` used to print as success and be
+    // discovered later as a method picker with nothing in it.
+    const written = renderLinkWrite(
+      { name: "refund-core", target: `${CHECKOUT}/pkg`, resolves: true },
+      view([
+        spec("refund-core", "api/refund.proto", { exists: false }),
+        spec("refund-core", "api/query.proto", { exists: false }),
+      ]),
+      PLAIN,
+    );
+
+    expect(written).toContain("0 of 2 specs now resolve");
+  });
+
+  it("givenNoWorkspaceToCountAgainst_whenRendered_thenOnlyTheWriteIsReported", () => {
+    // `protos link` runs without a workspace on purpose; a count it cannot take is not a zero.
+    const written = renderLinkWrite({ name: "refund-core", target: CHECKOUT, resolves: true }, undefined, PLAIN);
+
+    expect(written).toBe(`linked refund-core -> ${CHECKOUT}`);
   });
 });

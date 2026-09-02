@@ -414,13 +414,16 @@ async function pickProtoFolderDialog(): Promise<string | null> {
  * because the machine that is missing links is usually missing several and they are told apart
  * by nothing but their names.
  */
-async function pickCheckoutDialog(name: string): Promise<string | null> {
+async function pickCheckoutDialog(name: string, startIn: string | null): Promise<string | null> {
   const parent = window;
   if (parent === undefined) return null;
   const picked = await dialog.showOpenDialog(parent, {
     title: `${CHECKOUT_DIALOG_TITLE_PREFIX}${name}${CHECKOUT_DIALOG_TITLE_SUFFIX}`,
     buttonLabel: CHECKOUT_DIALOG_BUTTON,
     properties: ["openDirectory"],
+    // The workspace's own checkout when there is one: the directory a repo-local workspace is
+    // most likely being asked about is the one the engine is already standing in (ADR 042).
+    ...(startIn === null ? {} : { defaultPath: startIn }),
   });
   const dir = picked.filePaths[0];
   return picked.canceled || dir === undefined ? null : dir;
@@ -639,7 +642,9 @@ function registerIpc(): void {
 
   handle(CHANNELS.pickProtoFolder, () => pickProtoFolderDialog());
 
-  handle(CHANNELS.pickCheckout, (_event: IpcMainInvokeEvent, name: string) => pickCheckoutDialog(name));
+  handle(CHANNELS.pickCheckout, (_event: IpcMainInvokeEvent, name: string, startIn: string | null) =>
+    pickCheckoutDialog(name, startIn),
+  );
 
   handle(CHANNELS.saveReport, (_event: IpcMainInvokeEvent, suggestedName: string, text: string) =>
     saveReportDialog(suggestedName, text),

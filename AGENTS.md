@@ -38,7 +38,9 @@ packages/core/                   @preman/core - the engine, private, bundled fro
   src/runner.ts                  orchestration: scripts -> interpolate -> invoke -> writeback
   src/workspace/                 discovery, resources, collections/groups, environments, zod schemas
     links.ts                     the shared proto root and its symlinks; 038 says why a spec runs
-                                 through one, and resources.ts stops its include-dir climb there
+                                 through one, 042 when it does not - a link naming the workspace's
+                                 own checkout is read out of it - and resources.ts stops its
+                                 include-dir climb at whichever root answered
   src/vars/                      scoped store, {{token}} interpolation, dynamic vars
   src/scripts/                   node:vm sandbox (pm shim), chai + gRPC assertions
   src/grpc/                      schema resolution, target/TLS, unary invoke

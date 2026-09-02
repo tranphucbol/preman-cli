@@ -50,6 +50,7 @@ The CLI's own design predates the practice.
 | [039](039-a-request-resolves-twice-around-the-scripts.md)           | A request resolves twice, around the scripts                           |
 | [040](040-the-app-measures-itself-only-while-watched.md)            | The app measures itself, only while watched                            |
 | [041](041-a-throw-after-the-response-is-a-failed-test.md)           | A throw after the response is a failed test                            |
+| [042](042-the-resolver-has-two-roots.md)                            | The resolver has two roots, and the writer has one                     |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -185,5 +186,18 @@ works applied twice over, once to `runScript`'s throw and once to `PremanError.a
 was already the flag that separates a request's own failure from an inherited one. The cost is
 stated as the thing the fix buys and cannot un-buy: a script that throws halfway now persists the
 variables it set before it threw.
+
+042 is the first record to reopen a cost another one accepted knowingly, and it does it without
+reversing anything: 038 priced "a repository-local workspace stops being self-contained" and named
+the mitigation as a link named after the repository you just cloned, and 042 observes that a name a
+person can act on is a name the resolver can act on. So the file keeps 038's single canonical
+spelling — including from the method picker, which is why the writer's second boundary shipped in
+the same phase as the reader's fallback rather than after it — and only what is _read_ gains a
+second root. It is also the first to argue that a repair should stay visible after it stops being
+needed: a link a repo-local workspace no longer needs is still needed by a workspace elsewhere, so
+`via` distinguishes the two rather than letting the row read as plain healthy. Its costs are stated
+as the two it cannot avoid: a deliberate repoint is overridden for a workspace inside a matching
+clone, and a clone whose directory was renamed still gets nothing automatic — compensated only by a
+pre-filled path, which is a suggestion and says so.
 
 `TEMPLATE.md` is the shape of a new one.

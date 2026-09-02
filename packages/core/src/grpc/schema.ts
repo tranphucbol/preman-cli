@@ -3,7 +3,8 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as protoLoader from "@grpc/proto-loader";
 import type { MethodDefinition, PackageDefinition, ServiceDefinition } from "@grpc/proto-loader";
 import { PremanError } from "@preman/core/errors.js";
-import { resolveSharedPath, sharedProtoRoot } from "@preman/core/workspace/links.js";
+import { repoRootFor, sharedProtoRoot } from "@preman/core/workspace/links.js";
+import { resolveDeclaredSpec } from "@preman/core/workspace/resources.js";
 
 /**
  * Load options are load-bearing for this repo's payloads:
@@ -151,10 +152,17 @@ export function isServiceDefinition(entry: unknown): entry is ServiceDefinition 
  * rather than a literal location, so a machine that moved its shared root swaps the prefix
  * on the way in. Without this, overriding the root would break every request that names a
  * linked proto while leaving `resources.yaml` working, which is a confusing half-failure.
+ *
+ * A location whose link names the workspace's own checkout falls back to that checkout, the
+ * same way `resources.yaml` does — otherwise a resolved spec index would sit beside requests
+ * that still cannot find their proto. The checkout is climbed to from the request file rather
+ * than handed in: the request is inside the workspace, which is inside the checkout, so the
+ * climb lands on the same `.git` and `resolveMethod` keeps its arguments.
  */
 function schemaPathFor(schemaLocation: string, requestFilePath: string): string {
-  const located = isAbsolute(schemaLocation) ? schemaLocation : resolve(dirname(requestFilePath), schemaLocation);
-  return resolveSharedPath(located, sharedProtoRoot());
+  const from = dirname(requestFilePath);
+  const located = isAbsolute(schemaLocation) ? schemaLocation : resolve(from, schemaLocation);
+  return resolveDeclaredSpec(located, sharedProtoRoot(), repoRootFor(from)).path;
 }
 
 /**

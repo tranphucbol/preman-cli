@@ -7,6 +7,7 @@ import {
   linkStates,
   MISSING_LABEL,
   NOT_A_LINK_HINT,
+  OWN_CHECKOUT_LABEL,
   planBlocked,
   plannedWrites,
   specFlags,
@@ -25,13 +26,19 @@ import {
  */
 
 const SHARED = "/Users/Shared/postman-protos";
+const CHECKOUT = "/Users/bob/work/refund-core";
 
 function spec(declared: string, extra: Partial<DeclaredSpec> = {}): DeclaredSpec {
-  return { declared, path: declared, exists: true, link: undefined, ...extra };
+  return { declared, path: declared, exists: true, link: undefined, via: "link", ...extra };
 }
 
 function shared(name: string, rest: string): DeclaredSpec {
   return spec(`${SHARED}/${name}/${rest}`, { link: name });
+}
+
+/** The same declaration, read out of the workspace's own checkout instead of through the link. */
+function fromCheckout(name: string, rest: string): DeclaredSpec {
+  return spec(`${SHARED}/${name}/${rest}`, { link: name, path: `${CHECKOUT}/${rest}`, via: "own-checkout" });
 }
 
 function link(name: string, target: string | undefined, resolves: boolean): SharedLink {
@@ -42,6 +49,7 @@ function view(
   specs: readonly DeclaredSpec[],
   links: readonly SharedLink[] = [],
   unresolvedLinks: readonly string[] = [],
+  ownCheckout: string | undefined = undefined,
 ): SpecsView {
   return {
     root: "/ws",
@@ -50,6 +58,7 @@ function view(
     specs: [...specs],
     links: [...links],
     unresolvedLinks: [...unresolvedLinks],
+    ownCheckout,
   };
 }
 
@@ -110,6 +119,61 @@ describe("linkStates", () => {
 
     expect(state?.missing).toBe(false);
     expect(state?.detail).toBe("/repos/refund-core");
+  });
+
+  it("givenEverySpecFromTheOwnCheckout_whenLinkStatesAreDerived_thenTheLinkIsNotMissing", () => {
+    const [state] = linkStates(
+      view([fromCheckout("refund-core", "api/a.proto"), fromCheckout("refund-core", "api/b.proto")], [], [], CHECKOUT),
+    );
+
+    expect(state?.missing).toBe(false);
+    // And the name is still a row: a workspace outside this repository needs the link.
+    expect(state?.name).toBe("refund-core");
+  });
+
+  it("givenEverySpecFromTheOwnCheckout_whenLinkStatesAreDerived_thenTheDetailNamesTheCheckout", () => {
+    const [state] = linkStates(view([fromCheckout("refund-core", "api/a.proto")], [], [], CHECKOUT));
+
+    expect(state?.detail).toBe(`${CHECKOUT} — ${OWN_CHECKOUT_LABEL}`);
+  });
+
+  it("givenALinkHoldingTheSpecsToo_whenLinkStatesAreDerived_thenTheRowReadsAsItAlwaysDid", () => {
+    // `both`: the link resolves and points at this same checkout, so the row has no news.
+    const [state] = linkStates(
+      view(
+        [{ ...fromCheckout("refund-core", "api/a.proto"), via: "both" }],
+        [link("refund-core", CHECKOUT, true)],
+        [],
+        CHECKOUT,
+      ),
+    );
+
+    expect(state?.detail).toBe(CHECKOUT);
+    expect(state?.missing).toBe(false);
+  });
+
+  it("givenSomeSpecsFromTheCheckoutAndSomeNot_whenLinkStatesAreDerived_thenTheLinkIsStillMissing", () => {
+    // One spec that this branch does not have is still one spec the link has to answer for.
+    const [state] = linkStates(
+      view(
+        [fromCheckout("refund-core", "api/a.proto"), { ...shared("refund-core", "api/gone.proto"), exists: false }],
+        [],
+        ["refund-core"],
+        CHECKOUT,
+      ),
+    );
+
+    expect(state?.missing).toBe(true);
+    expect(state?.detail).toBe(MISSING_LABEL);
+  });
+
+  it("givenNoOwnCheckout_whenLinkStatesAreDerived_thenNothingChanges", () => {
+    const [state] = linkStates(
+      view([shared("zas-spec", "api/c.proto")], [link("zas-spec", "/repos/zas-spec", true)], [], undefined),
+    );
+
+    expect(state?.missing).toBe(false);
+    expect(state?.detail).toBe("/repos/zas-spec");
   });
 });
 

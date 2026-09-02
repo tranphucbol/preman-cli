@@ -7,10 +7,11 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   applySpecPlan,
@@ -269,6 +270,145 @@ describe("specs", () => {
     expect(after.specs.some((spec) => spec.link === "zas-spec")).toBe(false);
     // Another workspace may still declare through it, so undeclaring never unlinks.
     expect(existsSync(join(shared, "zas-spec"))).toBe(true);
+  });
+
+  /**
+   * The fresh-clone machine, reproduced without touching `/Users/Shared`: a workspace that is
+   * itself a checkout, declaring its own protos the canonical way, on a machine whose shared root
+   * is an empty directory. That is every teammate who clones the repository ADR 042 was written
+   * for, and before it every one of its declarations was a path to nothing.
+   */
+  describe("the workspace's own checkout", () => {
+    const ECHO_REL = "src/main/proto/echo/echo.proto";
+    const COMMON_REL = "src/main/proto/echo/common.proto";
+
+    /** Declares the clone's own protos through `name`, and marks the clone as a checkout. */
+    function declareThroughLink(name: string): void {
+      mkdirSync(join(ws.root, ".git"), { recursive: true });
+      writeFileSync(
+        join(ws.root, ".postman/resources.yaml"),
+        [
+          "workspace:",
+          "  id: 11111111-2222-3333-4444-555555555555",
+          "localResources:",
+          "  specs:",
+          `    - ${DEFAULT_SHARED_PROTO_ROOT}/${name}/${ECHO_REL}`,
+          `    - ${DEFAULT_SHARED_PROTO_ROOT}/${name}/${COMMON_REL}`,
+          "",
+        ].join("\n"),
+      );
+    }
+
+    /** The name a link to this clone would take, which is the name its declarations use. */
+    function ownName(): string {
+      return basename(ws.root);
+    }
+
+    it("givenAClonedWorkspaceWithNoLinks_whenDescribed_thenItsOwnSpecsResolve", () => {
+      declareThroughLink(ownName());
+
+      const view = describeSpecs(ws.root);
+
+      expect(readdirSync(shared)).toHaveLength(0);
+      expect(view.ownCheckout).toBe(ws.root);
+      expect(view.specs.map((spec) => spec.path)).toEqual([join(ws.root, ECHO_REL), join(ws.root, COMMON_REL)]);
+      expect(view.specs.every((spec) => spec.exists)).toBe(true);
+      // The payoff, and the thing 24 red rows in the pane were standing in the way of.
+      expect(new ProtoCache(ws.root).index().methods.map((m) => m.methodPath)).toContain("test.echo.EchoService.Echo");
+    });
+
+    it("givenAClonedWorkspaceWithNoLinks_whenDescribed_thenTheLinkIsNotUnresolved", () => {
+      declareThroughLink(ownName());
+
+      const view = describeSpecs(ws.root);
+
+      expect(view.unresolvedLinks).toEqual([]);
+      // Still named, though: a workspace outside this repository needs the link this one does not.
+      expect(view.specs.every((spec) => spec.link === ownName())).toBe(true);
+    });
+
+    it("givenAClonedWorkspaceWithNoLinks_whenDescribed_thenTheSpecsSayTheyCameFromTheCheckout", () => {
+      declareThroughLink(ownName());
+
+      expect(describeSpecs(ws.root).specs.map((spec) => spec.via)).toEqual(["own-checkout", "own-checkout"]);
+    });
+
+    it("givenALinkPointingAtThisVeryCheckout_whenDescribed_thenTheRowsSayNothingNew", () => {
+      // The machine the link was made on, which is every machine that already worked. Which root
+      // answered is a distinction with no difference there, and 24 rows saying so is noise.
+      declareThroughLink(ownName());
+      symlinkSync(ws.root, join(shared, ownName()), "dir");
+
+      const view = describeSpecs(ws.root);
+
+      expect(view.specs.map((spec) => spec.via)).toEqual(["both", "both"]);
+      expect(view.unresolvedLinks).toEqual([]);
+    });
+
+    it("givenARenamedClone_whenDescribed_thenTheLinkIsStillUnresolved", () => {
+      // Decision 4 is exact. A clone whose directory was renamed gets nothing automatic, because
+      // `LinkOverride.name` makes name-equals-basename a default rather than an invariant.
+      declareThroughLink(`${ownName()}-fix`);
+
+      const view = describeSpecs(ws.root);
+
+      expect(view.unresolvedLinks).toEqual([`${ownName()}-fix`]);
+      expect(view.specs.map((spec) => spec.via)).toEqual(["link", "link"]);
+      expect(view.specs.some((spec) => spec.exists)).toBe(false);
+    });
+
+    it("givenALinkAndACheckoutBothHoldingTheFile_whenDescribed_thenTheCheckoutIsUsed", () => {
+      // A repoint is overridden on purpose: were the link to win, this clone's protos would
+      // depend on machine-wide state it cannot see, and an edit on this branch would go unread.
+      const other = cloneFixtureWorkspace();
+      try {
+        declareThroughLink(ownName());
+        symlinkSync(other.root, join(shared, ownName()), "dir");
+
+        const view = describeSpecs(ws.root);
+
+        expect(view.specs.map((spec) => spec.path)).toEqual([join(ws.root, ECHO_REL), join(ws.root, COMMON_REL)]);
+        // Both roots hold it, so the row says nothing: `both` is read by the front ends as
+        // "no news", and the news here would be about a repoint no one is being asked to repair.
+        expect(view.specs.map((spec) => spec.via)).toEqual(["both", "both"]);
+      } finally {
+        other.cleanup();
+      }
+    });
+
+    it("givenAFileOnlyUnderTheLink_whenDescribed_thenTheLinkIsUsed", () => {
+      // The escape hatch that makes trying the checkout first safe: a spec deleted on this
+      // branch, or one that never was here, resolves exactly the way it does today.
+      const other = cloneFixtureWorkspace();
+      try {
+        declareThroughLink(ownName());
+        rmSync(join(ws.root, ECHO_REL));
+        symlinkSync(other.root, join(shared, ownName()), "dir");
+
+        const view = describeSpecs(ws.root);
+
+        expect(view.specs[0]?.path).toBe(join(shared, ownName(), ECHO_REL));
+        expect(view.specs[0]?.via).toBe("link");
+        expect(view.specs[0]?.exists).toBe(true);
+        // The second one is still there, so it still comes from the checkout - and the link has
+        // it too, which is what keeps it out of the front ends' "read from your own checkout".
+        expect(view.specs[1]?.via).toBe("both");
+      } finally {
+        other.cleanup();
+      }
+    });
+
+    it("givenASpecFromAnotherRepository_whenDescribed_thenNothingChanges", () => {
+      mkdirSync(join(ws.root, ".git"), { recursive: true });
+      applySpecPlan(ws.root, planSpecs(ws.root, [join(repo, ADMIN_REL)]));
+
+      const view = describeSpecs(ws.root);
+      const added = view.specs.find((spec) => spec.link === "zas-spec");
+
+      expect(added?.via).toBe("link");
+      expect(added?.path).toBe(join(shared, "zas-spec", ADMIN_REL));
+      expect(view.unresolvedLinks).toEqual([]);
+    });
   });
 
   it("givenAFolder_whenCollecting_thenEveryProtoUnderItIsFoundAndGitIsSkipped", () => {

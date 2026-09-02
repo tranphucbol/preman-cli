@@ -18,6 +18,8 @@ export const MISSING_LABEL = "missing";
 export const UNLINKED_LABEL = "not linked";
 export const DANGLING_HINT = "points at a directory that is not there";
 export const NOT_A_LINK_HINT = "a real directory, not a link";
+/** Said beside the checkout's path when the link's specs were read out of it (ADR 042). */
+export const OWN_CHECKOUT_LABEL = "this workspace's own checkout";
 
 /**
  * One link this workspace needs, and what this machine currently has for it.
@@ -47,13 +49,23 @@ export function linkStates(view: SpecsView): LinkState[] {
 
   return [...needed].sort().map((name) => {
     const link = view.links.find((candidate) => candidate.name === name);
+    // Every spec under this name was read out of the workspace's own checkout, so there is
+    // nothing here to repair - and still a name to show, because a workspace that is not inside
+    // this repository needs the link that this one does not (ADR 042).
+    const checkout = servedByCheckout(view, name) ? view.ownCheckout : undefined;
     return {
       name,
       link: link ?? { name, target: undefined, resolves: false },
-      detail: linkDetail(link),
-      missing: unresolved.has(name),
+      detail: checkout === undefined ? linkDetail(link) : `${checkout} — ${OWN_CHECKOUT_LABEL}`,
+      missing: checkout === undefined && unresolved.has(name),
     };
   });
+}
+
+/** Whether the checkout answered for every one of `name`'s specs, rather than only for some. */
+function servedByCheckout(view: SpecsView, name: string): boolean {
+  const specs = view.specs.filter((spec) => spec.link === name);
+  return specs.length > NOTHING && specs.every((spec) => spec.via === "own-checkout");
 }
 
 /**

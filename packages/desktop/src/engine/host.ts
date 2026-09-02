@@ -38,7 +38,7 @@ import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 import { toJunitReport, type RunReport } from "@preman/core/report/junit.js";
 import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
-import { canonicalSharedPath, sharedProtoRoot } from "@preman/core/workspace/links.js";
+import { canonicalSharedPath, repoRootFor, sharedProtoRoot } from "@preman/core/workspace/links.js";
 import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
 import { toEngineError } from "@preman/desktop/engine/errors.js";
 import {
@@ -572,11 +572,17 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
    * path instead would count `../` segments off how deep this particular checkout sits, so
    * the same choice would produce a different file on a colleague's disk — the machine
    * dependence the shared root exists to remove, reintroduced one request at a time
-   * (ADR 038). A proto inside the workspace keeps the relative path: it is already portable,
-   * and the arithmetic can only honestly happen from the request's own directory.
+   * (ADR 038). A proto in the workspace's own checkout is named the canonical way too, which is
+   * why the checkout is passed: the resolver has two roots and the writer still has one, so a
+   * fresh clone that needed no link does not start writing a path only this clone can read
+   * (ADR 042). The relative path is left for what is on neither root — a proto outside every
+   * checkout, where the arithmetic from the request's own directory is all there is.
    */
   function locationFor(spec: string, from: string): string {
-    return canonicalSharedPath(spec, sharedProtoRoot()) ?? relative(from, spec).split(sep).join(LOCATION_SEPARATOR);
+    return (
+      canonicalSharedPath(spec, sharedProtoRoot(), repoRootFor(root)) ??
+      relative(from, spec).split(sep).join(LOCATION_SEPARATOR)
+    );
   }
 
   /**

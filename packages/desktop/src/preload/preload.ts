@@ -93,7 +93,8 @@ const bridge: PremanBridge = {
   pickDataFile: () => ipcRenderer.invoke(CHANNELS.pickDataFile) as Promise<string | null>,
   pickProtoFiles: () => ipcRenderer.invoke(CHANNELS.pickProtoFiles) as Promise<string[]>,
   pickProtoFolder: () => ipcRenderer.invoke(CHANNELS.pickProtoFolder) as Promise<string | null>,
-  pickCheckout: (name: string) => ipcRenderer.invoke(CHANNELS.pickCheckout, name) as Promise<string | null>,
+  pickCheckout: (name: string, startIn: string | null) =>
+    ipcRenderer.invoke(CHANNELS.pickCheckout, name, startIn) as Promise<string | null>,
   saveReport: (suggestedName: string, text: string) =>
     ipcRenderer.invoke(CHANNELS.saveReport, suggestedName, text) as Promise<string | null>,
   controlWindow: (action: WindowControl) => {

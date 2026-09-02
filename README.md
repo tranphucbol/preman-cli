@@ -174,6 +174,16 @@ The link points at the checkout's root, so imports resolve exactly as they do in
 A workspace whose specs are still plain relative or absolute paths keeps working; **Move onto
 links…** converts them in one reviewed step.
 
+A workspace that lives _inside_ the repository whose protos it declares needs no link at all. If the
+missing link is named after the checkout the workspace itself is in — the directory holding the
+`.git` above `.postman/` — those specs are read straight out of that checkout, so a fresh clone
+resolves its own protos with nothing set up. The link name stays on screen, labelled as coming from
+the workspace's own checkout, because anyone whose workspace is _not_ in that repository still needs
+it — the label appears only where it is news, so a machine whose link already points at that same
+checkout reads exactly as it did before. Every other case is unchanged: a spec from another repository, or one absent from this checkout,
+still comes through the link, and a clone in a differently-named directory still has to be located
+by hand — with the path pre-filled rather than guessed.
+
 Set `PREMAN_SHARED_PROTO_ROOT`, or the field in the app's settings, if `/Users/Shared` is not
 writable on your machine. Only where this machine _looks_ moves — what the workspace records is
 always the default, so the file stays portable.
