@@ -15,7 +15,9 @@ env:
   PREMAN_SKIP_PERF: "1"
 
 jobs:
-  # Read once, so a malformed tag fails in six seconds rather than after a DMG.
+  # Read once, so a malformed tag fails in six seconds rather than after a DMG. The same job
+  # answers the other question that is cheap now and expensive later: whether the tag is even on
+  # the branch this project releases from.
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -23,6 +25,11 @@ jobs:
       dist_tag: ${{ steps.derive.outputs.dist_tag }}
       prerelease: ${{ steps.derive.outputs.prerelease }}
     steps:
+      # Full history and every branch ref: the check below compares two of them.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - id: derive
         env:
           TAG: ${{ github.ref_name }}
@@ -41,6 +48,24 @@ jobs:
             *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT"; echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT"; echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
           esac
+
+      # A tag is pushed from a laptop, and a laptop's `main` can hold commits that the remote's
+      # never took — the merge GitHub made for a pull request is not the history the branch had
+      # before it, so a local tag lands beside the release line rather than on it. `v0.2.0` was
+      # tagged that way: the DMG and the npm package shipped a commit that is not on `main`, and
+      # the changelog came out empty because no pull request's merge was in the range. One
+      # `merge-base` is the difference between that and a failed workflow.
+      - name: Refuse a tag that is not on the default branch
+        env:
+          TAG: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if ! git merge-base --is-ancestor "$TAG^{commit}" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::tag '$TAG' is not on '$DEFAULT_BRANCH'. It would publish a commit that"
+            echo "::error::is not on the release line. Fix: git fetch origin, git switch $DEFAULT_BRANCH,"
+            echo "::error::git reset --hard origin/$DEFAULT_BRANCH, then re-tag and force-push the tag."
+            exit 1
+          fi
 
   # The same gate `ci.yml` runs. A tag can be pushed at a commit CI never saw.
   verify:
@@ -106,8 +131,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # `release-notes.sh` asks which pull request contains each commit in the range.
+      pull-requests: read
     steps:
+      # Full history: the changelog is a walk from the previous tag to this one.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: dmg
@@ -120,14 +150,16 @@ jobs:
           # the front of the repository offers.
           PRERELEASE: ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }}
         run: |
-          # `--notes` is prepended to what `--generate-notes` produces rather than replacing it, so
-          # the changelog keeps its place under one instruction: Gatekeeper calls a quarantined
-          # ad-hoc-signed app damaged (ADR 018), and the fix ships beside the file that needs it
-          # instead of waiting to be asked for in an issue. The file is the same text as the README's
-          # desktop section, in release-note voice; the checkout above is what puts it here.
+          # The body is built here rather than by `--generate-notes`, which lists a pull request
+          # only when its merge commit is in the range and never mentions a commit pushed straight
+          # to main. `release-notes.sh` says why in full, and fails rather than publishing an empty
+          # changelog. It opens with the Gatekeeper instructions, because a quarantined
+          # ad-hoc-signed app reports as damaged (ADR 018) and the fix belongs beside the file that
+          # needs it instead of waiting to be asked for in an issue.
+          bash .github/release-notes.sh "$TAG" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.md"
           # shellcheck disable=SC2086 # deliberate: unset must vanish, not become an empty argument
-          gh release create "$TAG" --title "$TAG" --generate-notes \
-            --notes "$(cat .github/release-notes-macos.md)" --verify-tag $PRERELEASE dmg/*.dmg
+          gh release create "$TAG" --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $PRERELEASE dmg/*.dmg
 
   # Last, because it is the only step here that cannot be taken back.
   npm:
