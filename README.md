@@ -73,6 +73,8 @@ preman env show
 preman env set <key> <value>
 preman protos                       list the declared .proto files, grouped by shared link
 preman protos link <name> <dir>     point a shared link at a checkout on this machine
+preman import --into <collection>   turn a pasted curl or grpcurl into a request
+preman import --into <collection> -- <pasted command>
 preman migrate --list               list the Postman cloud workspaces in reach
 preman migrate --workspace <id|name> --out <dir>
 ```
@@ -106,6 +108,9 @@ Common options:
 | `--reporter-junit-export <path>` | Write the JUnit report to a file                                               |
 | `--json`                         | Alias for `--reporter json`                                                    |
 | `--repoint`                      | `protos link` only: move a link that already points elsewhere                  |
+| `--into <group>`                 | `import` only: which collection or folder to write the request into            |
+| `--name <name>`                  | `import` only: name the request instead of taking the proposed one             |
+| `--from <path>`                  | `import` only: read the pasted command from a file instead of the fence        |
 | `-v, --verbose`                  | Show request, response, script, and transport details                          |
 
 Run `preman --help` for every option.
@@ -124,6 +129,7 @@ Run `preman --help` for every option.
 - Postman's common script libraries, including Lodash, CryptoJS, Moment, Cheerio, XML2JS, and UUID
 - Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
 - Declaring `.proto` files from a file browser, through a shared link that resolves on any machine
+- Importing a pasted `curl` or `grpcurl` command as a request, with every dropped flag named
 - Migrating a Postman cloud workspace onto disk, gRPC included
 - Environment writeback and JSON output for CI
 - JUnit reports for GitLab, Jenkins, and other CI test-report consumers
@@ -187,6 +193,57 @@ by hand — with the path pre-filled rather than guessed.
 Set `PREMAN_SHARED_PROTO_ROOT`, or the field in the app's settings, if `/Users/Shared` is not
 writable on your machine. Only where this machine _looks_ moves — what the workspace records is
 always the default, so the file stays portable.
+
+## Importing a pasted command
+
+**Copy as cURL** in a browser's devtools, or a `grpcurl` line from a runbook, becomes a request file:
+
+```sh
+pbpaste | preman import --into admin
+```
+
+```text
+Imported POST Create order -> postman/collections/admin/Create order.request.yaml
+
+  Not imported
+    --compressed  preman already negotiates response encoding
+```
+
+Every flag is accounted for. The ones `preman` can represent become fields; the ones it cannot are
+listed with the reason, so nothing is dropped quietly. `--dry-run` prints the document it would
+write and writes nothing.
+
+**Pasting inline needs a `--` fence.** `preman` owns `-d`, `-e`, `-k`, `-n`, `-r` and `-v`, and curl
+spells all six differently — unfenced, `curl -d '{"sku":"A-1"}' https://x` hands the body to
+`--dir` and nothing reports it. So everything after `--` is the paste, verbatim:
+
+```sh
+preman import --into admin -- curl -X POST -H 'content-type: application/json' \
+  --data-raw '{"sku":"A-1","qty":2}' https://api.example.test/v1/orders
+```
+
+Piping from the clipboard or passing `--from <file>` needs no fence. `--into` picks the collection
+or folder, and is required as soon as the workspace has more than one collection; `--name` overrides
+the name taken from the URL's last path segment. Chrome's macOS copy (`\`-continued, with `$'…'`
+quoting) and its Windows copy (`^`-continued, with `"…"`) are both accepted and produce the same
+file.
+
+A `grpcurl` paste is imported the same way. A `-proto` that exists on disk is declared through the
+shared link described above, so the request runs on the first send:
+
+```sh
+preman import --into payment -- grpcurl -plaintext \
+  -proto ~/src/refund-core/api/refund/v1/refund.proto \
+  -d '{"id":"r-1"}' localhost:9090 refund.v1.RefundService/Get
+```
+
+A paste with no `-proto` relies on gRPC server reflection, which `preman` does not do. It is still
+imported — the target, metadata, and message are worth keeping — and it says so at import time and
+again when the run reaches schema resolution.
+
+The desktop app does the same from the sidebar header's import button, **File ▸ Import from cURL or
+grpcurl…**, a group's context menu, or the command palette. The dialog pre-fills itself from the
+clipboard when it holds a command, and shows the exact document before anything is written.
 
 ## Migrating from Postman cloud
 

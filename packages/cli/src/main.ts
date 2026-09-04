@@ -1,20 +1,31 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import pc from "picocolors";
+import {
+  FENCE_DETAILS,
+  FENCE_MESSAGE,
+  importFormat,
+  isImportFormat,
+  pastedText,
+  resolveDestination,
+} from "@preman/cli/import.js";
 import { interactiveSelection } from "@preman/cli/prompt.js";
 import { defaultPostmanAppData } from "@preman/cli/postman.js";
 import { progressWriter } from "@preman/cli/progress.js";
 import { renderEnvironment, renderEnvironmentSet } from "@preman/cli/render/env.js";
+import { renderImport } from "@preman/cli/render/import.js";
 import { renderList } from "@preman/cli/render/list.js";
 import { renderMigration, renderWorkspaceList } from "@preman/cli/render/migrate.js";
 import { renderLinkWrite, renderSpecs } from "@preman/cli/render/protos.js";
 import { hasHumanReporter, renderReports, reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
 import { readEnvironment, writeEnvironmentValue } from "@preman/core/api/environments.js";
+import { applyImportPlan, planImport } from "@preman/core/api/import.js";
 import { describeWorkspace } from "@preman/core/api/inspect.js";
 import { listCloudWorkspaces, migrateCloudWorkspace } from "@preman/core/api/migrate.js";
 import { describeSpecs, linkCheckout } from "@preman/core/api/specs.js";
 import { runSelection } from "@preman/core/api/run.js";
 import { findWorkspace } from "@preman/core/workspace/discover.js";
+import { nodeIdFor } from "@preman/core/workspace/paths.js";
 import { PremanError, EXIT, type ExitCode } from "@preman/core/errors.js";
 
 declare const __PREMAN_VERSION__: string;
@@ -27,6 +38,16 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SCRIPT_TIMEOUT_MS = 5_000;
 const DEFAULT_RUN_TIMEOUT_MS = 0;
 const TIMEOUT_DEPRECATION = "--timeout now means the whole-run budget; use --timeout-request for the per-call deadline";
+/**
+ * The fence `preman import` needs.
+ *
+ * Read off argv rather than inferred from the positionals, because `parseArgs` gives no sign it
+ * consumed a `-k` it recognised: the flag simply becomes preman's own and leaves the positionals
+ * one word shorter. Its presence is the only evidence the paste arrived whole.
+ */
+const END_OF_FLAGS = "--";
+const IMPORT_COMMAND = "import";
+const FIRST_ARG = 0;
 
 const HELP = `${pc.bold("preman")} — run Postman-format gRPC and HTTP requests from the CLI
 
@@ -38,6 +59,8 @@ ${pc.bold("usage")}
   preman env set <key> <value>
   preman protos                       the declared protos and the links they need
   preman protos link <name> <dir>     point a shared link at a local checkout
+  preman import [curl|grpcurl] [--into <group>] [-- <pasted command…>]
+                                      import a pasted curl or grpcurl command
   preman migrate --list               list the cloud workspaces Postman can see
   preman migrate --workspace <id|name> --out <dir> [--dry-run]
                                       copy a Postman cloud workspace to disk
@@ -89,12 +112,18 @@ ${pc.bold("options")}
       --json            alias for --reporter json
   -v, --verbose         show request body, script logs, headers, metadata and
                         trailers
+      --format <name>   import only: curl or grpcurl, when the paste does not say
+      --into <group>    import only: the collection or folder to import into
+                        (adopted automatically when the workspace has one)
+      --name <text>     import only: the request's name, instead of the proposal
+      --from <path>     import only: read the pasted command from a file
       --workspace <id|name>
                         migrate only: which Postman cloud workspace to read
       --out <dir>       migrate only: the directory to write; it must not exist
                         or must be empty
       --list            migrate only: list workspaces instead of migrating
-      --dry-run         migrate only: print what would be written, write nothing
+      --dry-run         migrate and import: print what would be written, write
+                        nothing
       --repoint         protos link only: move a link that already points elsewhere
   -h, --help            show this help
       --version         print the version
@@ -108,6 +137,20 @@ ${pc.bold("exit codes")}
   4  the call succeeded but a pm.test assertion failed
 
 A collection run reports the worst outcome it saw, in that same order.
+
+${pc.bold("import")}
+  Turns a pasted curl or grpcurl command into a request file. The paste comes
+  from stdin, from --from <file>, or from the words after a ${pc.bold("--")} fence — and the
+  fence is not optional for that last form, because preman owns -d, -k, -o and
+  -v and would otherwise take them for itself and drop them from the paste
+  without saying so.
+
+    pbpaste | preman import --into acme
+    preman import curl --into acme -- curl -k -H 'accept: text/plain' https://x
+
+  Flags with nowhere to land are named in the report rather than ignored: TLS
+  goes through --ssl-* and --insecure, redirects and timeouts are run options,
+  and -o, -s and -v only ever affected curl's own output.
 
 ${pc.bold("migrate")}
   Reads a Postman *cloud* workspace, gRPC included, and writes it as a Postman
@@ -216,6 +259,11 @@ const OPTIONS = {
   "reporter-junit-export": { type: "string" },
   json: { type: "boolean" },
   verbose: { type: "boolean", short: "v" },
+  // `import` only. `--format` overrides the sniff; the paste normally names its own program.
+  format: { type: "string" },
+  into: { type: "string" },
+  name: { type: "string" },
+  from: { type: "string" },
   // `migrate` only. No token flag: the token comes from the running Postman Desktop, so there
   // is nothing for a user to paste and nothing to leak into shell history.
   workspace: { type: "string" },
@@ -236,6 +284,10 @@ export async function main(argv: string[]): Promise<ExitCode> {
   try {
     ({ values, positionals } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true }));
   } catch (cause) {
+    // An unfenced paste is the one way to reach this on purpose: `parseArgs` rejects curl's -X
+    // before any command runs, and its own advice is about positionals rather than about import.
+    const unfenced = argv[FIRST_ARG] === IMPORT_COMMAND && !argv.includes(END_OF_FLAGS);
+    if (unfenced) throw new PremanError(FENCE_MESSAGE, { exitCode: EXIT.CLI, details: FENCE_DETAILS });
     throw new PremanError((cause as Error).message, { details: ["run `preman --help` for usage"] });
   }
 
@@ -302,6 +354,36 @@ export async function main(argv: string[]): Promise<ExitCode> {
         return EXIT.OK;
       }
       throw new PremanError(`unknown protos subcommand "${sub}"`, { details: ["expected `show` or `link`"] });
+    }
+
+    // Plan then apply, so `--dry-run` prints the same block the real run does off the same value
+    // rather than walking a second code path (ADR 043).
+    case "import": {
+      const declared = rest[0] !== undefined && isImportFormat(rest[0]) ? rest[0] : undefined;
+      const text = pastedText({
+        from: values.from,
+        words: declared === undefined ? rest : rest.slice(1),
+        fenced: argv.includes(END_OF_FLAGS),
+      });
+      const destination = resolveDestination(dir, values.into);
+      const plan = planImport({
+        root: destination.root,
+        text,
+        format: importFormat(values.format) ?? importFormat(declared),
+        parentDir: destination.dir,
+      });
+      const dryRun = values["dry-run"] === true;
+      const written = dryRun
+        ? null
+        : applyImportPlan({ root: destination.root, parentDir: destination.dir, plan, name: values.name });
+      const report = {
+        plan,
+        name: values.name ?? plan.name,
+        destination: destination.path,
+        file: written === null ? null : nodeIdFor(destination.root, written.file),
+      };
+      process.stdout.write(`${renderImport(report, { json })}\n`);
+      return EXIT.OK;
     }
 
     case "migrate": {

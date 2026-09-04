@@ -66,6 +66,7 @@ import {
   DeleteIcon,
   FolderIcon,
   FolderOpenIcon,
+  ImportIcon,
   NewFolderIcon,
   NewRequestIcon,
   RenameIcon,
@@ -184,6 +185,8 @@ export interface SidebarProps {
   readonly onRun: (node: CatalogNode) => void;
   readonly onCreateRequest: (parentId: string, kind: RequestKind) => void;
   readonly onCreateFolder: (parentId: string) => void;
+  /** Groups only: opens the import pane pointed at this node. A request file needs a group. */
+  readonly onImport: (parentId: string) => void;
   /** Requests only: the menu item is absent on a group, and core refuses one anyway. */
   readonly onDuplicate: (node: CatalogNode) => void;
   readonly onRename: (node: CatalogNode) => void;
@@ -696,6 +699,14 @@ function SidebarContextMenu({ targetId, ...props }: { readonly targetId: string 
           </ContextItem>
           <ContextItem icon={<NewFolderIcon />} onSelect={() => props.onCreateFolder(node.id)}>
             New folder
+          </ContextItem>
+          {/*
+            Beside the three "new" items and not in its own section: importing a pasted command is
+            a fourth way to get a request into this group, and grouping it with them is what makes
+            that legible without a word of explanation.
+          */}
+          <ContextItem icon={<ImportIcon />} onSelect={() => props.onImport(node.id)}>
+            Import from cURL or grpcurl…
           </ContextItem>
           <ContextSeparator />
         </>

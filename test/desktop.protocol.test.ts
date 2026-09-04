@@ -566,6 +566,65 @@ describe("the engine host protocol", () => {
     });
   });
 
+  /**
+   * The two halves of an import over the port. Both are pinned here rather than only in
+   * `test/import.curl.test.ts`, because what the desktop adds is the seam: the plan has to
+   * survive a structured clone intact, and the op that writes it has to come back as a node id
+   * the catalog already holds - or the pane cannot open the tab it just created.
+   */
+  describe("import", () => {
+    it("givenAPastedCurl_whenPlanned_thenTheDocumentComesBackWithoutBeingWritten", async () => {
+      const app = open();
+      const plan = await app.send("plan-import", {
+        text: "curl -X POST 'https://api.example.test/v1/orders' -H 'accept: application/json' --compressed -d '{}'",
+        parentId: PAYMENT_ID,
+      });
+
+      expect(plan.format).toBe("curl");
+      expect(plan.kind).toBe("http-request");
+      expect(plan.contents).toContain("$kind: http-request");
+      // The interesting half of an import: what did not survive, named as the user wrote it.
+      expect(plan.dropped.map((item) => item.flag)).toContain("--compressed");
+      // Nothing on disk yet - the plan is a description, and the catalog has not moved.
+      const catalog = await app.send("catalog", {});
+      expect(catalog.nodes.map((node) => node.name)).not.toContain(plan.name);
+    });
+
+    it("givenAPlan_whenImported_thenTheFileIsWrittenAndTheNodeIdComesBack", async () => {
+      const app = open();
+      const plan = await app.send("plan-import", {
+        text: "curl 'https://api.example.test/v1/orders'",
+        parentId: PAYMENT_ID,
+      });
+
+      const result = await app.send("mutate", {
+        op: { op: "import-request", parentId: PAYMENT_ID, plan, name: "Pasted Orders" },
+      });
+
+      expect(result.nodeId).toBe("postman/collections/payment/Pasted Orders.request.yaml");
+      const document = await app.send("read-node", { nodeId: result.nodeId ?? "" });
+      expect((document.data as { url: string }).url).toBe("https://api.example.test/v1/orders");
+      // The catalog was rebuilt, so the pane can find the node it is about to open a tab on.
+      const catalog = await app.send("catalog", {});
+      expect(catalog.nodes.map((node) => node.name)).toContain("Pasted Orders");
+    });
+
+    it("givenAPasteThatIsNotACommand_whenPlanned_thenTheHostRefusesItWithoutWriting", async () => {
+      const error = await open().fail("plan-import", { text: "just some prose", parentId: PAYMENT_ID });
+
+      expect(error.exitCode).toBe(EXIT.CLI);
+    });
+
+    it("givenARequestAsTheDestination_whenPlanned_thenTheHostSaysItIsNotAGroup", async () => {
+      const error = await open().fail("plan-import", {
+        text: "curl 'https://api.example.test/v1/orders'",
+        parentId: PING_ID,
+      });
+
+      expect(error.message).toContain("is not a collection or folder");
+    });
+  });
+
   describe("the proto index", () => {
     it("givenDeclaredProtos_whenMethodsListed_thenEachCarriesTheSpecThatDeclaredIt", async () => {
       const choices = await open().send("list-methods", {});

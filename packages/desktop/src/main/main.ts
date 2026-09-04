@@ -329,6 +329,14 @@ function buildMenu(): void {
             window?.webContents.send(CHANNELS.openMigrate);
           },
         },
+        // No accelerator, for the reason Create New Workspace has none: the pane reads the
+        // clipboard on open, so the gesture that gets here is already a paste followed by a menu.
+        {
+          label: "Import from cURL or grpcurl…",
+          click: () => {
+            window?.webContents.send(CHANNELS.openImport);
+          },
+        },
         ...(process.platform === "darwin" ? [] : [{ type: "separator" as const }, SETTINGS_ITEM]),
         { type: "separator" },
         { role: process.platform === "darwin" ? "close" : "quit" },

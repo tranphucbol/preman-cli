@@ -78,8 +78,13 @@ const KIND_KEY = "$kind";
 const NAME_KEY = "name";
 const ORDER_KEY = "order";
 
-/** Field order in a written request file: identity, target, payload, then behaviour. */
-const GRPC_KEY_ORDER = [
+/**
+ * Field order in a written request file: identity, target, payload, then behaviour.
+ *
+ * Exported because `import/` writes request files too (decision 9), and a second ordering
+ * would make an imported file and a migrated one distinguishable for no reason.
+ */
+export const GRPC_KEY_ORDER = [
   KIND_KEY,
   NAME_KEY,
   "description",
@@ -93,7 +98,7 @@ const GRPC_KEY_ORDER = [
   "settings",
   "scripts",
 ];
-const HTTP_KEY_ORDER = [
+export const HTTP_KEY_ORDER = [
   KIND_KEY,
   NAME_KEY,
   "description",
@@ -116,7 +121,7 @@ const PATH_SEPARATOR = "/";
  * folded one would still parse but would no longer match what Postman wrote — ADR 006 says
  * that value is carried, never regenerated, so it is not reformatted either.
  */
-const YAML_OPTIONS = { lineWidth: 0 } as const;
+export const YAML_OPTIONS = { lineWidth: 0 } as const;
 
 function joinPath(...segments: string[]): string {
   return segments.join(PATH_SEPARATOR);
@@ -167,8 +172,17 @@ function segmentFor(name: string, treePath: string): string {
   }
 }
 
-/** Drop Postman's bookkeeping, then order what is left; unknown keys keep their own order, last. */
-function shape(raw: Record<string, unknown>, order: readonly string[], extraDropped?: ReadonlySet<string>): unknown {
+/**
+ * Drop Postman's bookkeeping, then order what is left; unknown keys keep their own order, last.
+ *
+ * Exported for the same reason as the key orders: an imported request file and a migrated one
+ * should be indistinguishable, and that is a property of one function rather than of two.
+ */
+export function shape(
+  raw: Record<string, unknown>,
+  order: readonly string[],
+  extraDropped?: ReadonlySet<string>,
+): unknown {
   const kept = new Map<string, unknown>();
   for (const [key, value] of Object.entries(raw)) {
     if (DROPPED_KEYS.has(key) || extraDropped?.has(key) === true) continue;

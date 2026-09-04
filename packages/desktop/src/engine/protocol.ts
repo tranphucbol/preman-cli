@@ -23,6 +23,7 @@ import type {
   SpecPlan,
   SpecsView,
 } from "@preman/core/api/specs.js";
+import type { DroppedFlag, ImportFormat, ImportPlan } from "@preman/core/api/import.js";
 import type { VariableBinding, VariableLayer, VariableView } from "@preman/core/api/variables.js";
 import type { ExitCode } from "@preman/core/errors.js";
 import type { SharedLink } from "@preman/core/workspace/links.js";
@@ -37,6 +38,7 @@ export type {
   CatalogNodeKind,
   CatalogProtocol,
   DeclaredSpec,
+  DroppedFlag,
   ExitCode,
   FailureStage,
   FieldEdit,
@@ -44,6 +46,8 @@ export type {
   GitStatus,
   GrepMatch,
   GrepResult,
+  ImportFormat,
+  ImportPlan,
   LinkAction,
   LinkOverride,
   PlannedLink,
@@ -95,6 +99,11 @@ export type MutateOp =
   | { op: "rename"; targetId: string; name: string }
   | { op: "move"; targetId: string; parentId: string; order?: number }
   | { op: "delete"; targetId: string }
+  /**
+   * The plan travels back down rather than the pasted text: the renderer showed the user
+   * exactly this document, so re-parsing here could only produce a different one.
+   */
+  | { op: "import-request"; parentId: string; plan: ImportPlan; name?: string }
   | { op: "reorder"; orderById: Record<string, number> };
 
 export type MutateOpName = MutateOp["op"];
@@ -235,6 +244,14 @@ export type EngineRequest =
    * spec paths are already correct, they just need somewhere local to land.
    */
   | { id: number; kind: "link-checkout"; name: string; target: string; repoint?: boolean }
+  /**
+   * What a pasted `curl` or `grpcurl` would become, without writing it. Staged for the same
+   * reason a spec plan is: the request it describes may declare a proto, and the paste is
+   * the one input the user cannot check by eye until they see the document it produced.
+   * `format` absent sniffs it from the command word; `parentId` only fixes the name
+   * against that directory's existing files.
+   */
+  | { id: number; kind: "plan-import"; text: string; format?: ImportFormat; parentId?: string }
   | { id: number; kind: "body-head"; handle: string }
   | { id: number; kind: "body-window"; handle: string; offset: number; length?: number }
   | { id: number; kind: "body-search"; handle: string; query: string; limit?: number }
@@ -281,6 +298,7 @@ export interface EngineResults {
   "apply-specs": SpecsView;
   "remove-spec": SpecsView;
   "link-checkout": SpecsView;
+  "plan-import": ImportPlan;
   "body-head": BodyHead;
   "body-window": BodyWindow;
   "body-search": BodyMatch[];

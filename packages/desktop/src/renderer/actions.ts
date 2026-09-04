@@ -9,6 +9,8 @@ import type {
   BodyMatch,
   BodyWindow,
   GrepResult,
+  ImportFormat,
+  ImportPlan,
   LinkOverride,
   MethodChoices,
   MutateOp,
@@ -494,6 +496,33 @@ export async function linkCheckout(name: string, target: string, repoint = false
   if (engine === null) return { ok: false, failure: DISCONNECTED };
   try {
     return { ok: true, value: await engine.send("link-checkout", { name, target, repoint }) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * What a pasted `curl` or `grpcurl` would become, without writing it.
+ *
+ * Plan-then-apply for the same reason the specs pane is, and one more: the paste is the only
+ * input in the app the user cannot check by reading it back. A command is a shell word list,
+ * and which of its flags survive into a request file is not something anyone can predict from
+ * looking at it - so the pane shows the document first and writes it second.
+ */
+export async function planImport(
+  text: string,
+  format: ImportFormat | undefined,
+  parentId: string | undefined,
+): Promise<Result<ImportPlan>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    const payload = {
+      text,
+      ...(format === undefined ? {} : { format }),
+      ...(parentId === undefined ? {} : { parentId }),
+    };
+    return { ok: true, value: await engine.send("plan-import", payload) };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }

@@ -325,6 +325,48 @@ export function duplicateRequestFile(args: DuplicateRequestArgs): Promise<string
   return Promise.resolve(file);
 }
 
+export interface WriteRequestArgs {
+  parentDir: string;
+  /** The display name; the filename is derived from it, collisions resolved. */
+  name: string;
+  /** A whole request document, without `order`. */
+  contents: string;
+  kind: RequestKind;
+  /** Omitted means "last", derived from the highest declared sibling order. */
+  order?: number;
+}
+
+/**
+ * Write a whole request document, returning the path actually used.
+ *
+ * Beside {@link createRequestFile} rather than through it (decision 8): the skeleton writer
+ * exists for an empty request that a person will fill in, and an import arrives with a whole
+ * document already. Creating the skeleton and then replaying a batch of {@link FieldEdit}s
+ * would put a half-populated file in front of the watcher between the two.
+ *
+ * `order` is appended here rather than carried in `contents` because the destination decides
+ * it and the plan that produced `contents` has no destination — which is also why an import
+ * preview is the document minus one trailing line.
+ */
+export function writeRequestFile(args: WriteRequestArgs): string {
+  if (!existsSync(args.parentDir)) {
+    throw usage(`${args.parentDir} does not exist`, ["create the folder or collection first"]);
+  }
+  const doc = parseDocument(args.contents);
+  if (doc.errors.length > 0) {
+    throw usage(
+      "the imported request is not valid YAML",
+      doc.errors.map((error) => error.message),
+    );
+  }
+  doc.setIn([ORDER_KEY], args.order ?? nextOrder(siblingOrders(args.parentDir)));
+
+  const file = requestPathFor(args.parentDir, args.name);
+  validateAgainst(file, doc, args.kind === GRPC_KIND ? grpcRequestSchema : httpRequestSchema);
+  writeFileAtomic(file, doc.toString());
+  return file;
+}
+
 export interface CreateGroupArgs {
   parentDir: string;
   name: string;

@@ -1,0 +1,8 @@
+curl 'https://api.example.test/v1/orders?page=2&sort=desc' \
+  -H 'accept: application/json' \
+  -H 'accept-language: en-GB,en;q=0.9' \
+  -H 'content-type: application/json' \
+  -H $'x-note: it\'s fine' \
+  -H 'authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig' \
+  --data-raw '{"item":"widget","qty":2}' \
+  --compressed

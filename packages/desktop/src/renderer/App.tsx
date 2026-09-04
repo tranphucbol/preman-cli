@@ -43,6 +43,7 @@ import {
   ExpandAllIcon,
   ICON_DEFAULTS,
   IconContext,
+  ImportIcon,
   NewFolderIcon,
   PickerIcon,
   SearchIcon,
@@ -54,6 +55,7 @@ import { BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence, MotionRoot, m } from "@preman/desktop/renderer/ui/motion.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { ConsoleDrawer } from "@preman/desktop/renderer/panes/ConsoleDrawer.js";
+import { ImportPane } from "@preman/desktop/renderer/panes/ImportPane.js";
 import { MigratePane } from "@preman/desktop/renderer/panes/MigratePane.js";
 import { RequestEditor } from "@preman/desktop/renderer/panes/RequestEditor.js";
 import { ResponsePane } from "@preman/desktop/renderer/panes/ResponsePane.js";
@@ -182,6 +184,7 @@ const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "open-workspace", label: "Open workspace…", detail: "⌘⇧O" },
   { kind: "command", id: "create-workspace", label: "Create new workspace…", detail: "command" },
   { kind: "command", id: "migrate", label: "Migrate from Postman…", detail: "command" },
+  { kind: "command", id: "import", label: "Import from cURL or grpcurl…", detail: "command" },
   { kind: "command", id: "create-environment", label: "New environment…", detail: "command" },
   { kind: "command", id: "settings", label: "Settings", detail: "⌘," },
 ];
@@ -232,6 +235,12 @@ export function App(): React.JSX.Element {
    * arrives while its report is still what the user is reading.
    */
   const [migrateOpen, setMigrateOpen] = useState(false);
+  /*
+   * Window state for the same reason, plus one of its own: a right-click on a group opens the
+   * dialog onto that group, so what is held is the request and not a boolean. `null` is closed;
+   * an empty record is open with no group asked for, which the dialog fills in from the selection.
+   */
+  const [importAsk, setImportAsk] = useState<{ readonly parentId?: string } | null>(null);
   const dismissFailure = useCallback(() => {
     setFailure(null);
   }, []);
@@ -256,6 +265,25 @@ export function App(): React.JSX.Element {
     setMigrateOpen(false);
   }, []);
   useEffect(() => window.preman.onMigrate(showMigrate), [showMigrate]);
+
+  // Four ways in — the sidebar header, a group's context menu, the File menu and the palette —
+  // and one dialog. Only the context menu names a group; the other three let it pick.
+  const showImport = useCallback((parentId?: string) => {
+    setImportAsk(parentId === undefined ? {} : { parentId });
+  }, []);
+  const dismissImport = useCallback(() => {
+    setImportAsk(null);
+  }, []);
+  // Sent by the File menu, which lives in the main process, so this is where it lands. Passed
+  // through a wrapper rather than directly: the channel carries no argument, and `showImport`
+  // taking one would make the listener's own event the group.
+  useEffect(
+    () =>
+      window.preman.onImport(() => {
+        showImport();
+      }),
+    [showImport],
+  );
 
   // The library owns pane persistence, which keeps one more thing out of the app-data store.
   const layout = useDefaultLayout({ id: LAYOUT_ID, panelIds: [SIDEBAR_ID, EDITOR_ID], storage: localStorage });
@@ -340,6 +368,9 @@ export function App(): React.JSX.Element {
         case "migrate":
           showMigrate();
           return;
+        case "import":
+          showImport();
+          return;
         case "create-environment":
           setAsk(CREATE_ENVIRONMENT_ASK);
           return;
@@ -348,7 +379,7 @@ export function App(): React.JSX.Element {
           return;
       }
     },
-    [showCreateWorkspace, showMigrate, toggleConsole, toggleSidebar],
+    [showCreateWorkspace, showImport, showMigrate, toggleConsole, toggleSidebar],
   );
 
   return (
@@ -392,7 +423,7 @@ export function App(): React.JSX.Element {
                     }}
                     panelRef={setSidebarPanel}
                   >
-                    <WorkspaceTree onAsk={setAsk} onFail={setFailure} />
+                    <WorkspaceTree onAsk={setAsk} onFail={setFailure} onImport={showImport} />
                   </Panel>
                   <Handle axis="vertical" />
                   <Panel id={EDITOR_ID} className="flex min-w-0 flex-col">
@@ -430,6 +461,11 @@ export function App(): React.JSX.Element {
             }}
           />
           <MigratePane open={migrateOpen} onDismiss={dismissMigrate} />
+          <ImportPane
+            open={importAsk !== null}
+            {...(importAsk?.parentId === undefined ? {} : { parentId: importAsk.parentId })}
+            onDismiss={dismissImport}
+          />
           <Palette open={paletteOpen} onDismiss={dismissPalette} onCommand={runCommand} />
         </MotionRoot>
       </TooltipProvider>
@@ -850,9 +886,11 @@ type Fail = (failure: Failure | null) => void;
 function WorkspaceTree({
   onAsk,
   onFail,
+  onImport,
 }: {
   readonly onAsk: (ask: Ask) => void;
   readonly onFail: Fail;
+  readonly onImport: (parentId?: string) => void;
 }): React.JSX.Element {
   const root = useCatalogStore((state) => state.root);
   const fold = useCatalogStore((state) => state.fold);
@@ -906,6 +944,22 @@ function WorkspaceTree({
         >
           <NewFolderIcon />
         </IconButton>
+        {/*
+          Import sits here, beside New collection, because both bring something into the tree and
+          this row is where the tree's own verbs live. The fourth button is a real cost in a pane
+          that can be 14% of the window — but the alternative was the tab strip, where it sat
+          beside the environment picker and read as something about the open request rather than
+          about the collections it writes into.
+        */}
+        <IconButton
+          label="Import from cURL or grpcurl…"
+          disabled={root === null || searching}
+          onClick={() => {
+            onImport();
+          }}
+        >
+          <ImportIcon />
+        </IconButton>
       </div>
       {/*
         Swapped, not stacked. The results replace the tree because both want the whole pane, and
@@ -933,6 +987,10 @@ function WorkspaceTree({
             askName("New folder", "Create", "", (name) => {
               void mutate({ op: "create-folder", parentId, name }).then(onFail);
             });
+          }}
+          onImport={(parentId) => {
+            useCatalogStore.getState().select(parentId);
+            onImport(parentId);
           }}
           onDuplicate={(node) => {
             // The file is copied, not the draft. Under decision 010 a draft is not the request

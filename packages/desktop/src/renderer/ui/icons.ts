@@ -23,6 +23,9 @@ export {
   Check as CheckIcon,
   CheckCircle as PassIcon,
   Circle as UnknownIcon,
+  // A clipboard with writing on it, for the button that reads the clipboard again. The plain
+  // `Clipboard` is an empty one, which is the state *after* a paste rather than the thing offered.
+  ClipboardText as PasteIcon,
   Code as ScriptIcon,
   Copy as CopyIcon,
   DotsThree as MoreIcon,
@@ -61,6 +64,10 @@ export {
   Stop as CancelIcon,
   Terminal as ConsoleIcon,
   Trash as DeleteIcon,
+  // Deliberately not `Export` mirrored: this Phosphor release has no `Import`, and reusing the
+  // export glyph would make the sidebar header's new button read as a second export. A tray
+  // taking an arrow is the other half of that pair - something arrives and stays.
+  TrayArrowDown as ImportIcon,
   Warning as WarningIcon,
   X as CloseIcon,
   XCircle as FailIcon,

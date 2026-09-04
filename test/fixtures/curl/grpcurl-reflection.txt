@@ -1,0 +1,4 @@
+grpcurl -plaintext -emit-defaults \
+  -rpc-header 'x-tenant: acme' \
+  -d '{"text":"ping"}' \
+  echo.example.test:443 test.echo.EchoService/Ping

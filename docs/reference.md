@@ -21,6 +21,8 @@ preman run [<collection/request>]
 preman run <collection|folder>
 preman env show
 preman env set <key> <value>
+preman import [curl|grpcurl] --into <group> [--name <name>] [--from <path>] [--dry-run]
+preman import [curl|grpcurl] --into <group> -- <pasted command…>
 preman migrate --list
 preman migrate --workspace <id|name> --out <dir> [--dry-run]
 ```
@@ -68,6 +70,18 @@ Four options belong to `migrate` alone:
 | `--dry-run`              | Print every file that would be written, and write none. Still requires `--out`.     |
 
 `--json` also applies to both forms, and prints the workspace list or the migration outcome as JSON.
+
+Four belong to `import` alone:
+
+| Option            | Behavior                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `--into <group>`  | Which collection or folder receives the request. Required unless exactly one collection exists. |
+| `--name <name>`   | Name the request instead of taking the one proposed from the URL or method.                     |
+| `--from <path>`   | Read the pasted command from a file rather than from a fence or standard input.                 |
+| `--format <name>` | Force `curl` or `grpcurl` instead of reading the command word.                                  |
+
+`--dry-run` and `--json` apply to `import` as well: the first prints the document and writes
+nothing, the second prints the plan, the chosen name, the destination, and the written path.
 
 ## Reporters
 
@@ -185,6 +199,107 @@ pass. `--bail`, inherited-script aborts, and run-budget exhaustion stop the whol
 Iterations do not apply to a single-request selector. A multi-row data file or count above one must
 target the parent collection or folder.
 
+## Import
+
+`preman import` turns one pasted `curl` or `grpcurl` command into a request file. The command word
+selects the parser; `--format`, or a `curl`/`grpcurl` word before the flags, overrides it.
+
+Where the text comes from, in order:
+
+1. `--from <path>`.
+2. Everything after a `--` fence on the command line.
+3. Standard input, when neither is given and it is not a terminal.
+
+**Inline text without the fence is refused.** Every short option `preman` defines — `-d`, `-e`,
+`-k`, `-n`, `-r`, `-v`, `-h` — is also a curl option, and `--json`, `--url`, and `--insecure`
+collide as long flags. An unfenced `-d '{"a":1}'` becomes `--dir '{"a":1}'` and nothing reports it,
+so the fence is required rather than inferred ([ADR 043](decisions/043-importing-a-pasted-command.md)).
+
+The written file goes through the same shaping as a migrated one, so an imported request and a
+migrated request are indistinguishable on disk. It is written into a collection or folder, never at
+the workspace root: a workspace with no collection is refused, and `--into` is required as soon as
+there is more than one. `--into` matches an exact path, then an exact name, then a path suffix,
+case-insensitively; more than one match lists the candidates and refuses.
+
+### What a curl becomes
+
+| curl                                                             | Request                                                          |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------- |
+| the URL positional                                               | `url`, with `https://` added when no scheme was given            |
+| `-X, --request`                                                  | `method`                                                         |
+| `-I, --head`                                                     | `method: HEAD`                                                   |
+| `-H, --header`                                                   | `headers`, in the pasted order                                   |
+| `-A, --user-agent`, `-e, --referer`, `-b, --cookie` with a `k=v` | the corresponding header                                         |
+| `-d`, `--data`, `--data-raw`, `--data-binary`, `--data-ascii`    | `body.type: raw`; repeats join with `&`                          |
+| `--json`                                                         | `body.type: raw` plus the two JSON headers                       |
+| `--data-urlencode`                                               | `body.type: urlencoded`                                          |
+| `-F, --form`, `--form-string`                                    | `body.type: formdata`; `@path` becomes a `file` entry with `src` |
+| `-G, --get`                                                      | moves the body pairs to `queryParams` and keeps `GET`            |
+| `-u, --user`                                                     | `auth.type: basic`                                               |
+| `--oauth2-bearer`                                                | `auth.type: bearer`                                              |
+
+With a body and no `-X`, the method is `POST`; otherwise `GET`.
+
+A query string already in the URL **stays in the URL** rather than being split into `queryParams`.
+Re-adding it through `URLSearchParams` would re-encode it, and the request sent afterwards would
+not be the request that was pasted. `-G` is the exception, because those pairs were never URL text.
+
+A pasted `Authorization` header is written as a header. It is not turned into an environment
+variable: the destination environment would be a guess, and an environment file is as committable
+as a request file.
+
+### What is dropped, and why
+
+Each dropped flag is reported by name with its reason. Nothing is ignored silently, and a flag
+neither table knows becomes a warning.
+
+| Reason                                                                   | Flags                                                                                                                                         |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preman layers TLS through --ssl-*, --insecure and .postman/preman.yaml` | `-k`, `--cacert`, `--capath`, `--cert`, `--key`, `--pass`, `--ciphers`, `--tlsv1*`                                                            |
+| `a preman run option, not a request field`                               | `-L`, `--max-redirs`, `--max-time`, `--connect-timeout`, `--retry*`, `--limit-rate`                                                           |
+| `output only`                                                            | `-o`, `-O`, `-s`, `-S`, `-v`, `-i`, `-f`, `--write-out`, `--dump-header`, `--trace*`                                                          |
+| `preman already negotiates response encoding`                            | `--compressed`                                                                                                                                |
+| `reads the body from a file; paste the body text instead`                | `-d @file`, `--data-binary @file`                                                                                                             |
+| `reads cookies from a file; paste the Cookie header instead`             | `-b <file>`                                                                                                                                   |
+| `removes a header curl adds; preman adds none`                           | `-H 'name:'`                                                                                                                                  |
+| `a request file has no field for it`                                     | `-x, --proxy`, `-c, --cookie-jar`, `--resolve`, `--connect-to`, `--unix-socket`, `-T`, `-r`, `--aws-sigv4`, `--http1.1`, `--http2`, `--http3` |
+
+### What a grpcurl becomes
+
+Positional one is `url`, positional two is `methodPath` with `/` rewritten to `.`. `-d` becomes
+`message.content`; `-H` and `-rpc-header` become `metadata`. `-d @` is refused, because the message
+would be read from standard input at run time and there is none.
+
+`-proto` is not a request field. It is fed to the same planner `preman protos` uses, so a proto on
+disk is declared through a shared link and the imported request runs on the first send. Three cases:
+
+| The paste                  | What is written                                                             | Runs                      |
+| -------------------------- | --------------------------------------------------------------------------- | ------------------------- |
+| `-proto`, file on disk     | `schema: {source: file, location}` plus a link and a `resources.yaml` entry | yes                       |
+| `-proto`, file not on disk | `schema.location` verbatim, and a warning naming `preman protos link`       | not until the link exists |
+| no `-proto`                | no `schema`, and a warning that no declared spec defines the method         | no                        |
+
+The third case relies on gRPC server reflection, which `preman` does not do. It is imported anyway,
+because the target, metadata, and message are worth keeping, and it names the method it cannot find
+when the run reaches schema resolution. No `methodDescriptor` is ever generated
+([ADR 006](decisions/006-never-regenerate-methoddescriptor.md)).
+
+`grpcurl list` and `grpcurl describe` are refused: neither is a request.
+
+### The shell it accepts
+
+The text is split without a shell. `'…'`, `"…"` with `\"`, `\\`, `\$` and `` \` ``, and ANSI-C
+`$'…'` with `\n`, `\t`, `\r`, `\\`, `\'` and `\xNN` are all understood, as are `\`-continued and
+`^`-continued lines. Chrome's macOS **Copy as cURL** and its Windows one produce byte-identical
+request files.
+
+`$(…)` and backticks are refused rather than evaluated, and so is an unterminated quote.
+
+One command per paste. `;`, `&&`, `||`, `|`, and `&` split the text; a second command is refused
+with the count, and a trailing `| jq .` is reported as ignored.
+
+`import` uses only exit codes `0` and `1`.
+
 ## Migration
 
 `preman migrate` copies a Postman **cloud** workspace into the filesystem format the rest of `preman`
@@ -276,6 +391,9 @@ What is not:
 A collection run returns its worst result in this order: `1`, `2`, `3`, `4`, `0`.
 
 Codes `3` and `4` separate a business rejection from an assertion failure, which is useful in CI.
+
+`import` uses only `0` and `1`. A refused paste, an unfenced one, an unknown format, a missing or
+ambiguous `--into`, and a workspace with no collection are all `1`. Nothing is written on a `1`.
 
 `migrate` uses only `0`, `1`, and `2`. Postman Desktop not running, a missing or ambiguous
 `--workspace`, a missing `--out`, a destination that is not empty, and a name no filesystem accepts

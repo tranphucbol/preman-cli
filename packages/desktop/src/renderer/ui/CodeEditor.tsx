@@ -137,6 +137,12 @@ export interface CodeEditorProps {
   readonly readOnly?: boolean;
   readonly gutter?: boolean;
   readonly placeholder?: string;
+  /**
+   * Focus the document on mount. Off by default: a request editor that stole focus would fight
+   * the tab strip and the URL field for it on every tab switch. A pane whose entire purpose is
+   * to receive a paste is the exception, and it is the only one.
+   */
+  readonly autoFocus?: boolean;
   readonly className?: string;
   readonly onCommit?: (value: string) => void;
   /**
@@ -168,6 +174,7 @@ export function CodeEditor({
   readOnly = false,
   gutter = true,
   placeholder = "",
+  autoFocus = false,
   className,
   onCommit,
   onFind,
@@ -316,6 +323,7 @@ export function CodeEditor({
       }),
     });
     view.current = created;
+    if (autoFocus) created.focus();
     return () => {
       // Commit before teardown: switching sub-tab unmounts the editor, and losing the
       // last thing typed because it was never blurred is the worst kind of data loss.
@@ -329,7 +337,7 @@ export function CodeEditor({
     // `value` is the initial document only. Later changes are handled by the effect below,
     // which is why it is deliberately absent from these dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, readOnly, gutter, placeholder, engineFind, lints, clicksTokens]);
+  }, [language, readOnly, gutter, placeholder, autoFocus, engineFind, lints, clicksTokens]);
 
   /** The answer, pushed into a live editor. A reconfigure would rebuild the lint state for nothing. */
   useEffect(() => {

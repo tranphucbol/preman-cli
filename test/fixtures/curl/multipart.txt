@@ -1,0 +1,5 @@
+curl -X POST https://upload.example.test/v2/documents \
+  -H 'authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig' \
+  -F 'title=Q3 report' \
+  -F 'document=@/tmp/report.pdf;type=application/pdf' \
+  -s -S -k

@@ -51,6 +51,7 @@ The CLI's own design predates the practice.
 | [040](040-the-app-measures-itself-only-while-watched.md)            | The app measures itself, only while watched                            |
 | [041](041-a-throw-after-the-response-is-a-failed-test.md)           | A throw after the response is a failed test                            |
 | [042](042-the-resolver-has-two-roots.md)                            | The resolver has two roots, and the writer has one                     |
+| [043](043-importing-a-pasted-command.md)                            | Importing a pasted command, behind a fence                             |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -199,5 +200,22 @@ needed: a link a repo-local workspace no longer needs is still needed by a works
 as the two it cannot avoid: a deliberate repoint is overridden for a workspace inside a matching
 clone, and a clone whose directory was renamed still gets nothing automatic — compensated only by a
 pre-filled path, which is a suggestion and says so.
+
+043 is the second record about getting something in, and the first about getting one request in
+rather than a whole workspace. Where 033's hard part was another vendor's undocumented transport,
+this one's is another program's command line: every short option preman defines is also a curl
+option, three of them take a value on both sides, and `parseArgs` reports nothing when it eats a
+request body as a workspace path. So it is the first record whose central decision is a papercut
+accepted on purpose — the `--` fence is a rule the terminal has to teach, it has no cure, and the
+reasoning is here rather than only in the refusal message. It is also the first to make a plan the
+unit that crosses 002's port for a write rather than for a read, which is what lets the pane show
+the exact document before a file exists and what constrains that document to be clone-safe. The
+rest is deliberately not new: it writes through 033's own shaping functions so an imported file and
+a migrated one cannot be told apart, it declares a pasted `-proto` through 038's link because a
+person confirming one named plan is exactly the case 038 drew the line for, and it declines to
+invent the descriptor 006 forbids inventing — which is why a reflection-only paste is written
+knowingly unrunnable and says so twice, once at import and once at send. The costs it states are
+the two it cannot argue away: one command per paste, because the protocol has one `nodeId`, and a
+pasted credential written where it was pasted, because every place to move it to is a guess.
 
 `TEMPLATE.md` is the shape of a new one.

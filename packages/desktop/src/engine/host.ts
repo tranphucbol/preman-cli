@@ -51,8 +51,10 @@ import {
   type DocumentKind,
   type EngineMessage,
   type EngineRequest,
+  type EngineRequestFor,
   type EngineResponse,
   type EngineResult,
+  type ImportPlan,
   type LogLevel,
   type MutateOp,
   type MutateResult,
@@ -432,6 +434,19 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       case "delete":
         await deleteNode(resolveWithinRoot(root, op.targetId));
         return undefined;
+      case "import-request": {
+        const { applyImportPlan } = await importApi();
+        const created = applyImportPlan({
+          root,
+          parentDir: requireDirectory(op.parentId),
+          plan: op.plan,
+          ...(op.name === undefined ? {} : { name: op.name }),
+        }).file;
+        // A gRPC paste that named a `-proto` declares it as well, so the proto cache goes the
+        // same way {@link writeSpecs} sends it: the index would resolve against the old one.
+        protos = undefined;
+        return created;
+      }
       case "reorder": {
         const orderByFile: Record<string, number> = {};
         for (const [nodeId, order] of Object.entries(op.orderById)) {
@@ -630,6 +645,30 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
 
   type SpecsApi = Awaited<ReturnType<typeof specsApi>>;
 
+  /**
+   * Deferred for the same reason: planning an import reaches `api/specs.js` to weigh a
+   * `-proto`, so a static import here would pull the loader into every workspace open.
+   */
+  async function importApi() {
+    return import("@preman/core/api/import.js");
+  }
+
+  /**
+   * `parentId` only sharpens the name the plan proposes, so an absent or non-directory one is
+   * not worth a refusal here: the destination is chosen again, and checked, when the plan is
+   * applied. A pane that lets the user retype the name before importing would rather show a
+   * document than an error about a directory they have not picked yet.
+   */
+  async function planImport(request: EngineRequestFor<"plan-import">): Promise<ImportPlan> {
+    const api = await importApi();
+    return api.planImport({
+      root,
+      text: request.text,
+      ...(request.format === undefined ? {} : { format: request.format }),
+      ...(request.parentId === undefined ? {} : { parentDir: requireDirectory(request.parentId) }),
+    });
+  }
+
   /** Deferred like the rest of the send path: describing or planning specs is a setup action. */
   async function readSpecs<T>(work: (api: SpecsApi) => T): Promise<T> {
     return work(await specsApi());
@@ -733,6 +772,8 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
           api.linkCheckout(request.name, request.target, { repoint: request.repoint });
           return api.describeSpecs(root);
         });
+      case "plan-import":
+        return planImport(request);
       case "body-head":
         return bodies.head(request.handle);
       case "body-window":

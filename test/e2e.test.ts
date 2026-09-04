@@ -1,7 +1,9 @@
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { main } from "@preman/cli/main.js";
 import type { RunEvent, RunEventSink } from "@preman/core/api/events.js";
 import { runSelection } from "@preman/core/api/run.js";
@@ -9,6 +11,7 @@ import { PremanError, EXIT } from "@preman/core/errors.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
 import { extractReturnCode, isBusinessSuccess } from "@preman/core/runner.js";
 import { loadEnvironment } from "@preman/core/workspace/environments.js";
+import { SHARED_PROTO_ROOT_ENV } from "@preman/core/workspace/links.js";
 import {
   cloneFixtureWorkspace,
   collectionPath,
@@ -2146,6 +2149,80 @@ describe("group-level auth (gRPC)", () => {
       writeDefinition(clone.root, "payment/nested", definitionWithAuth("nested", "  type: oauth2\n"));
 
       await expect(runCli(deepEcho(clone.root))).rejects.toThrow(/auth type "oauth2" is not supported/);
+    } finally {
+      clone.cleanup();
+    }
+  });
+});
+
+/**
+ * The composition decision 26 exists for, proved the only way it can be: import a `grpcurl` that
+ * names a real `.proto`, then send the request that came out of it and read the bytes off the
+ * wire. This is the case where planning touches the filesystem and applying writes
+ * `.postman/resources.yaml`, so it runs against a clone.
+ */
+const IMPORTED_NAME = "Imported Echo";
+
+describe("preman import (grpcurl, end to end)", () => {
+  // Applying a spec plan writes a symlink into the shared proto root, so the real one is
+  // replaced for the duration: a suite that leaves a dangling link in `/Users/Shared` has
+  // broken the next `preman protos` this machine runs.
+  let shared: string;
+  let previousRoot: string | undefined;
+
+  beforeEach(() => {
+    shared = mkdtempSync(join(tmpdir(), "preman-shared-"));
+    previousRoot = process.env[SHARED_PROTO_ROOT_ENV];
+    process.env[SHARED_PROTO_ROOT_ENV] = shared;
+  });
+
+  afterEach(() => {
+    if (previousRoot === undefined) delete process.env[SHARED_PROTO_ROOT_ENV];
+    else process.env[SHARED_PROTO_ROOT_ENV] = previousRoot;
+    rmSync(shared, { recursive: true, force: true });
+  });
+
+  it("givenAGrpcurlWithAProto_whenImportedThenRun_thenTheBytesOnTheWireMatch", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      // The clone's own copy, not `FIXTURE_PROTO`: a spec inside the workspace is the case where
+      // the include-dir climb reaches `src/main/proto` and `import "echo/common.proto"` resolves.
+      const proto = join(clone.root, "src/main/proto/echo/echo.proto");
+      const imported = await runCli([
+        "import",
+        "grpcurl",
+        "-d",
+        clone.root,
+        "--into",
+        "payment",
+        "--name",
+        IMPORTED_NAME,
+        "--",
+        "grpcurl",
+        "-plaintext",
+        "-proto",
+        proto,
+        "-H",
+        "x-request-id: 8f2c1a",
+        "-d",
+        '{"text":"pasted","amount":41,"trans_id":"t-import","mode":"SUCCEED"}',
+        target(),
+        "test.echo.EchoService/Echo",
+      ]);
+
+      expect(imported.code).toBe(EXIT.OK);
+      expect(imported.stdout).toContain(IMPORTED_NAME);
+
+      // The declaration the import staged, not one the fixture shipped.
+      const resources = readFileSync(`${clone.root}/.postman/resources.yaml`, "utf8");
+      expect(resources).toContain("echo.proto");
+
+      const run = await runCli(["run", IMPORTED_NAME, "-d", clone.root, "-e", "LOCAL", "--no-save", "--json"]);
+
+      expect(run.code).toBe(EXIT.OK);
+      expect(received[0]?.method).toBe("Echo");
+      expect(received[0]?.body).toMatchObject({ text: "pasted", trans_id: "t-import" });
+      expect(received[0]?.metadata["x-request-id"]).toBe("8f2c1a");
     } finally {
       clone.cleanup();
     }

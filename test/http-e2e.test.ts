@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { main } from "@preman/cli/main.js";
 import { EXIT } from "@preman/core/errors.js";
@@ -819,6 +819,107 @@ describe("mutable pm.request (HTTP)", () => {
       expect(report.method).toBe("GET");
       expect(report.finalUrl).toBe(`${http.origin}/echo?redirected=true`);
       expect(report.testSummary).toMatchObject({ total: 1, passed: 1, failed: 0 });
+    } finally {
+      ws.cleanup();
+    }
+  });
+});
+
+/**
+ * The fence is written out in full in every case: it is the shape of argv that a real shell hands
+ * to `main`, and the shape without it is the measured silent failure ADR 043 exists to refuse.
+ */
+function importArgs(root: string, ...extra: string[]): string[] {
+  return ["import", "-d", root, ...extra];
+}
+
+describe("preman import", () => {
+  it("givenACurlAimedAtTheFixtureServer_whenImportedThenRun_thenTheBytesOnTheWireMatch", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      const imported = await runCli(
+        importArgs(
+          ws.root,
+          "--into",
+          "admin",
+          "--name",
+          "Pasted Echo",
+          "--",
+          "curl",
+          "-X",
+          "POST",
+          "-H",
+          "content-type: application/json",
+          "-H",
+          "x-note: it's fine",
+          "--data-raw",
+          '{"text":"pasted"}',
+          `${http.origin}/echo?from=curl`,
+        ),
+      );
+      expect(imported.code).toBe(EXIT.OK);
+      expect(imported.stdout).toContain("Imported POST Pasted Echo");
+
+      const { code, stdout } = await runCli(clonedArgs(ws.root, "admin/Pasted Echo"));
+      const report = JSON.parse(stdout) as HttpReport;
+      expect(code).toBe(EXIT.OK);
+      expect(report.method).toBe("POST");
+
+      // The paste is only imported if what left preman is what curl would have sent.
+      expect(http.received).toHaveLength(1);
+      const sent = http.received[0]!;
+      expect(sent.method).toBe("POST");
+      expect(sent.url).toBe("/echo?from=curl");
+      expect(sent.headers["content-type"]).toBe("application/json");
+      expect(sent.headers["x-note"]).toBe("it's fine");
+      expect(sent.body).toBe('{"text":"pasted"}');
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenSeveralCollections_whenIntoIsOmitted_thenItListsTheCandidates", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      // A second collection is one directory holding one request; `listGroups` needs no more.
+      const second = collectionPath(ws.root, "second");
+      mkdirSync(second, { recursive: true });
+      writeFileSync(join(second, "Kept.request.yaml"), "$kind: http-request\nname: Kept\nurl: https://x.test/kept\n");
+
+      await expect(runCli(importArgs(ws.root, "--", "curl", "https://x.test/orders"))).rejects.toThrow(
+        /say which collection to import into/,
+      );
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenDryRun_whenImportRuns_thenNoFileIsWritten", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      const { code, stdout } = await runCli(
+        importArgs(ws.root, "--dry-run", "--", "curl", "-k", "-s", "https://x.test/orders"),
+      );
+      expect(code).toBe(EXIT.OK);
+      // The plan, the drops and nothing on disk.
+      expect(stdout).toContain("Would import GET orders into admin");
+      expect(stdout).toContain("$kind: http-request");
+      expect(stdout).toContain("-k");
+      expect(existsSync(collectionPath(ws.root, "admin", "orders.request.yaml"))).toBe(false);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenInlineTextWithoutTheFence_whenImportRuns_thenItSaysToUseTheFence", async () => {
+    const ws = cloneFixtureHttpWorkspace();
+    try {
+      // Without the fence `parseArgs` has already turned `-k` into preman's own `--insecure` and
+      // dropped it from the positionals, so there is nothing left to import faithfully.
+      await expect(runCli(importArgs(ws.root, "curl", "curl", "-k", "https://x.test/orders"))).rejects.toThrow(
+        /`--` fence/,
+      );
+      expect(existsSync(collectionPath(ws.root, "admin", "orders.request.yaml"))).toBe(false);
     } finally {
       ws.cleanup();
     }

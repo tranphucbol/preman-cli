@@ -84,7 +84,18 @@
   --spacing-control-lg: 30px;
   --spacing-tab: 32px;
   --spacing-bar: 40px;
-  --spacing-gutter: 10px;
+
+  /* The one token above that is spacing and not a height: the inset every pane, bar and dialog
+   * band shares, so that a rule drawn across two of them lines its content up. 12px rather than
+   * Tailwind's 8 or 16 because 8 puts a 30px field 8px from a window edge and reads cramped, and
+   * 16 costs 16px of a sidebar that is already the narrowest column in the app.
+   *
+   * Unlike the five above it, this one is not part of a density preset, and that is deliberate: a
+   * preset moves control heights, the gutter is the room around them, and scaling both compounds —
+   * `compact` would lose height and inset at once and land somewhere nobody has looked at. If it
+   * ever should scale, it belongs in `density.ts` with the other eight, not in a second
+   * mechanism. */
+  --spacing-gutter: 12px;
 
   /* Surfaces, darkest to lightest: window, panel, control, hover.
    *

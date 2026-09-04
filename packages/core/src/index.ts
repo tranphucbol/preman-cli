@@ -51,6 +51,7 @@ export {
   renameNode,
   reorderSiblings,
   replaceFileText,
+  writeRequestFile,
   type CreateCollectionArgs,
   type CreateEnvironmentArgs,
   type CreateGroupArgs,
@@ -59,7 +60,10 @@ export {
   type FieldEdit,
   type MoveArgs,
   type RequestKind,
+  type WriteRequestArgs,
 } from "@preman/core/api/mutate.js";
+export { applyImportPlan, planImport, type ApplyImportArgs, type PlanImportArgs } from "@preman/core/api/import.js";
+export type { DroppedFlag, ImportFormat, ImportPlan } from "@preman/core/import/plan.js";
 export {
   flattenHeaders,
   type HeaderPairs,

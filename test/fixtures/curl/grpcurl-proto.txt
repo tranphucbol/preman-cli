@@ -1,0 +1,7 @@
+grpcurl -plaintext \
+  -proto {{PROTO}} \
+  -H 'x-request-id: 8f2c1a' \
+  -H 'authorization: Bearer sk-not-a-real-token' \
+  -max-time 30 \
+  -d '{"text":"hello","amount":100,"trans_id":"t-1","mode":"SUCCEED"}' \
+  localhost:9090 test.echo.EchoService/Echo

@@ -15,6 +15,7 @@ const DECLARED_SURFACE = [
   "EXIT",
   "PremanError",
   "SHARED_PROTO_ROOT_ENV",
+  "applyImportPlan",
   "applySpecPlan",
   "buildCatalog",
   "collectProtoFiles",
@@ -38,6 +39,7 @@ const DECLARED_SURFACE = [
   "listRequests",
   "migrateCloudWorkspace",
   "moveNode",
+  "planImport",
   "planSpecConversion",
   "planSpecs",
   "previewText",
@@ -60,6 +62,7 @@ const DECLARED_SURFACE = [
   "toJunitReport",
   "watchWorkspace",
   "writeEnvironmentValue",
+  "writeRequestFile",
 ];
 
 describe("core barrel", () => {

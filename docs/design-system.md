@@ -60,15 +60,19 @@ not a judgement call — it is arithmetic. The air is what the presets preserve:
 
 Current assignment, which is the audit as much as the rule:
 
-- `h-bar` — the title bar (`App.tsx`), and only that. It is the row the macOS traffic lights are
-  centred in, which is why a density change has to reach the main process at all; see decision 21.
+- `h-bar` — the title bar (`App.tsx`), and `ImportPane`'s footer. The title bar is the row the
+  macOS traffic lights are centred in, which is why a density change has to reach the main process
+  at all; see decision 21. The footer is there because it holds a content-tier `Button`, which is
+  the rule above and not an exception to it: a dialog's commit is the one control in a band that
+  cannot be quiet, and a 30px control makes the row 40px whatever the band is called.
 - `h-tab` — everything else: the tab bar and sidebar header and status bar (`App.tsx`), the
   breadcrumb and the message and body toolbars (`RequestEditor`), `KeyValueGrid`, `RunnerPane`,
   `VariablesPane`, `ConsoleDrawer`, both `BodyViewer` strips, and the sub-tab triggers in
   `RequestEditor` and `ResponsePane`, which are text and take the shorter row.
 
-That `h-bar` has one caller is the rule working, not a token going spare: a pane toolbar that
-wanted `h-bar` was a toolbar that had not been asked which tier its buttons were in.
+That `h-bar` has two callers and not twelve is the rule working, not a token going spare: a pane
+toolbar that wanted `h-bar` was a toolbar that had not been asked which tier its buttons were in.
+Both callers earned it by holding a 30px control, which is the only way to earn it.
 
 One row is neither, on purpose: the request bar (`RequestEditor.tsx`, the `px-gutter py-2` strip) is
 `px-gutter py-2` around a 30px field, so 46px. It is the only row in the app that is the subject of
@@ -501,7 +505,12 @@ and exactly one in the stylesheet.
 - **Themes read from disk.** The forty-three are bundled and static. Decision 20 says what a
   loadable theme would cost.
 - **A spacing scale of its own.** Tailwind's default 4px scale is used as-is for padding and gaps.
-  Only the named `--spacing-*` tokens above are ours, and they are heights, not spacing.
+  The named `--spacing-*` tokens above are ours and are heights rather than spacing, with one
+  exception: `--spacing-gutter` (12px) is the shared inset of every pane, bar and dialog band, and
+  it exists so that a rule drawn across two bands lines their content up. Reach for `px-gutter`
+  when the padding is that inset and for the Tailwind scale when it is not — a gap between two
+  fields is `gap-3`, not a second gutter. Unlike the heights it sits beside, the gutter does not
+  move with density; `app.css` says why.
 - **A component library boundary.** shadcn components are vendored and retuned, per decision 9.
   There is no `@preman/ui` package and there should not be one for a single consumer.
 - **A general progress bar.** `ui/Progress.tsx` is drawn in `MigratePane` and nowhere else, because
