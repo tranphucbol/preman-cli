@@ -81,6 +81,8 @@ import {
   cancelRun,
   closeTab,
   createEnvironment,
+  deleteDiscardsUnsavedWork,
+  deleteNode,
   discardAndClose,
   duplicateNode,
   mutate,
@@ -1044,7 +1046,7 @@ function WorkspaceTree({
               body: deleteWarning(node),
               submit: "Delete",
               onConfirm: () => {
-                void mutate({ op: "delete", targetId: node.id }).then(onFail);
+                void deleteNode(node.id).then(onFail);
               },
             });
           }}
@@ -1079,11 +1081,21 @@ function openMatch(match: GrepMatch): void {
   void loadTab(node.id);
 }
 
-/** Says what is actually about to happen, including that git is the only undo. */
+/**
+ * Says what is actually about to happen, including that git is the only undo.
+ *
+ * The unsaved sentence is appended rather than replacing anything, and only when there is unsaved
+ * work to lose. Deleting closes the tabs it emptied, which discards their drafts - and git, the undo
+ * this offers, has never seen a draft. A confirmation that omitted that would make the one loss
+ * nothing can recover the one loss it failed to mention.
+ */
 function deleteWarning(node: CatalogNode): string {
-  return node.kind === "request"
-    ? "The request file is removed from disk. preman has no undo for this, so recover it with git if you need to."
-    : "The directory and everything inside it is removed from disk. preman has no undo for this, so recover it with git if you need to.";
+  const removed =
+    node.kind === "request"
+      ? "The request file is removed from disk."
+      : "The directory and everything inside it is removed from disk.";
+  const unsaved = deleteDiscardsUnsavedWork(node.id) ? " Unsaved edits in the tabs this closes go with it." : "";
+  return `${removed} preman has no undo for this, so recover it with git if you need to.${unsaved}`;
 }
 
 /**

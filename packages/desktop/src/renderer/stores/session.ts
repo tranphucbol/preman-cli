@@ -204,13 +204,24 @@ export async function loadTab(nodeId: string): Promise<void> {
  * A clean tab reloads silently, because the user's copy and the file were the same and now the file
  * moved. A dirty tab is flagged rather than reloaded: overwriting unsaved work to stay in sync is
  * the one behaviour a tool must never have.
+ *
+ * A deletion arrives here too, and it is neither. `matchesOwnWrite` compares the bytes on disk, so
+ * a path with no bytes left can never be recognised as this host's own write and is always reported
+ * external - even when this app is what deleted it. Reading it back would be asking the engine a
+ * question the catalog has already answered, and the `cannot read` it answers with would land in
+ * `tab.error`, where `RequestEditor` paints it *instead of* the orphan banner written for exactly
+ * this case. So a node the catalog no longer has is orphaned here and not read: the catalog and the
+ * `external-change` push both come out of one `reconcile`, which publishes the catalog first, so by
+ * the time this runs the absence is fact and not a race.
  */
 export function applyExternalChange(nodeIds: readonly string[]): void {
+  const { byId } = useCatalogStore.getState();
   const tabs = useTabsStore.getState();
   for (const nodeId of nodeIds) {
     const tab = tabs.tabs.get(nodeId);
     if (tab === undefined) continue;
-    if (isDirty(tab)) tabs.markConflicted(nodeId);
+    if (!byId.has(nodeId)) tabs.markOrphaned(nodeId);
+    else if (isDirty(tab)) tabs.markConflicted(nodeId);
     else void loadTab(nodeId);
   }
 }

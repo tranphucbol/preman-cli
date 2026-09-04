@@ -273,8 +273,12 @@ export function useGitDecoration(id: string): GitDecoration | undefined {
  * rewritten on every descendant of a renamed folder. A node whose chain is broken - which only
  * happens mid-refresh, between a `replace` and the render that follows it - yields the part of the
  * chain that does resolve rather than throwing.
+ *
+ * Exported for the one question it answers besides a breadcrumb: whether a node is inside another,
+ * which is what "delete this folder" has to know about the open tabs. Ids are paths, so that could
+ * be a prefix test, but a prefix test also matches a sibling whose name merely starts the same way.
  */
-function ancestorsOf(byId: ReadonlyMap<string, CatalogNode>, id: string): CatalogNode[] {
+export function ancestorsOf(byId: ReadonlyMap<string, CatalogNode>, id: string): CatalogNode[] {
   const chain: CatalogNode[] = [];
   let parentId = byId.get(id)?.parentId ?? null;
   while (parentId !== null) {

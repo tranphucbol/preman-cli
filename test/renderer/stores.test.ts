@@ -10,7 +10,7 @@
  * not a stub. A hand-written `NodeDocument` would let a reload test pass while the reload was
  * reading a field the engine does not actually send.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -50,7 +50,7 @@ import {
   readPairs,
   textToPairs,
 } from "@preman/desktop/renderer/model/request.js";
-import { createEnvironment, saveTab } from "@preman/desktop/renderer/actions.js";
+import { createEnvironment, deleteDiscardsUnsavedWork, deleteNode, saveTab } from "@preman/desktop/renderer/actions.js";
 import { clearFlush, flushPending, registerFlush } from "@preman/desktop/renderer/pending.js";
 import {
   DRAFT_PERSIST_DEBOUNCE_MS,
@@ -77,6 +77,10 @@ const PING_ID = "postman/collections/payment/Ping.request.yaml";
 const PAYMENT_ID = "postman/collections/payment";
 const ADMIN_ID = "postman/collections/admin";
 const PROFILE_ID = "postman/collections/admin/Profile.request.yaml";
+/** The gRPC fixture's other request, and the folder inside `payment` with one request of its own. */
+const ECHO_ID = "postman/collections/payment/Echo.request.yaml";
+const NESTED_ID = "postman/collections/payment/nested";
+const DEEP_ECHO_ID = "postman/collections/payment/nested/Deep Echo.request.yaml";
 const HEADERS_FIELD = "headers";
 /** Nested under `body` in a real file; the pair edits are written against the leaf name. */
 const FORMDATA_FIELD = "formdata";
@@ -602,6 +606,151 @@ describe("external changes under an open tab", () => {
     applyExternalChange([PING_ID]);
 
     expect(useTabsStore.getState().tabs.size).toBe(0);
+  });
+});
+
+/**
+ * Deleting a file out from under an open tab.
+ *
+ * The engine cannot tell its own delete from anyone else's - `matchesOwnWrite` compares bytes, and a
+ * deleted path has none - so every delete reaches the renderer as an external change. What the app
+ * must not do with one is read the file back: the engine answers `cannot read`, and that error lands
+ * where `RequestEditor` paints it instead of the orphan banner written for this exact case.
+ */
+describe("a file deleted under an open tab", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+  /** Every request kind the tabs above sent, so a doomed `read-node` cannot pass unnoticed. */
+  let sent: EngineRequestKind[];
+
+  beforeEach(async () => {
+    resetStores();
+    sent = [];
+    workspace = cloneFixtureWorkspace();
+    host = createEngineHost({ root: workspace.root, post: () => undefined, log: () => undefined });
+    const client = hostClient(host, workspace.root);
+    const counted: EngineClient = {
+      ...client,
+      send: async (kind, payload) => {
+        sent.push(kind);
+        return client.send(kind, payload);
+      },
+    };
+    useSessionStore.getState().setClient(counted, workspace.root);
+    useCatalogStore.getState().replace(await counted.send("catalog", {}));
+  });
+
+  afterEach(() => {
+    host.dispose();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  /** Open a tab on a node and install the document the engine reads for it. */
+  async function openLoaded(nodeId: string): Promise<void> {
+    const node = useCatalogStore.getState().byId.get(nodeId);
+    expect(node).toBeDefined();
+    useTabsStore.getState().open(node!);
+    useTabsStore.getState().loaded(nodeId, await useSessionStore.getState().client!.send("read-node", { nodeId }));
+  }
+
+  /**
+   * Remove the file and bring the catalog up to date, which is the state the watcher's push
+   * arrives in.
+   *
+   * Through the engine's own `mutate` rather than an `rmSync`, for two reasons. The host builds its
+   * catalog once and refreshes it from the watcher, so a bare unlink leaves it answering `catalog`
+   * from a cache that still holds the node. And the distinction does not exist on the wire anyway:
+   * `matchesOwnWrite` reads the bytes at the path to recognise its own write, a deleted path has
+   * none, so a delete is reported as external whoever performed it. That is the premise of the bug.
+   */
+  async function removeFile(nodeId: string): Promise<void> {
+    const client = useSessionStore.getState().client!;
+    await client.send("mutate", { op: { op: "delete", targetId: nodeId } });
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+  }
+
+  it("givenCleanTabOnADeletedFile_whenWatcherFires_thenTabIsOrphanedWithoutBeingRead", async () => {
+    await openLoaded(PING_ID);
+    await removeFile(PING_ID);
+    sent.length = 0;
+
+    applyExternalChange([PING_ID]);
+    // Nothing to poll for: the point is that no request was made at all, so the assertion is that
+    // this stayed synchronous.
+    expect(sent).toStrictEqual([]);
+
+    const tab = useTabsStore.getState().tabs.get(PING_ID);
+    expect(tab?.orphaned).toBe(true);
+    // The banner is only reachable when nothing is in `error`, which is the whole bug: a failed
+    // re-read is painted instead of it.
+    expect(tab?.error).toBeNull();
+  });
+
+  it("givenDirtyTabOnADeletedFile_whenWatcherFires_thenUnsavedWorkSurvives", async () => {
+    await openLoaded(PING_ID);
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://mine.test/ping");
+    const before = useTabsStore.getState().tabs.get(PING_ID)?.edits;
+    await removeFile(PING_ID);
+
+    applyExternalChange([PING_ID]);
+
+    const tab = useTabsStore.getState().tabs.get(PING_ID);
+    // Still open, and still holding the edits: a `git checkout` that removes a file must not be
+    // what discards an afternoon. Saving writes it back, which is what the banner promises.
+    expect(tab?.orphaned).toBe(true);
+    expect(tab?.edits).toStrictEqual(before);
+  });
+
+  it("givenTheActiveRequest_whenDeletedFromTheApp_thenItsTabClosesOntoItsNeighbour", async () => {
+    await openLoaded(ECHO_ID);
+    await openLoaded(PING_ID);
+    useTabsStore.getState().activate(PING_ID);
+
+    expect(await deleteNode(PING_ID)).toBeNull();
+
+    const tabs = useTabsStore.getState();
+    // Closed rather than left orphaned: the delete was confirmed in this app, so a banner offering
+    // to write the file back would be arguing with an instruction just carried out.
+    expect(tabs.tabs.has(PING_ID)).toBe(false);
+    expect(tabs.activeId).toBe(ECHO_ID);
+  });
+
+  it("givenTabsInsideAGroup_whenTheGroupIsDeleted_thenEveryTabUnderItCloses", async () => {
+    await openLoaded(PING_ID);
+    await openLoaded(DEEP_ECHO_ID);
+
+    expect(await deleteNode(NESTED_ID)).toBeNull();
+
+    const tabs = useTabsStore.getState();
+    expect(tabs.tabs.has(DEEP_ECHO_ID)).toBe(false);
+    // Beside the folder rather than inside it, so untouched. The subtree is walked through
+    // `parentId` and not matched on the id's text, which is what keeps a delete from reaching a
+    // sibling whose name merely begins the same way.
+    expect(tabs.tabs.has(PING_ID)).toBe(true);
+    expect(tabs.activeId).toBe(PING_ID);
+  });
+
+  it("givenARefusedDelete_whenItFails_thenTheTabStaysOpen", async () => {
+    await openLoaded(PING_ID);
+    rmSync(join(workspace.root, PING_ID));
+
+    // The file is already gone, so the engine refuses. A tab must not be closed by a delete that
+    // did not happen.
+    expect(await deleteNode(PING_ID)).not.toBeNull();
+    expect(useTabsStore.getState().tabs.has(PING_ID)).toBe(true);
+  });
+
+  it("givenAnUnsavedEditInsideAGroup_whenAskedWhatDeletingCosts_thenItSaysTheDraftGoesToo", async () => {
+    await openLoaded(PING_ID);
+    expect(deleteDiscardsUnsavedWork(PAYMENT_ID)).toBe(false);
+
+    useTabsStore.getState().setField(PING_ID, FIELD.url, "https://mine.test/ping");
+
+    // Asked of the group, answered about the tab inside it: git is the undo this offers, and git
+    // has never seen a draft.
+    expect(deleteDiscardsUnsavedWork(PAYMENT_ID)).toBe(true);
+    expect(deleteDiscardsUnsavedWork(NESTED_ID)).toBe(false);
   });
 });
 

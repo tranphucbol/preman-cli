@@ -270,7 +270,9 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Breadcrumb nodeId={tab.nodeId} />
-      <AnimatePresence>{tab.conflicted ? <ConflictBanner nodeId={tab.nodeId} /> : null}</AnimatePresence>
+      <AnimatePresence>
+        {tab.conflicted ? <ConflictBanner nodeId={tab.nodeId} orphaned={tab.orphaned} /> : null}
+      </AnimatePresence>
       <AnimatePresence>
         {tab.orphaned ? (
           <Banner tone="danger" message="This file is gone from disk. Saving will write it back." detail={saved.file} />
@@ -1396,7 +1398,13 @@ function SectionLabel({ children }: { readonly children: React.ReactNode }) {
   );
 }
 
-function ConflictBanner({ nodeId }: { readonly nodeId: string }) {
+/**
+ * `orphaned` removes `Take theirs`, because on a file that is gone there is no theirs to take: the
+ * button would discard the edits and then fail the re-read, so the one press that cannot be undone
+ * would also be the one that achieves nothing. `Keep mine` stays, and the orphan banner below this
+ * one says what saving would then do.
+ */
+function ConflictBanner({ nodeId, orphaned }: { readonly nodeId: string; readonly orphaned: boolean }) {
   return (
     // Its own bar rather than a `Banner`, because it carries two actions and no icon column - but
     // it arrives the same way, or the two bars stacked here would disagree about what a notice is.
@@ -1405,17 +1413,23 @@ function ConflictBanner({ nodeId }: { readonly nodeId: string }) {
       className="flex shrink-0 items-center gap-2 border-b border-warn/40 bg-warn/10 px-gutter py-1.5"
     >
       <WarningIcon className="shrink-0 text-warn" />
-      <span className="text-xs text-ink">This file changed on disk while you were editing it.</span>
+      <span className="text-xs text-ink">
+        {orphaned
+          ? "This file was deleted while you were editing it."
+          : "This file changed on disk while you were editing it."}
+      </span>
       <div className="ml-auto flex gap-1.5">
-        <Button
-          onClick={() => {
-            // Discard first, so the re-read is not itself treated as a conflict.
-            useTabsStore.getState().discard(nodeId);
-            void loadTab(nodeId);
-          }}
-        >
-          Take theirs
-        </Button>
+        {orphaned ? null : (
+          <Button
+            onClick={() => {
+              // Discard first, so the re-read is not itself treated as a conflict.
+              useTabsStore.getState().discard(nodeId);
+              void loadTab(nodeId);
+            }}
+          >
+            Take theirs
+          </Button>
+        )}
         <Button
           onClick={() => {
             useTabsStore.getState().keepMine(nodeId);

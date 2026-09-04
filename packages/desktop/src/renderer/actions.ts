@@ -28,7 +28,7 @@ import { planDuplicate } from "@preman/desktop/renderer/model/order.js";
 import { flushPending } from "@preman/desktop/renderer/pending.js";
 import { loadTab, toEngineError, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
-import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
+import { ancestorsOf, useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 // The shape a naming dialog waits on. Imported rather than restated, so an action that answers one
 // cannot drift from what the dialog reads; the dependency is a type and points at no component.
@@ -224,6 +224,54 @@ export async function duplicateNode(nodeId: string): Promise<Failure | null> {
     if (failed !== null) return failed;
   }
   return mutate({ op: "duplicate", targetId: nodeId, ...(order === undefined ? {} : { order }) }, { open: true });
+}
+
+/**
+ * The open tabs a delete of `nodeId` would take with it: its own, and every one under it when the
+ * target is a group.
+ *
+ * Read before the mutation, never after. The engine publishes a fresh catalog from inside `mutate`,
+ * so by the time that call resolves the subtree is no longer in `byId` and there is nothing left to
+ * ask which tabs belonged to it.
+ */
+function doomedTabs(nodeId: string): string[] {
+  const { byId } = useCatalogStore.getState();
+  return useTabsStore
+    .getState()
+    .order.filter((id) => id === nodeId || ancestorsOf(byId, id).some((ancestor) => ancestor.id === nodeId));
+}
+
+/** Whether deleting `nodeId` would also throw away unsaved edits, for the confirmation to say so. */
+export function deleteDiscardsUnsavedWork(nodeId: string): boolean {
+  const { tabs } = useTabsStore.getState();
+  return doomedTabs(nodeId).some((id) => {
+    const tab = tabs.get(id);
+    return tab !== undefined && isDirty(tab);
+  });
+}
+
+/**
+ * Delete a request or a group, and close the tabs that were open on it.
+ *
+ * Closing is the whole reason this is not a bare `mutate`. A file that vanishes from *outside* the
+ * app leaves its tab open and orphaned on purpose - unsaved work must survive a `git checkout`, and
+ * the banner promises that saving writes it back. A delete from inside the app is the opposite
+ * situation: the user was asked, they confirmed, and the warning already said git is the only undo.
+ * Leaving the tab up would be the app arguing with an instruction it just carried out, and the
+ * banner would offer to recreate a file that was deliberately removed.
+ *
+ * `close` then activates the tab that visually takes the closed one's place, so deleting the
+ * request you are looking at lands you on its neighbour rather than on nothing.
+ *
+ * Only on success: a refused delete must not close a tab whose file is still there.
+ */
+export async function deleteNode(nodeId: string): Promise<Failure | null> {
+  const doomed = doomedTabs(nodeId);
+  const failed = await mutate({ op: "delete", targetId: nodeId });
+  if (failed !== null) return failed;
+  const tabs = useTabsStore.getState();
+  for (const id of doomed) tabs.close(id);
+  return null;
 }
 
 /**
