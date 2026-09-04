@@ -625,6 +625,78 @@ describe("the engine host protocol", () => {
     });
   });
 
+  /**
+   * The reverse of an import, over the same port. What the desktop adds is again the seam: the
+   * plan has to survive a structured clone, and a group has to be refused by the engine rather
+   * than by a pane that would otherwise have to know the rule.
+   */
+  describe("copy", () => {
+    it("givenARequestNode_whenPlanned_thenTheCommandComesBackAndNothingIsWritten", async () => {
+      const app = open();
+      const plan = await app.send("plan-command", { nodeId: PING_ID, environment: "LOCAL" });
+
+      expect(plan.format).toBe("grpcurl");
+      expect(plan.kind).toBe("grpc-request");
+      expect(plan.command.startsWith("grpcurl ")).toBe(true);
+      expect(plan.words).toContain("test.echo.EchoService/Ping");
+      // A structured clone keeps the arrays, which is the half a pane renders.
+      expect(Array.isArray(plan.unexpressed)).toBe(true);
+      expect(Array.isArray(plan.revealed)).toBe(true);
+
+      const document = await app.send("read-node", { nodeId: PING_ID });
+      expect(document.text).toContain("Ping");
+    });
+
+    it("givenAGroupNode_whenPlanned_thenTheHostRefusesIt", async () => {
+      const error = await open().fail("plan-command", { nodeId: PAYMENT_ID, environment: "LOCAL" });
+
+      expect(error.exitCode).toBe(EXIT.CLI);
+      expect(error.message).toContain("is a collection of");
+    });
+
+    /*
+     * The aside is open while the request is typed into, so the draft is the normal case and the
+     * file is the fallback. Both shapes travel, because the field grids and the raw YAML tab are
+     * two editors and `write-node`/`write-text` already split on exactly this.
+     */
+    it("givenAProjectedDraft_whenPlanned_thenTheCommandIsTheDraftAndTheFileIsUnchanged", async () => {
+      const app = open();
+      const saved = await app.send("read-node", { nodeId: PING_ID });
+      const draft = { ...(saved.data as Record<string, unknown>), methodPath: "test.echo.EchoService.Echo" };
+
+      const plan = await app.send("plan-command", { nodeId: PING_ID, environment: "LOCAL", draft: { data: draft } });
+      expect(plan.words).toContain("test.echo.EchoService/Echo");
+
+      // Nothing was written, and asking again without a draft still answers for the bytes on disk.
+      const after = await app.send("read-node", { nodeId: PING_ID });
+      expect(after.text).toBe(saved.text);
+      const filed = await app.send("plan-command", { nodeId: PING_ID, environment: "LOCAL" });
+      expect(filed.words).toContain("test.echo.EchoService/Ping");
+    });
+
+    it("givenARawYamlDraft_whenPlanned_thenTheBytesAreParsedByTheHost", async () => {
+      const app = open();
+      const saved = await app.send("read-node", { nodeId: PING_ID });
+      const text = saved.text.replace("EchoService.Ping", "EchoService.Echo");
+
+      const plan = await app.send("plan-command", { nodeId: PING_ID, environment: "LOCAL", draft: { text } });
+      expect(plan.words).toContain("test.echo.EchoService/Echo");
+    });
+
+    it("givenAHalfTypedYamlDraft_whenPlanned_thenTheRefusalIsASentence", async () => {
+      // The normal state of a YAML tab being edited, so the parser's own throw would be noise the
+      // aside shows on the way past valid.
+      const error = await open().fail("plan-command", {
+        nodeId: PING_ID,
+        environment: "LOCAL",
+        draft: { text: "$kind: grpc-request\n  bad: [" },
+      });
+
+      expect(error.exitCode).toBe(EXIT.CLI);
+      expect(error.message).toBe("the draft is not valid YAML");
+    });
+  });
+
   describe("the proto index", () => {
     it("givenDeclaredProtos_whenMethodsListed_thenEachCarriesTheSpecThatDeclaredIt", async () => {
       const choices = await open().send("list-methods", {});

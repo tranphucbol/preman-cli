@@ -75,6 +75,7 @@ preman protos                       list the declared .proto files, grouped by s
 preman protos link <name> <dir>     point a shared link at a checkout on this machine
 preman import --into <collection>   turn a pasted curl or grpcurl into a request
 preman import --into <collection> -- <pasted command>
+preman copy <collection/request>    print that request as a curl or grpcurl command
 preman migrate --list               list the Postman cloud workspaces in reach
 preman migrate --workspace <id|name> --out <dir>
 ```
@@ -244,6 +245,46 @@ again when the run reaches schema resolution.
 The desktop app does the same from the sidebar header's import button, **File ▸ Import from cURL or
 grpcurl…**, a group's context menu, or the command palette. The dialog pre-fills itself from the
 clipboard when it holds a command, and shows the exact document before anything is written.
+
+## Copying a request as a command
+
+The other direction. `preman copy` prints one request as the command that would send it — `curl`
+for an HTTP request, `grpcurl` for a gRPC one, decided by the request's kind rather than by a flag:
+
+```sh
+preman copy admin/Profile --env QC | pbcopy
+```
+
+```text
+curl -H 'Authorization: Bearer eyJhbGci…' -L 'https://api.example.test/profile?tab=main'
+
+  Not in this command
+    collection admin http:beforeRequest  not run; a script that sets a header is not in this command
+    pm.test assertions                   a command has no test result
+    cookie jar                           populated by earlier responses in a run
+
+  In cleartext
+    auth      the request's own auth block
+    http_url  environment
+    token     environment
+```
+
+Nothing is sent and no script runs, so the only exit codes are `0` and `1`. Everything the command
+cannot carry is named — the scripts that would have run, the `pm.test` assertions that have no
+result, the cookie jar, the timeout — and every `{{token}}` that was substituted is listed with the
+scope it came from. Nothing is redacted: `preman` has no way to tell a credential from a variable,
+so it reports what it resolved and leaves the judgement to you.
+
+A gRPC request comes out as a `grpcurl` with the `-proto` and `-import-path` flags it needs. Those
+are paths on this machine, which is warned; a request resolved from an embedded descriptor has no
+`.proto` to name at all, so the command is printed with the schema listed as missing and a warning
+that it will not run as written.
+
+The app shows the same thing in a panel beside the request, opened with the **`</>`** button in the
+request bar, a request's context menu, **File ▸ Copy as cURL or grpcurl**, or the command palette.
+It follows your unsaved edits rather than what is on disk, so editing the url rewrites the command
+without saving first — a text box lands when you leave it, an editor when you pause. The clipboard
+is written when you press Copy and never on open.
 
 ## Migrating from Postman cloud
 

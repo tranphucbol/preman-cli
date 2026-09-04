@@ -55,6 +55,7 @@ import { BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence, MotionRoot, m } from "@preman/desktop/renderer/ui/motion.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { ConsoleDrawer } from "@preman/desktop/renderer/panes/ConsoleDrawer.js";
+import { CommandPane } from "@preman/desktop/renderer/panes/CommandPane.js";
 import { ImportPane } from "@preman/desktop/renderer/panes/ImportPane.js";
 import { MigratePane } from "@preman/desktop/renderer/panes/MigratePane.js";
 import { RequestEditor } from "@preman/desktop/renderer/panes/RequestEditor.js";
@@ -99,6 +100,7 @@ import {
 } from "@preman/desktop/renderer/stores/session.js";
 import { useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
+import { useAsideStore } from "@preman/desktop/renderer/stores/aside.js";
 import { useOverlayStore, type Overlay } from "@preman/desktop/renderer/stores/overlay.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { useSearchStore } from "@preman/desktop/renderer/stores/search.js";
@@ -109,6 +111,8 @@ const WORKSPACE_ID = "workspace";
 const CONSOLE_ID = "console";
 const REQUEST_ID = "request";
 const RESPONSE_ID = "response";
+const EXCHANGE_ID = "exchange";
+const COMMAND_ID = "command";
 const LAYOUT_ID = "preman:panes";
 const SHELL_LAYOUT_ID = "preman:shell";
 const EXCHANGE_LAYOUT_ID = "preman:exchange";
@@ -142,6 +146,15 @@ const CONSOLE_MIN = "12";
 const REQUEST_DEFAULT = "55";
 const REQUEST_MIN = "20";
 const RESPONSE_MIN = "15";
+/**
+ * A third of the editor area for the command aside.
+ *
+ * Enough that a `curl` with a couple of headers wraps two or three times rather than twenty, and
+ * not so much that opening it squeezes the URL field into uselessness — the point of the aside is
+ * that the request stays workable beside it.
+ */
+const COMMAND_DEFAULT = "32";
+const COMMAND_MIN = "18";
 /**
  * The explicit "none" the engine now accepts, which is not the same as nobody having chosen.
  *
@@ -185,6 +198,7 @@ const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "create-workspace", label: "Create new workspace…", detail: "command" },
   { kind: "command", id: "migrate", label: "Migrate from Postman…", detail: "command" },
   { kind: "command", id: "import", label: "Import from cURL or grpcurl…", detail: "command" },
+  { kind: "command", id: "copy-command", label: "Copy as cURL or grpcurl", detail: "command" },
   { kind: "command", id: "create-environment", label: "New environment…", detail: "command" },
   { kind: "command", id: "settings", label: "Settings", detail: "⌘," },
 ];
@@ -285,6 +299,16 @@ export function App(): React.JSX.Element {
     [showImport],
   );
 
+  /*
+   * The command aside follows the active tab, so nothing here names a node. A sidebar row that
+   * asks for it opens the request first, which is the same two steps a person takes by hand and
+   * leaves the aside with one rule instead of two.
+   *
+   * Its open flag is in a store rather than here because the toolbar glyph that toggles it sits
+   * below the pane that draws it. Everything else on this screen is opened from above.
+   */
+  useEffect(() => window.preman.onCopyCommand(useAsideStore.getState().toggleCommand), []);
+
   // The library owns pane persistence, which keeps one more thing out of the app-data store.
   const layout = useDefaultLayout({ id: LAYOUT_ID, panelIds: [SIDEBAR_ID, EDITOR_ID], storage: localStorage });
   const shell = useDefaultLayout({ id: SHELL_LAYOUT_ID, panelIds: [WORKSPACE_ID, CONSOLE_ID], storage: localStorage });
@@ -370,6 +394,9 @@ export function App(): React.JSX.Element {
           return;
         case "import":
           showImport();
+          return;
+        case "copy-command":
+          useAsideStore.getState().toggleCommand();
           return;
         case "create-environment":
           setAsk(CREATE_ENVIRONMENT_ASK);
@@ -992,6 +1019,13 @@ function WorkspaceTree({
             useCatalogStore.getState().select(parentId);
             onImport(parentId);
           }}
+          onCopyAsCommand={(node) => {
+            // Opened first, then the aside. The aside is about the active tab, so a row that
+            // asked for it without opening the row would show the command for whatever was
+            // already up — the wrong request, confidently.
+            open(node);
+            useAsideStore.getState().showCommand();
+          }}
           onDuplicate={(node) => {
             // The file is copied, not the draft. Under decision 010 a draft is not the request
             // yet, so a dirty tab has nothing this could honestly copy — and a modal saying so on
@@ -1122,6 +1156,8 @@ function EditorPane({
   const tab = useTabsStore((state) => (state.activeId === null ? undefined : state.tabs.get(state.activeId)));
   const overlay = useOverlayStore((state) => state.overlay);
   const dismiss = useOverlayStore((state) => state.dismiss);
+  const commandOpen = useAsideStore((state) => state.command);
+  const dismissCommand = useAsideStore((state) => state.dismissCommand);
   const nodeId = tab?.nodeId;
   const run = useRunsStore((state) => {
     if (nodeId === undefined) return undefined;
@@ -1172,36 +1208,68 @@ function EditorPane({
       {tab === undefined ? (
         <VacantEditor />
       ) : (
-        // The request above, what came back below. Split rather than tabbed because the whole
-        // job is comparing the two, and a tab strip that hides one of them makes you click to
-        // remember what you sent.
-        <Group
-          orientation="vertical"
-          className="min-h-0 flex-1"
-          defaultLayout={exchange.defaultLayout}
-          onLayoutChanged={exchange.onLayoutChanged}
-        >
-          <Panel id={REQUEST_ID} defaultSize={REQUEST_DEFAULT} minSize={REQUEST_MIN} className="flex min-h-0 flex-col">
-            <RequestEditor
-              tab={tab}
-              running={run !== undefined}
-              onSend={() => {
-                void sendNode(tab.nodeId).then(onFail);
-              }}
-              onCancel={() => {
-                if (run !== undefined) void cancelRun(run.runId).then(onFail);
-              }}
-              onSave={() => {
-                void saveTab(tab).then(onFail);
-              }}
-              onAsk={onAsk}
-              onFail={onFail}
-            />
+        /*
+         * The exchange, and the command beside it.
+         *
+         * The aside spans both halves rather than sitting beside the request alone, because what
+         * it shows is the whole call: the same words that produced the response below. Mounted
+         * only while open, and this group holds no persisted layout for that reason — a stored
+         * two-panel split cannot be restored onto a group that is usually one panel, and the
+         * alternative, a collapsible panel kept alive at zero width, means the editor re-plans on
+         * every keystroke into a pane nobody is looking at.
+         */
+        <Group orientation="horizontal" className="min-h-0 flex-1">
+          <Panel id={EXCHANGE_ID} className="flex min-w-0 flex-col">
+            {/* The request above, what came back below. Split rather than tabbed because the whole
+                job is comparing the two, and a tab strip that hides one of them makes you click to
+                remember what you sent. */}
+            <Group
+              orientation="vertical"
+              className="min-h-0 flex-1"
+              defaultLayout={exchange.defaultLayout}
+              onLayoutChanged={exchange.onLayoutChanged}
+            >
+              <Panel
+                id={REQUEST_ID}
+                defaultSize={REQUEST_DEFAULT}
+                minSize={REQUEST_MIN}
+                className="flex min-h-0 flex-col"
+              >
+                <RequestEditor
+                  tab={tab}
+                  running={run !== undefined}
+                  onSend={() => {
+                    void sendNode(tab.nodeId).then(onFail);
+                  }}
+                  onCancel={() => {
+                    if (run !== undefined) void cancelRun(run.runId).then(onFail);
+                  }}
+                  onSave={() => {
+                    void saveTab(tab).then(onFail);
+                  }}
+                  onAsk={onAsk}
+                  onFail={onFail}
+                />
+              </Panel>
+              <Handle axis="horizontal" />
+              <Panel id={RESPONSE_ID} minSize={RESPONSE_MIN} className="flex min-h-0 flex-col">
+                <ResponsePane nodeId={tab.nodeId} />
+              </Panel>
+            </Group>
           </Panel>
-          <Handle axis="horizontal" />
-          <Panel id={RESPONSE_ID} minSize={RESPONSE_MIN} className="flex min-h-0 flex-col">
-            <ResponsePane nodeId={tab.nodeId} />
-          </Panel>
+          {commandOpen && <Handle axis="vertical" />}
+          {commandOpen && (
+            <Panel
+              id={COMMAND_ID}
+              defaultSize={COMMAND_DEFAULT}
+              minSize={COMMAND_MIN}
+              className="flex min-w-0 flex-col"
+            >
+              {/* Keyed on the node so switching tabs re-plans from nothing rather than leaving the
+                  previous request's command up for a round trip. */}
+              <CommandPane key={tab.nodeId} tab={tab} onDismiss={dismissCommand} />
+            </Panel>
+          )}
         </Group>
       )}
     </>

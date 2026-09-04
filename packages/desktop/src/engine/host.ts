@@ -54,6 +54,8 @@ import {
   type EngineRequestFor,
   type EngineResponse,
   type EngineResult,
+  type CommandPlan,
+  type RequestDraft,
   type ImportPlan,
   type LogLevel,
   type MutateOp,
@@ -75,6 +77,9 @@ const FIRST_RUN = 1;
 /** What a line in the log calls the two kinds of failure that used to reach only the renderer. */
 const PROTO_WARNING_LABEL = "proto not loaded: ";
 const RUN_WARNING_LABEL = "run warning: ";
+const COPY_WARNING_LABEL = "copy warning: ";
+/** An empty YAML document parses to null; the schemas want an object to report fields against. */
+const EMPTY_DRAFT = {};
 const DISPATCH_FAILED_LABEL = "request failed: ";
 const SELECTOR_SEPARATOR = "/";
 const PARENT_SEGMENT = "..";
@@ -179,6 +184,23 @@ function isDirectory(path: string): boolean {
     return statSync(path).isDirectory();
   } catch {
     return false;
+  }
+}
+
+/**
+ * A draft as core wants it: one parsed document, or nothing at all.
+ *
+ * The YAML error is caught rather than allowed through because a command aside is open *while*
+ * the YAML tab is being typed into, so a half-written document is the normal case and not a
+ * fault. `usage` makes it a sentence the pane can show instead of a parser's stack.
+ */
+function draftDocument(draft: RequestDraft | undefined): unknown {
+  if (draft === undefined) return undefined;
+  if (!("text" in draft)) return draft.data;
+  try {
+    return parse(draft.text) ?? EMPTY_DRAFT;
+  } catch (cause) {
+    throw usage("the draft is not valid YAML", [cause instanceof Error ? cause.message : String(cause)]);
   }
 }
 
@@ -669,6 +691,43 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     });
   }
 
+  /**
+   * One request as a command. `copySelection` rather than `planCommand` so the app and the CLI
+   * share one answer to which environment was meant and how the `--ssl-*` layers stack, and one
+   * refusal when the node is a group.
+   *
+   * Deferred like the send path: this reaches the schema resolver, which is `@grpc/proto-loader`.
+   * ADR 029's rule still holds — it loads the resolver, never the transport, because nothing here
+   * sends. Its workspace-level warnings go to the log the way a run's do; the pane shows the
+   * plan's own, which are about the command it is looking at.
+   *
+   * The selector still resolves against the catalog even when a `draft` is supplied: the draft is
+   * the document, but the entry it belongs to is what carries the file path the proto resolver
+   * climbs from and the ancestors inherited auth comes down through.
+   *
+   * A raw-YAML draft is parsed here rather than in the renderer, which has no YAML parser and
+   * should not grow one, and rather than in core, whose seam takes a document because that is the
+   * shape both of its callers already hold.
+   */
+  async function planCommand(request: EngineRequestFor<"plan-command">): Promise<CommandPlan> {
+    const [{ copySelection }, catalogNow] = await Promise.all([import("@preman/core/api/command.js"), ensureCatalog()]);
+    const copy = await copySelection({
+      dir: root,
+      selector: selectorFor(catalogNow, request.nodeId),
+      env: request.environment,
+      draft: draftDocument(request.draft),
+      url: undefined,
+      tls: undefined,
+      tlsCerts: {},
+      certBaseDir: root,
+      vars: {},
+      workingDir: root,
+      insecureFileRead: false,
+    });
+    for (const warning of copy.warnings) log("warn", `${COPY_WARNING_LABEL}${warning}`);
+    return copy.plan;
+  }
+
   /** Deferred like the rest of the send path: describing or planning specs is a setup action. */
   async function readSpecs<T>(work: (api: SpecsApi) => T): Promise<T> {
     return work(await specsApi());
@@ -774,6 +833,8 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         });
       case "plan-import":
         return planImport(request);
+      case "plan-command":
+        return planCommand(request);
       case "body-head":
         return bodies.head(request.handle);
       case "body-window":

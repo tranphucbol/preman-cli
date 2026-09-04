@@ -2228,3 +2228,27 @@ describe("preman import (grpcurl, end to end)", () => {
     }
   });
 });
+
+describe("preman copy (grpcurl)", () => {
+  it("givenAGroupSelector_whenCopyRuns_thenItNamesTheCount", async () => {
+    // One request per copy (decision 28); the count is what says the selector was too wide.
+    await expect(runCli(["copy", "payment", "-d", FIXTURE_WS, "-e", "LOCAL"])).rejects.toMatchObject({
+      exitCode: EXIT.CLI,
+      message: '"payment" is a collection of 5 requests',
+    });
+  });
+
+  it("givenJsonFlag_whenCopyRuns_thenThePlanIsTheOnlyOutput", async () => {
+    const copied = await runCli(["copy", "payment/Ping", "-d", FIXTURE_WS, "-e", "LOCAL", "--url", target(), "--json"]);
+
+    expect(copied.code).toBe(EXIT.OK);
+    // Nothing but the plan: no warning banner, no headline, no trailing prose.
+    expect(copied.stderr).toBe("");
+    const plan = JSON.parse(copied.stdout) as { format: string; command: string; words: string[] };
+    expect(plan.format).toBe("grpcurl");
+    expect(plan.words[0]).toBe("grpcurl");
+    expect(plan.command).toContain(`${target()} test.echo.EchoService/Ping`);
+    // Nothing was sent: copy describes the call, it does not make it.
+    expect(received).toHaveLength(0);
+  });
+});

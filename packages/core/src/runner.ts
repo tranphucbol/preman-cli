@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
-import type { ZodError } from "zod";
 import { PremanError, EXIT, type ExitCode } from "./errors.js";
 import { rowFor, type DataRow } from "./data/rows.js";
 import { applyGrpcAuth } from "./grpc/auth.js";
@@ -43,13 +40,8 @@ import type { Property } from "./scripts/property-list.js";
 import type { TlsCertOptions } from "./tls/certs.js";
 import { VariableStore } from "./vars/store.js";
 import { resolveList, resolveListAgain, Template } from "./vars/template.js";
-import {
-  grpcRequestSchema,
-  httpRequestSchema,
-  otherRequestSchema,
-  type GrpcRequest,
-  type HttpRequest,
-} from "./workspace/schemas.js";
+import type { GrpcRequest, HttpRequest } from "./workspace/schemas.js";
+import { GRPC_KIND, HTTP_KIND, RUNNABLE_KINDS, parseRequestFile } from "./workspace/request-file.js";
 import { saveEnvironmentValues, type EnvironmentEntry } from "./workspace/environments.js";
 import type { RequestEntry } from "./workspace/collections.js";
 import type { Workspace } from "./workspace/discover.js";
@@ -66,11 +58,7 @@ import {
   type SentRequest,
 } from "./api/events.js";
 
-export const GRPC_KIND = "grpc-request";
-export const HTTP_KIND = "http-request";
-
-/** The `$kind` values preman can invoke. Anything else is reported, never guessed at. */
-const RUNNABLE_KINDS = new Set<string>([GRPC_KIND, HTTP_KIND]);
+export { GRPC_KIND, HTTP_KIND };
 
 /** Business-status field name, per `ReturnCode` in asset-exchange-v2-common.proto. */
 const RETURN_CODE_FIELDS = ["return_code", "returnCode"] as const;
@@ -276,37 +264,6 @@ function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVa
     data: options.data ?? {},
     environment: options.environment?.values ?? {},
     local: options.localVars,
-  });
-}
-
-function shapeError(entry: RequestEntry, error: ZodError): PremanError {
-  return new PremanError(`unexpected shape in ${entry.filePath}`, {
-    details: error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`),
-  });
-}
-
-type ParsedRequest = { protocol: "grpc"; request: GrpcRequest } | { protocol: "http"; request: HttpRequest };
-
-function parseRequest(entry: RequestEntry): ParsedRequest {
-  const raw: unknown = parseYaml(readFileSync(entry.filePath, "utf8")) ?? {};
-  const kind = (raw as { $kind?: unknown }).$kind;
-
-  if (kind === GRPC_KIND) {
-    const parsed = grpcRequestSchema.safeParse(raw);
-    if (!parsed.success) throw shapeError(entry, parsed.error);
-    return { protocol: "grpc", request: parsed.data };
-  }
-
-  if (kind === HTTP_KIND) {
-    const parsed = httpRequestSchema.safeParse(raw);
-    if (!parsed.success) throw shapeError(entry, parsed.error);
-    return { protocol: "http", request: parsed.data };
-  }
-
-  const other = otherRequestSchema.safeParse(raw);
-  const shown = other.success ? other.data.$kind : String(kind);
-  throw new PremanError(`"${entry.name}" is a ${shown}, which preman does not support yet`, {
-    details: [`supported kinds: ${[...RUNNABLE_KINDS].join(", ")}`],
   });
 }
 
@@ -543,7 +500,7 @@ export async function runRequest(options: RunOptions): Promise<RunOutcome> {
   events.start(options.entry.name, options.iteration ?? FIRST_ITERATION);
 
   try {
-    const parsed = parseRequest(options.entry);
+    const parsed = parseRequestFile(options.entry);
     const store = options.store ?? newStore(options);
     const cookies = options.cookies ?? new CookieJar();
 

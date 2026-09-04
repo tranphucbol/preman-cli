@@ -145,6 +145,15 @@ const bridge: PremanBridge = {
       ipcRenderer.off(CHANNELS.openImport, handler);
     };
   },
+  onCopyCommand(listener) {
+    const handler = (): void => {
+      listener();
+    };
+    ipcRenderer.on(CHANNELS.openCommand, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.openCommand, handler);
+    };
+  },
   listPostmanWorkspaces: () => ipcRenderer.invoke(CHANNELS.listPostmanWorkspaces) as Promise<CloudWorkspaceListResult>,
   migratePostmanWorkspace: (workspaceId: string) =>
     ipcRenderer.invoke(CHANNELS.migratePostmanWorkspace, workspaceId) as Promise<MigrateResult>,

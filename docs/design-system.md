@@ -60,19 +60,21 @@ not a judgement call — it is arithmetic. The air is what the presets preserve:
 
 Current assignment, which is the audit as much as the rule:
 
-- `h-bar` — the title bar (`App.tsx`), and `ImportPane`'s footer. The title bar is the row the
-  macOS traffic lights are centred in, which is why a density change has to reach the main process
-  at all; see decision 21. The footer is there because it holds a content-tier `Button`, which is
-  the rule above and not an exception to it: a dialog's commit is the one control in a band that
-  cannot be quiet, and a 30px control makes the row 40px whatever the band is called.
+- `h-bar` — the title bar (`App.tsx`) and `ImportPane`'s footer. The title bar is the row the macOS
+  traffic lights are centred in, which is why a density change has to reach the main process at
+  all; see decision 21. The footer is there because it holds a content-tier `Button`, which is the
+  rule above and not an exception to it: a dialog's commit is the one control in a band that cannot
+  be quiet, and a 30px control makes the row 40px whatever the band is called. `CommandPane` has no
+  such band on purpose — its one action is an `IconButton` in the header, because a 40px footer
+  holding a single button took a tenth of a narrow aside to say what a glyph beside the title says.
 - `h-tab` — everything else: the tab bar and sidebar header and status bar (`App.tsx`), the
   breadcrumb and the message and body toolbars (`RequestEditor`), `KeyValueGrid`, `RunnerPane`,
-  `VariablesPane`, `ConsoleDrawer`, both `BodyViewer` strips, and the sub-tab triggers in
-  `RequestEditor` and `ResponsePane`, which are text and take the shorter row.
+  `VariablesPane`, `ConsoleDrawer`, the `CommandPane` header, both `BodyViewer` strips, and the
+  sub-tab triggers in `RequestEditor` and `ResponsePane`, which are text and take the shorter row.
 
 That `h-bar` has two callers and not twelve is the rule working, not a token going spare: a pane
 toolbar that wanted `h-bar` was a toolbar that had not been asked which tier its buttons were in.
-Both callers earned it by holding a 30px control, which is the only way to earn it.
+Both earned it by holding a 30px control, which is the only way to earn it.
 
 One row is neither, on purpose: the request bar (`RequestEditor.tsx`, the `px-gutter py-2` strip) is
 `px-gutter py-2` around a 30px field, so 46px. It is the only row in the app that is the subject of
@@ -238,6 +240,13 @@ paints it with a decoration, and the audit holds it further from `string`, `numb
 than any two verbs have to be from each other, because it sits on the same line as all three.
 Decision 23 is why.
 
+That map is also the reason a new language costs no theme work. `ui/shell.ts` is a five-branch
+tokenizer over the one-line `curl` and `grpcurl` the command aside shows, and it names four tags —
+`variableName.function` for the tool, `attributeName` for a flag, `string` for a quoted word, `url`
+for the target. It names no colour at all, so all 43 themes and the contrast audit came with it.
+Reach for an existing tag when adding one; a construct that genuinely has no tag is what
+`--syntax-template` was, and that is a decision rather than an addition.
+
 `--syntax-template` is now the token for a `{{token}}` **wherever one is editable**, not only in the
 editor, and `ui/template.ts` exports it as `TOKEN_COLOR` so there is one declaration of it. A plain
 field cannot carry a decoration, so `ui/TokenOverlay.tsx` paints a pill behind the text instead: the
@@ -312,9 +321,10 @@ Centre it with `m-auto` on the child, never `items-center` on the scroll contain
 cross-axis-centred flex child in `overflow-auto` has a top that cannot be scrolled back to, so a
 failure with its trailers open would lose its own headline. Auto margins absorb free space when
 there is some and collapse to zero when there is not, which is the same composition without the
-trap. The block is `select-text`, which is a
-deliberate exception to the app-wide `select-none` in `app.css`: it is the one string the reader
-wants in their clipboard. Trailers go in a collapsed native `<details>` — most of what a server
+trap. The block is `select-text`, which is one of
+two deliberate exceptions to the app-wide `select-none` in `app.css` — the other being
+`CommandPane`'s command — and both are exceptions for the same reason: a string the reader wants in
+their clipboard. Trailers go in a collapsed native `<details>` — most of what a server
 attaches to a rejection is `date` and `content-type`, and five rows of that bury the one line that
 matters. No illustration — at these sizes a drawing pushes the informative line below the fold, and
 it would be the same drawing for every failure.

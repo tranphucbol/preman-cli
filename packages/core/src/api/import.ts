@@ -18,13 +18,8 @@ import { EXIT, PremanError } from "@preman/core/errors.js";
 import { parseCurl, nameForUrl } from "@preman/core/import/curl.js";
 import { parseGrpcurl, nameForMethod, type ParsedGrpcurl } from "@preman/core/import/grpcurl.js";
 import { splitWords } from "@preman/core/import/shell.js";
-import {
-  CURL_FORMAT,
-  GRPCURL_FORMAT,
-  type DroppedFlag,
-  type ImportFormat,
-  type ImportPlan,
-} from "@preman/core/import/plan.js";
+import { CURL_FORMAT, GRPCURL_FORMAT, type CommandFormat } from "@preman/core/command/format.js";
+import type { DroppedFlag, ImportPlan } from "@preman/core/import/plan.js";
 import { GRPC_KEY_ORDER, HTTP_KEY_ORDER, YAML_OPTIONS, shape } from "@preman/core/postman/convert.js";
 import { requestPathFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
 import {
@@ -47,7 +42,7 @@ const FIRST = 0;
 const FILE_SOURCE = "file";
 
 /** The program names a paste may lead with, and the format each one means. */
-const FORMAT_BY_COMMAND: Record<string, ImportFormat> = {
+const FORMAT_BY_COMMAND: Record<string, CommandFormat> = {
   curl: CURL_FORMAT,
   grpcurl: GRPCURL_FORMAT,
 };
@@ -109,7 +104,7 @@ function commandIn(words: readonly string[], warnings: string[]): string[] {
   return chosen;
 }
 
-function sniffFormat(words: readonly string[], declared: ImportFormat | undefined): ImportFormat {
+function sniffFormat(words: readonly string[], declared: CommandFormat | undefined): CommandFormat {
   if (declared !== undefined) return declared;
   const first = words[0];
   const format = first === undefined ? undefined : FORMAT_BY_COMMAND[programOf(first)];
@@ -182,7 +177,7 @@ export interface PlanImportArgs {
   readonly root: string;
   readonly text: string;
   /** Overrides the sniff. `undefined` reads the format off the first word (decision 1). */
-  readonly format?: ImportFormat;
+  readonly format?: CommandFormat;
   /** The destination, when one is chosen already; used only to propose a free name. */
   readonly parentDir?: string;
 }
@@ -336,4 +331,4 @@ function planGrpcurl(args: PlanImportArgs, words: readonly string[], warnings: r
   };
 }
 
-export type { DroppedFlag, ImportFormat, ImportPlan };
+export type { DroppedFlag, CommandFormat, ImportPlan };

@@ -63,7 +63,16 @@ export {
   type WriteRequestArgs,
 } from "@preman/core/api/mutate.js";
 export { applyImportPlan, planImport, type ApplyImportArgs, type PlanImportArgs } from "@preman/core/api/import.js";
-export type { DroppedFlag, ImportFormat, ImportPlan } from "@preman/core/import/plan.js";
+export type { DroppedFlag, ImportPlan } from "@preman/core/import/plan.js";
+export type { CommandFormat } from "@preman/core/command/format.js";
+export {
+  copySelection,
+  planCommand,
+  type CopySelectionArgs,
+  type CopySelectionResult,
+  type PlanCommandArgs,
+} from "@preman/core/api/command.js";
+export type { CommandPlan, Revealed, Unexpressed } from "@preman/core/command/plan.js";
 export {
   flattenHeaders,
   type HeaderPairs,

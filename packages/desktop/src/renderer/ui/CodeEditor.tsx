@@ -39,6 +39,7 @@ import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.j
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { SELECTING_ATTRIBUTE, THEMES } from "@preman/desktop/renderer/ui/editorTheme.js";
 import { HIGHLIGHT_STYLE } from "@preman/desktop/renderer/ui/highlight.js";
+import { shellCommand } from "@preman/desktop/renderer/ui/shell.js";
 import {
   NOTHING_ASKED,
   jsonTemplate,
@@ -53,8 +54,11 @@ import {
  * `json-template` is JSON that may contain `{{token}}`, which plain JSON is not. It is the language
  * for a body someone authored; a body that came back off the wire is already interpolated and takes
  * plain `json`. See `ui/template.ts` for what the difference costs.
+ *
+ * `shell` is a command line and not a shell script; `ui/shell.ts` says why that is a five-branch
+ * tokenizer rather than a grammar.
  */
-export type CodeLanguage = "json" | "json-template" | "yaml" | "javascript" | "xml" | "text";
+export type CodeLanguage = "json" | "json-template" | "yaml" | "javascript" | "xml" | "shell" | "text";
 
 /**
  * The field is threaded through rather than owned here so that only the language that has tokens
@@ -67,6 +71,7 @@ const LANGUAGE_EXTENSION: Record<CodeLanguage, (unresolved?: StateField<Unresolv
   yaml: () => yaml(),
   javascript: () => javascript(),
   xml: () => xml(),
+  shell: () => shellCommand,
   text: () => [],
 };
 

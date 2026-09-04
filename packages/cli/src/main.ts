@@ -12,12 +12,14 @@ import {
 import { interactiveSelection } from "@preman/cli/prompt.js";
 import { defaultPostmanAppData } from "@preman/cli/postman.js";
 import { progressWriter } from "@preman/cli/progress.js";
+import { renderCommand } from "@preman/cli/render/command.js";
 import { renderEnvironment, renderEnvironmentSet } from "@preman/cli/render/env.js";
 import { renderImport } from "@preman/cli/render/import.js";
 import { renderList } from "@preman/cli/render/list.js";
 import { renderMigration, renderWorkspaceList } from "@preman/cli/render/migrate.js";
 import { renderLinkWrite, renderSpecs } from "@preman/cli/render/protos.js";
 import { hasHumanReporter, renderReports, reporterNames, resolveReporterTargets } from "@preman/cli/reporters/index.js";
+import { copySelection } from "@preman/core/api/command.js";
 import { readEnvironment, writeEnvironmentValue } from "@preman/core/api/environments.js";
 import { applyImportPlan, planImport } from "@preman/core/api/import.js";
 import { describeWorkspace } from "@preman/core/api/inspect.js";
@@ -61,6 +63,7 @@ ${pc.bold("usage")}
   preman protos link <name> <dir>     point a shared link at a local checkout
   preman import [curl|grpcurl] [--into <group>] [-- <pasted command…>]
                                       import a pasted curl or grpcurl command
+  preman copy <collection/request>     print it as a curl or grpcurl command
   preman migrate --list               list the cloud workspaces Postman can see
   preman migrate --workspace <id|name> --out <dir> [--dry-run]
                                       copy a Postman cloud workspace to disk
@@ -151,6 +154,18 @@ ${pc.bold("import")}
   Flags with nowhere to land are named in the report rather than ignored: TLS
   goes through --ssl-* and --insecure, redirects and timeouts are run options,
   and -o, -s and -v only ever affected curl's own output.
+
+${pc.bold("copy")}
+  The reverse of import: resolves one request against the chosen environment and
+  prints it as a curl (HTTP) or grpcurl (gRPC) command. The format is not a
+  choice — the request's kind decides it.
+
+    preman copy admin/Profile --env QC
+
+  Two things the command cannot carry, both named in the report rather than
+  dropped in silence: scripts do not run, so a header a beforeRequest would have
+  set is absent; and every {{token}} is resolved, so a credential that lives in
+  an environment file is in the output in cleartext.
 
 ${pc.bold("migrate")}
   Reads a Postman *cloud* workspace, gRPC included, and writes it as a Postman
@@ -383,6 +398,36 @@ export async function main(argv: string[]): Promise<ExitCode> {
         file: written === null ? null : nodeIdFor(destination.root, written.file),
       };
       process.stdout.write(`${renderImport(report, { json })}\n`);
+      return EXIT.OK;
+    }
+
+    // The reverse of `import`, and deliberately not a run: nothing is sent, so there is no
+    // outcome to classify and the only exit codes are 0 and 1.
+    case "copy": {
+      const copy = await copySelection({
+        dir,
+        selector: rest.length > 0 ? rest.join(" ") : undefined,
+        env: values.env,
+        url: values.url,
+        tls: values.tls === true ? true : values.plaintext === true ? false : undefined,
+        tlsCerts: {
+          extraCaCerts: values["ssl-extra-ca-certs"],
+          clientCert: values["ssl-client-cert"],
+          clientKey: values["ssl-client-key"],
+          clientPassphrase: values["ssl-client-passphrase"],
+          insecure: values.insecure === true ? true : undefined,
+        },
+        certBaseDir: process.cwd(),
+        vars: parseVars(values.var ?? []),
+        workingDir: values["working-dir"],
+        insecureFileRead: values["insecure-file-read"] === true,
+        select: interactiveSelection,
+      });
+      // Warnings are advice for a person; --json is a value another program reads.
+      if (!json) {
+        for (const warning of copy.warnings) process.stderr.write(`${pc.yellow(`warn: ${warning}`)}\n`);
+      }
+      process.stdout.write(`${renderCommand(copy.plan, { json })}\n`);
       return EXIT.OK;
     }
 

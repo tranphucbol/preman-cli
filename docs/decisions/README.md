@@ -52,6 +52,7 @@ The CLI's own design predates the practice.
 | [041](041-a-throw-after-the-response-is-a-failed-test.md)           | A throw after the response is a failed test                            |
 | [042](042-the-resolver-has-two-roots.md)                            | The resolver has two roots, and the writer has one                     |
 | [043](043-importing-a-pasted-command.md)                            | Importing a pasted command, behind a fence                             |
+| [044](044-a-command-is-built-from-the-request.md)                   | A command is built from the request, not from the send                 |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -217,5 +218,24 @@ invent the descriptor 006 forbids inventing — which is why a reflection-only p
 knowingly unrunnable and says so twice, once at import and once at send. The costs it states are
 the two it cannot argue away: one command per paste, because the protocol has one `nodeId`, and a
 pasted credential written where it was pasted, because every place to move it to is a guess.
+
+044 is 043 read backwards, and the first record whose subject is a thing preman deliberately does
+_not_ do: it renders a request as a command without sending it, without running a script, and
+without inventing anything. That refusal is the decision — running a pre-request script to build a
+command would make the act of copying write an environment file — and it is why the record's
+central artifact is two lists of what is missing rather than the words themselves. It is also the
+first to state that core cannot tell a secret from a variable and to answer that by naming instead
+of redacting: `revealed` reports every substitution and its scope, and sorts an inherited
+credential first, because a token the request never mentions is the one nobody would have looked
+for. Three refactors fall out of 029's rule rather than out of this feature — `api/selection.ts`
+and `workspace/request-file.ts` exist so a copy can pick a target and read a request without
+loading a transport — and two types grew a field, `TlsCertOptions.paths` and
+`ResolvedMethod.protoPath`, because the resolver knew which file it opened and had never been
+asked to say. In the app the command is an aside beside the editor rather than a dialog over it,
+which forces the other half of the record: it is planned from the draft, so `plan-command` carries
+the document being typed and not the one on disk. The cost it cannot argue away is the sharpest one
+in this directory: a request whose header is set by a script copies to a command that is wrong,
+says so in a caveat, and stays wrong until the Console entry point 024 already has a place for
+exists.
 
 `TEMPLATE.md` is the shape of a new one.

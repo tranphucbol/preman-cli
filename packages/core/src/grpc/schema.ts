@@ -31,6 +31,15 @@ export interface ResolvedMethod {
   methodName: string;
   definition: MethodDefinition<unknown, unknown>;
   source: SchemaSource;
+  /**
+   * The `.proto` this method was loaded from, or `undefined` when it came from the descriptor.
+   *
+   * `schema.location` is a declaration, not a location: it may name a path under the shared proto
+   * root that only {@link schemaPathFor} can turn into a file on this machine (ADR 038). A caller
+   * that has to hand the file to another program — `grpcurl -proto` — cannot redo that, so the
+   * resolver reports what it actually opened.
+   */
+  protoPath: string | undefined;
   /** Non-fatal notes to surface to the user (e.g. descriptor fallback used). */
   warnings: string[];
 }
@@ -237,5 +246,12 @@ export function resolveMethod(options: ResolveMethodOptions): ResolvedMethod {
     });
   }
 
-  return { serviceName, methodName, definition, source, warnings };
+  return {
+    serviceName,
+    methodName,
+    definition,
+    source,
+    protoPath: source === "proto-file" ? protoPath : undefined,
+    warnings,
+  };
 }

@@ -27,8 +27,11 @@ export {
   // `Clipboard` is an empty one, which is the state *after* a paste rather than the thing offered.
   ClipboardText as PasteIcon,
   Code as ScriptIcon,
+  // The bare `</>` above is already the Scripts tab, and a script and a command are both code, so
+  // the two would be one glyph meaning two things. The boxed one is the command aside: at 14px the
+  // rectangle is the only part of either that reads, and a box around code is a code *panel*.
+  CodeBlock as CommandIcon,
   Copy as CopyIcon,
-  DotsThree as MoreIcon,
   Export as ExportIcon,
   FileCode as RequestIcon,
   FilePlus as NewRequestIcon,

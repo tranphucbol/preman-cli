@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { EXIT, PremanError } from "@preman/core/errors.js";
-import { CURL_FORMAT, GRPCURL_FORMAT, type ImportFormat } from "@preman/core/import/plan.js";
+import { CURL_FORMAT, GRPCURL_FORMAT, type CommandFormat } from "@preman/core/command/format.js";
 import { listGroups, listRequests, type RequestGroup } from "@preman/core/workspace/collections.js";
 import { requireWorkspace } from "@preman/core/workspace/discover.js";
 
@@ -22,7 +22,7 @@ const FIRST = 0;
 const SINGLE = 1;
 const COLLECTION_KIND = "collection";
 
-const FORMAT_NAMES: Readonly<Record<string, ImportFormat>> = {
+const FORMAT_NAMES: Readonly<Record<string, CommandFormat>> = {
   [CURL_FORMAT]: CURL_FORMAT,
   [GRPCURL_FORMAT]: GRPCURL_FORMAT,
 };
@@ -54,7 +54,7 @@ function usage(message: string, details: string[]): PremanError {
 }
 
 /** The declared format, refusing a name neither parser answers to. */
-export function importFormat(raw: string | undefined): ImportFormat | undefined {
+export function importFormat(raw: string | undefined): CommandFormat | undefined {
   if (raw === undefined) return undefined;
   const format = FORMAT_NAMES[raw.trim().toLowerCase()];
   if (format === undefined) {

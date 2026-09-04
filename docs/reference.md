@@ -23,6 +23,7 @@ preman env show
 preman env set <key> <value>
 preman import [curl|grpcurl] --into <group> [--name <name>] [--from <path>] [--dry-run]
 preman import [curl|grpcurl] --into <group> -- <pasted command…>
+preman copy <collection/request>
 preman migrate --list
 preman migrate --workspace <id|name> --out <dir> [--dry-run]
 ```
@@ -300,6 +301,83 @@ with the count, and a trailing `| jq .` is reported as ignored.
 
 `import` uses only exit codes `0` and `1`.
 
+## Copy
+
+`preman copy <collection/request>` prints one request as the command that would send it. It reads
+the request file, resolves every `{{token}}`, and renders the words. Nothing is sent, no script
+runs, and no file is written, so `copy` uses only exit codes `0` and `1`
+([ADR 044](decisions/044-a-command-is-built-from-the-request.md)).
+
+The dialect is decided by the request's kind, not by a flag: an `http-request` becomes `curl` and
+a `grpc-request` becomes `grpcurl`. There is no `--format`. A group selector is refused with the
+count and the request paths — one request, one command.
+
+`copy` takes the same workspace, environment, target, variable, TLS and working-directory options
+as `run`, and no others. The run-shaped options are meaningless here and are reported rather than
+accepted silently: `--timeout`, `--iteration-data` and the cookie jar appear under
+`Not in this command`.
+
+### What a curl carries
+
+| Request field                       | Command                                                                                  |
+| ----------------------------------- | ---------------------------------------------------------------------------------------- |
+| `method`                            | `-X <method>`, omitted for `GET`                                                         |
+| `headers`, `queryParams`            | `-H 'key: value'`, and the query string merged into the url                              |
+| `auth`                              | its resolved header or query parameter, from the request's own block or an inherited one |
+| a raw, urlencoded or GraphQL `body` | `--data-raw <text>`                                                                      |
+| `body.file`                         | `--data-binary '@<path>'`                                                                |
+| `body.formdata`                     | one `-F 'name=value'` or `-F 'name=@path'` per entry                                     |
+| redirects                           | `-L`, always: `preman` follows them by default                                           |
+| `--ssl-*` and `-k`                  | `--cacert`, `--cert`, `--key`, `-k`                                                      |
+
+A multipart body warns: `curl` generates its own boundary, so the bytes will differ from
+`preman`'s, and the generated `content-type` header is left off the command for the same reason.
+
+### What a grpcurl carries
+
+| Request field              | Command                                                      |
+| -------------------------- | ------------------------------------------------------------ |
+| `message.content`          | `-d '<json>'`                                                |
+| `metadata`                 | `-H 'key: value'`, keys lowercased                           |
+| `auth`                     | its resolved metadata entry                                  |
+| a plaintext target         | `-plaintext`                                                 |
+| `--ssl-*` and `-k`         | `-insecure`, `-cacert`, `-cert`, `-key`                      |
+| a `.proto`-resolved method | `-proto <path>` and one `-import-path` per include directory |
+| `url` and `methodPath`     | the two positionals, `authority` and `pkg.Service/Method`    |
+
+`-proto` and `-import-path` are absolute paths on this machine, which is warned: the declaration
+is portable ([ADR 038](decisions/038-one-shared-proto-root.md)), a path handed to another tool is
+not. A method resolved from an embedded `methodDescriptor` has no `.proto` to name, so `schema`
+is listed as unexpressed and the command carries a warning that it will not run as written.
+
+### What is not in the command, and why
+
+| Field                   | Reason                                                                |
+| ----------------------- | --------------------------------------------------------------------- |
+| each script, by name    | not run; a script that sets a header is not in this command           |
+| `pm.test assertions`    | a command has no test result                                          |
+| `variable writeback`    | `--save` writes the environment after a run; a command writes nothing |
+| `cookie jar`            | populated by earlier responses in a run                               |
+| `timeout`               | a `preman` run option, not a request field                            |
+| `iteration data`        | a command is one call                                                 |
+| `client key passphrase` | append it to `--cert` as `:<passphrase>` if you need it               |
+| `schema`                | only for a descriptor-resolved gRPC method, as above                  |
+
+### What is in cleartext
+
+Every `{{token}}` that was substituted is listed with the scope it resolved from — `local`,
+`environment`, `data`, `collection` or `globals` — and a credential from an `auth` block is listed
+as `auth`, naming the block it was inherited from. Dynamic variables such as `{{$guid}}` are not
+listed: there was no stored value to reveal.
+
+Nothing is redacted. `preman` has no concept of a secret, and every rule that could invent one is a
+guess about a name; `revealed` reports what it substituted and declines to judge it.
+
+`--json` prints the whole plan — `format`, `kind`, `words`, `command`, `unexpressed`, `revealed`
+and `warnings` — and nothing else, so `preman copy … --json | jq -r .command` is the scriptable
+form. There is no clipboard flag: `| pbcopy` is one pipe and three platform clipboards are three
+failure modes.
+
 ## Migration
 
 `preman migrate` copies a Postman **cloud** workspace into the filesystem format the rest of `preman`
@@ -394,6 +472,10 @@ Codes `3` and `4` separate a business rejection from an assertion failure, which
 
 `import` uses only `0` and `1`. A refused paste, an unfenced one, an unknown format, a missing or
 ambiguous `--into`, and a workspace with no collection are all `1`. Nothing is written on a `1`.
+
+`copy` uses only `0` and `1`, and for a stronger reason: it never sends, so there is no transport
+outcome for a `2`, `3` or `4` to describe. An ambiguous selector, a group selector, a request kind
+with no runner, an unresolved `{{token}}`, and a method whose schema will not load are all `1`.
 
 `migrate` uses only `0`, `1`, and `2`. Postman Desktop not running, a missing or ambiguous
 `--workspace`, a missing `--out`, a destination that is not empty, and a name no filesystem accepts

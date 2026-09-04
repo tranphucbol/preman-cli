@@ -20,6 +20,8 @@ export const CHANNELS = {
   openMigrate: "preman:open-migrate",
   /** Main to renderer, from the File menu's Import from cURL or grpcurl item. */
   openImport: "preman:open-import",
+  /** Main to renderer, from the File menu's Copy as cURL or grpcurl item. Carries no node. */
+  openCommand: "preman:open-command",
   listPostmanWorkspaces: "preman:list-postman-workspaces",
   migratePostmanWorkspace: "preman:migrate-postman-workspace",
   /**
@@ -475,6 +477,8 @@ export interface PremanBridge {
   onMigrate(listener: () => void): () => void;
   /** The File menu's Import from cURL or grpcurl item. Returns an unsubscribe function. */
   onImport(listener: () => void): () => void;
+  /** The File menu's Copy as cURL or grpcurl item. Returns an unsubscribe function. */
+  onCopyCommand(listener: () => void): () => void;
   /**
    * Every cloud workspace the running, signed-in Postman Desktop can see.
    *

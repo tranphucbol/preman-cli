@@ -184,6 +184,7 @@ function fakeBridge(): FakeBridge {
     onCreateWorkspace: () => () => undefined,
     onMigrate: () => () => undefined,
     onImport: () => () => undefined,
+    onCopyCommand: () => () => undefined,
     onHostFailure: () => () => undefined,
     listPostmanWorkspaces: () => Promise.resolve({ status: "listed", workspaces: [] }),
     migratePostmanWorkspace: (workspaceId: string) => {

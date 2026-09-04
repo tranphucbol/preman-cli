@@ -2,25 +2,23 @@ import { loadIterationData, type DataRow } from "@preman/core/data/rows.js";
 import { EXIT, PremanError, type ExitCode } from "@preman/core/errors.js";
 import { runGroup, runRequest, type GroupRunOutcome, type RunOutcome } from "@preman/core/runner.js";
 import { resolveTlsCerts, type TlsCertInput, type TlsCertLayer } from "@preman/core/tls/certs.js";
-import {
-  listRequests,
-  resolveSelector,
-  type RequestEntry,
-  type RunTarget,
-} from "@preman/core/workspace/collections.js";
+import { listRequests } from "@preman/core/workspace/collections.js";
 import { loadPremanConfig } from "@preman/core/workspace/config.js";
-import { requireWorkspace, type Workspace } from "@preman/core/workspace/discover.js";
-import { listEnvironments, loadGlobals, type EnvironmentEntry } from "@preman/core/workspace/environments.js";
+import { requireWorkspace } from "@preman/core/workspace/discover.js";
+import { loadGlobals } from "@preman/core/workspace/environments.js";
 import { fileReader } from "@preman/core/workspace/files.js";
 import { loadResources } from "@preman/core/workspace/resources.js";
 import type { BodyStore } from "./bodies.js";
 import type { RunEventSink } from "./events.js";
 import { failOnAmbiguity, type SelectionPort } from "./select.js";
+import {
+  CLI_CERT_LABEL,
+  CONFIG_CERT_LABEL,
+  NO_ENVIRONMENT_WARNING,
+  selectEnvironment,
+  selectTarget,
+} from "./selection.js";
 
-/** Layer labels, echoed back to the user when a certificate cannot be read. */
-const CLI_CERT_LABEL = "--ssl-*";
-const CONFIG_CERT_LABEL = ".postman/preman.yaml";
-const NO_ENVIRONMENT_WARNING = "no environment selected; only --var values are available";
 /** A single-request run has exactly one request to report progress against. */
 const SINGLE_REQUEST_TOTAL = 1;
 
@@ -76,62 +74,6 @@ export function resolveIterations(requested: number | undefined, rows: DataRow[]
   return requested ?? (rows.length > 0 ? rows.length : 1);
 }
 
-async function chooseTarget(
-  choices: RunTarget[],
-  selector: string | undefined,
-  port: SelectionPort,
-): Promise<RunTarget> {
-  if (choices.length === 0) throw new PremanError("no requests found under postman/collections");
-  if (choices.length === 1) return choices[0]!;
-  return port.pickRequest(choices, selector);
-}
-
-async function selectTarget(
-  requests: RequestEntry[],
-  selector: string | undefined,
-  port: SelectionPort,
-): Promise<RunTarget> {
-  if (selector === undefined) {
-    return chooseTarget(
-      requests.map((entry) => ({ kind: "request", entry })),
-      undefined,
-      port,
-    );
-  }
-
-  const resolved = resolveSelector(requests, selector);
-  if (resolved.target) return resolved.target;
-  if (resolved.candidates.length > 0) return chooseTarget(resolved.candidates, selector, port);
-
-  throw new PremanError(`no request or collection matches "${selector}"`, {
-    details: requests.length > 0 ? ["available:", ...requests.map((r) => `  ${r.path}`)] : ["no requests found"],
-  });
-}
-
-async function selectRunEnvironment(
-  ws: Workspace,
-  name: string | null | undefined,
-  port: SelectionPort,
-): Promise<EnvironmentEntry | undefined> {
-  // "None" is an answer, not a missing one: never adopt a sole environment, never ask.
-  if (name === null) return undefined;
-
-  const all = listEnvironments(ws);
-
-  if (name !== undefined) {
-    const needle = name.trim().toLowerCase();
-    const found = all.find((e) => e.name.toLowerCase() === needle);
-    if (found) return found;
-    throw new PremanError(`environment "${name}" not found`, {
-      details: all.length > 0 ? ["available:", ...all.map((e) => `  ${e.name}`)] : ["no environments exist"],
-    });
-  }
-
-  if (all.length === 0) return undefined;
-  if (all.length === 1) return all[0]!;
-  return port.pickEnvironment(all);
-}
-
 /**
  * Resolve what to run, run it, and hand back outcomes plus warnings. Nothing here
  * knows whether a human, a file or a GUI is on the other end.
@@ -145,7 +87,7 @@ export async function runSelection(args: RunSelectionArgs): Promise<RunSelection
   const data = args.iterationData === undefined ? undefined : await loadIterationData(args.iterationData);
 
   const target = await selectTarget(requests, args.selector, port);
-  const environment = await selectRunEnvironment(ws, args.env, port);
+  const environment = await selectEnvironment(ws, args.env, port);
   const warnings: string[] = environment === undefined ? [NO_ENVIRONMENT_WARNING] : [];
 
   // Highest precedence first: an explicit flag always beats the workspace file.

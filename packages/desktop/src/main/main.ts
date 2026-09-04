@@ -337,6 +337,16 @@ function buildMenu(): void {
             window?.webContents.send(CHANNELS.openImport);
           },
         },
+        // The other direction, and no accelerator either: whether there is a request to copy is
+        // renderer state, so this menu cannot say when it would do nothing, and a global
+        // combination that sometimes does nothing is worse than one more menu item. No ellipsis
+        // now that it opens an aside rather than a dialog — nothing further is asked for.
+        {
+          label: "Copy as cURL or grpcurl",
+          click: () => {
+            window?.webContents.send(CHANNELS.openCommand);
+          },
+        },
         ...(process.platform === "darwin" ? [] : [{ type: "separator" as const }, SETTINGS_ITEM]),
         { type: "separator" },
         { role: process.platform === "darwin" ? "close" : "quit" },

@@ -23,7 +23,8 @@ import type {
   SpecPlan,
   SpecsView,
 } from "@preman/core/api/specs.js";
-import type { DroppedFlag, ImportFormat, ImportPlan } from "@preman/core/api/import.js";
+import type { DroppedFlag, CommandFormat, ImportPlan } from "@preman/core/api/import.js";
+import type { CommandPlan, Revealed, Unexpressed } from "@preman/core/api/command.js";
 import type { VariableBinding, VariableLayer, VariableView } from "@preman/core/api/variables.js";
 import type { ExitCode } from "@preman/core/errors.js";
 import type { SharedLink } from "@preman/core/workspace/links.js";
@@ -37,6 +38,7 @@ export type {
   CatalogNode,
   CatalogNodeKind,
   CatalogProtocol,
+  CommandPlan,
   DeclaredSpec,
   DroppedFlag,
   ExitCode,
@@ -46,13 +48,14 @@ export type {
   GitStatus,
   GrepMatch,
   GrepResult,
-  ImportFormat,
+  CommandFormat,
   ImportPlan,
   LinkAction,
   LinkOverride,
   PlannedLink,
   PlannedSpec,
   RequestKind,
+  Revealed,
   RunEvent,
   Scope,
   SharedLink,
@@ -60,6 +63,7 @@ export type {
   SpecPlan,
   SpecsView,
   TextPreview,
+  Unexpressed,
   VariableBinding,
   VariableLayer,
   VariableView,
@@ -88,6 +92,15 @@ export interface NodeDocument {
   /** The parsed document, structured-cloneable, for the field editors. */
   data: unknown;
 }
+
+/**
+ * A request as an editor has it, in whichever of the two shapes that editor produces.
+ *
+ * The same split `write-node` and `write-text` make, and for the same reason: the field grids
+ * hold a projected document and the raw YAML tab holds bytes, and neither can be derived from the
+ * other without a round trip through the parser. A reader takes the one it is given.
+ */
+export type RequestDraft = { readonly data: unknown } | { readonly text: string };
 
 export type MutateOp =
   | { op: "create-request"; parentId: string; name: string; kind: RequestKind; order?: number }
@@ -251,7 +264,17 @@ export type EngineRequest =
    * `format` absent sniffs it from the command word; `parentId` only fixes the name
    * against that directory's existing files.
    */
-  | { id: number; kind: "plan-import"; text: string; format?: ImportFormat; parentId?: string }
+  | { id: number; kind: "plan-import"; text: string; format?: CommandFormat; parentId?: string }
+  /**
+   * The reverse: one request, as the `curl` or `grpcurl` that would send it. One node, never a
+   * group, and no `MutateOp` arm — this reads a document and writes nothing. `environment`
+   * decides what every `{{token}}` resolves to, so it is the same argument a run takes.
+   *
+   * `draft` is the request as an open editor has it. Present because the aside that asks this
+   * stays open while the request is being edited, and the file on disk is stale from the first
+   * keystroke. Absent falls back to the file, which is what the CLI does.
+   */
+  | { id: number; kind: "plan-command"; nodeId: string; environment?: string | null; draft?: RequestDraft }
   | { id: number; kind: "body-head"; handle: string }
   | { id: number; kind: "body-window"; handle: string; offset: number; length?: number }
   | { id: number; kind: "body-search"; handle: string; query: string; limit?: number }
@@ -299,6 +322,7 @@ export interface EngineResults {
   "remove-spec": SpecsView;
   "link-checkout": SpecsView;
   "plan-import": ImportPlan;
+  "plan-command": CommandPlan;
   "body-head": BodyHead;
   "body-window": BodyWindow;
   "body-search": BodyMatch[];

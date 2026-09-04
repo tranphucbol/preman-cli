@@ -62,6 +62,7 @@ import {
 import {
   CaretRightIcon,
   CollectionIcon,
+  CommandIcon,
   CopyIcon,
   DeleteIcon,
   FolderIcon,
@@ -187,6 +188,8 @@ export interface SidebarProps {
   readonly onCreateFolder: (parentId: string) => void;
   /** Groups only: opens the import pane pointed at this node. A request file needs a group. */
   readonly onImport: (parentId: string) => void;
+  /** Requests only, where import's is groups only: the pane shows one command, never a script. */
+  readonly onCopyAsCommand: (node: CatalogNode) => void;
   /** Requests only: the menu item is absent on a group, and core refuses one anyway. */
   readonly onDuplicate: (node: CatalogNode) => void;
   readonly onRename: (node: CatalogNode) => void;
@@ -671,6 +674,16 @@ function SidebarContextMenu({ targetId, ...props }: { readonly targetId: string 
         <>
           <ContextItem icon={<SendIcon />} shortcut="Enter" onSelect={() => props.onSend(node)}>
             Send
+          </ContextItem>
+          {/*
+            Directly under Send, because it is the same sentence in another shell: this is what
+            sending would look like if you did it yourself. Gated on `runnable` and not merely on
+            "is a request", so a websocket row does not offer a command core would refuse to build.
+
+            No ellipsis: it opens the request and shows the aside, and asks nothing on the way.
+          */}
+          <ContextItem icon={<CommandIcon />} onSelect={() => props.onCopyAsCommand(node)}>
+            Copy as cURL or grpcurl
           </ContextItem>
           <ContextSeparator />
         </>

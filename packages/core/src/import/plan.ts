@@ -8,13 +8,8 @@
  */
 import type { SpecPlan } from "@preman/core/api/specs.js";
 import type { RequestKind } from "@preman/core/api/mutate.js";
+import type { CommandFormat } from "@preman/core/command/format.js";
 import type { GrpcRequest, HttpRequest } from "@preman/core/workspace/schemas.js";
-
-/** The two commands that are the universal currency for "here is the call that works". */
-export type ImportFormat = "curl" | "grpcurl";
-
-export const CURL_FORMAT: ImportFormat = "curl";
-export const GRPCURL_FORMAT: ImportFormat = "grpcurl";
 
 /**
  * A flag the command carried that a request file has no field for.
@@ -30,7 +25,7 @@ export interface DroppedFlag {
 }
 
 export interface ImportPlan {
-  readonly format: ImportFormat;
+  readonly format: CommandFormat;
   readonly kind: RequestKind;
   /** The proposed request name; the front ends let it be overridden. */
   readonly name: string;

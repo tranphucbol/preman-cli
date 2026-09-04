@@ -29,6 +29,9 @@ export interface TlsCertLayer {
   input: TlsCertInput;
 }
 
+/** The three fields resolved from a path on disk, so a consumer can name the file. */
+export type TlsCertPathField = "extraCaCerts" | "clientCert" | "clientKey";
+
 /** Certificate material after resolution: file contents, not paths. */
 export interface TlsCertOptions {
   extraCaCerts: Buffer | undefined;
@@ -36,6 +39,15 @@ export interface TlsCertOptions {
   clientKey: Buffer | undefined;
   clientPassphrase: string | undefined;
   insecure: boolean;
+  /**
+   * The absolute path each buffer was read from.
+   *
+   * The transports want bytes and never look here. `command/` wants the opposite: a `--cacert`
+   * has to name a file the receiving shell can open, and there is nowhere else in the tree that
+   * still knows which one it was. Parsing it back out of {@link TlsCertOptions.sources}, which
+   * formats it for a human, would make a display string load-bearing.
+   */
+  paths: Partial<Record<TlsCertPathField, string>>;
   /** Field name -> where it came from, for `--verbose`. */
   sources: Record<string, string>;
   /** Non-fatal problems, e.g. a passphrase with no key to unlock. */
@@ -90,6 +102,7 @@ const HOSTNAME_MISMATCH_HINT =
  */
 export function resolveTlsCerts(layers: readonly TlsCertLayer[]): TlsCertOptions {
   const sources: Record<string, string> = {};
+  const paths: Partial<Record<TlsCertPathField, string>> = {};
   const warnings: string[] = [];
 
   const pick = <K extends keyof TlsCertInput>(field: K): [TlsCertLayer, NonNullable<TlsCertInput[K]>] | undefined => {
@@ -101,12 +114,13 @@ export function resolveTlsCerts(layers: readonly TlsCertLayer[]): TlsCertOptions
     return undefined;
   };
 
-  const readPath = (field: "extraCaCerts" | "clientCert" | "clientKey"): Buffer | undefined => {
+  const readPath = (field: TlsCertPathField): Buffer | undefined => {
     const picked = pick(field);
     if (!picked) return undefined;
     const [layer, value] = picked;
     const path = resolve(layer.baseDir, value);
     sources[field] = `${layer.label} (${path})`;
+    paths[field] = path;
     return readCertFile(field, layer, path);
   };
 
@@ -141,6 +155,7 @@ export function resolveTlsCerts(layers: readonly TlsCertLayer[]): TlsCertOptions
     clientKey,
     clientPassphrase: passphrase?.[1],
     insecure: insecure?.[1] === true,
+    paths,
     sources,
     warnings,
   };

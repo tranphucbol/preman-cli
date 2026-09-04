@@ -37,6 +37,7 @@ import {
   isGrpc,
   project,
   readBodyType,
+  readKind,
   readMethod,
   readPairs,
   readGrpcUrl,
@@ -49,6 +50,7 @@ import { formatJsonTemplate } from "@preman/desktop/renderer/model/format.js";
 import type { PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { flushPending } from "@preman/desktop/renderer/pending.js";
 import { useAncestors, useNode } from "@preman/desktop/renderer/stores/catalog.js";
+import { useAsideStore } from "@preman/desktop/renderer/stores/aside.js";
 import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
 import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import {
@@ -82,6 +84,7 @@ import {
   CancelIcon,
   CaretRightIcon,
   CollectionIcon,
+  CommandIcon,
   FormatIcon,
   GenerateIcon,
   GLYPH_CLASS,
@@ -93,6 +96,7 @@ import {
   SendIcon,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
+import { commandTitle, formatForKind, HIDE_LABEL } from "@preman/desktop/renderer/model/command.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import { BANNER_MOTION, Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence, m } from "@preman/desktop/renderer/ui/motion.js";
@@ -243,6 +247,11 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
 
   const picker = useMethodPicker(tab.nodeId, apply, onFail);
   const showProtos = useOverlayStore((state) => state.showProtos);
+  // Read from the store rather than taken as a prop: the aside is a sibling of this pane, not a
+  // child, and the palette and the File menu open it from above. A callback threaded down here
+  // and a flag threaded back would name the same boolean in four signatures to hold it in one.
+  const commandOpen = useAsideStore((state) => state.command);
+  const onToggleCommand = useAsideStore((state) => state.toggleCommand);
   // The target row is the one part of this pane that is on screen whatever the sub-tab is, so it
   // owns its own box rather than borrowing one from a pane that may be unmounted.
   const box = useTokenBox();
@@ -367,6 +376,23 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
         )}
         <IconButton label={dirty ? "Save (Cmd+S)" : "Saved"} disabled={!dirty} onClick={onSave}>
           <SaveIcon />
+        </IconButton>
+        {/*
+          One glyph, no menu. A menu is for a choice, and there is none to make here: the request's
+          kind already decided whether this is a curl or a grpcurl, so a menu would have been a
+          click spent revealing an answer the app already had. The caption names the dialect for
+          the same reason — the tooltip is where that answer gets given.
+
+          It toggles rather than opens, and says so while the aside is up. A control that only ever
+          opens leaves the panel with the sole way to shut it, which is how a panel becomes
+          something you close and stop reopening.
+        */}
+        <IconButton
+          label={commandOpen ? HIDE_LABEL : commandTitle(formatForKind(readKind(data)))}
+          active={commandOpen}
+          onClick={onToggleCommand}
+        >
+          <CommandIcon />
         </IconButton>
       </div>
 

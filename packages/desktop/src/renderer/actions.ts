@@ -9,12 +9,14 @@ import type {
   BodyMatch,
   BodyWindow,
   GrepResult,
-  ImportFormat,
+  CommandFormat,
+  CommandPlan,
   ImportPlan,
   LinkOverride,
   MethodChoices,
   MutateOp,
   ReportFormat,
+  RequestDraft,
   SpecPlan,
   SpecsView,
   TextPreview,
@@ -511,7 +513,7 @@ export async function linkCheckout(name: string, target: string, repoint = false
  */
 export async function planImport(
   text: string,
-  format: ImportFormat | undefined,
+  format: CommandFormat | undefined,
   parentId: string | undefined,
 ): Promise<Result<ImportPlan>> {
   const engine = client();
@@ -523,6 +525,37 @@ export async function planImport(
       ...(parentId === undefined ? {} : { parentId }),
     };
     return { ok: true, value: await engine.send("plan-import", payload) };
+  } catch (cause) {
+    return { ok: false, failure: failure(cause) };
+  }
+}
+
+/**
+ * One request as the `curl` or `grpcurl` that would send it.
+ *
+ * The reverse of {@link planImport}, and a plan for the same reason: what the command cannot
+ * carry — a script, a test, a cookie the jar would have held — is the half worth reading, and
+ * it is not visible in the words themselves. The environment travels because a command has no
+ * `{{token}}` left in it, so which environment was selected decides what it says.
+ *
+ * All three of the session's environment states are passed through, absent included: `undefined`
+ * is what lets the engine adopt a sole environment, which is what a run already does.
+ *
+ * `draft` is the projected document the editor is showing. It is sent every time rather than only
+ * when the tab is dirty, because "dirty" is a fact about the tab and the command is about the
+ * request: branching on it would make a saved request and a reverted one take different code
+ * paths to the same answer.
+ */
+export async function planCommand(
+  nodeId: string,
+  environment: string | null | undefined,
+  draft: RequestDraft,
+): Promise<Result<CommandPlan>> {
+  const engine = client();
+  if (engine === null) return { ok: false, failure: DISCONNECTED };
+  try {
+    const payload = { nodeId, draft, ...(environment === undefined ? {} : { environment }) };
+    return { ok: true, value: await engine.send("plan-command", payload) };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }

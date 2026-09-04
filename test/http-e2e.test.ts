@@ -942,3 +942,67 @@ describe("sandbox library isolation (HTTP)", () => {
     }
   });
 });
+
+/**
+ * The words, executed.
+ *
+ * A tiny curl: enough of the flags `renderCurl` emits to prove they mean what the pane claims.
+ * Shelling out to the real `curl` would test the machine's curl instead of preman's rendering,
+ * and would not run on one that has none.
+ */
+async function replayCurl(words: readonly string[]): Promise<void> {
+  const headers: Record<string, string> = {};
+  let method = "GET";
+  let body: string | undefined;
+  let url = "";
+
+  for (let index = 1; index < words.length; index += 1) {
+    const word = words[index] ?? "";
+    if (word === "-X") {
+      method = words[(index += 1)] ?? "";
+    } else if (word === "-H") {
+      const header = words[(index += 1)] ?? "";
+      const colon = header.indexOf(":");
+      headers[header.slice(0, colon)] = header.slice(colon + 1).trim();
+    } else if (word === "--data-raw") {
+      body = words[(index += 1)] ?? "";
+    } else if (word !== "-L") {
+      url = word;
+    }
+  }
+
+  await fetch(url, { method, headers, body, redirect: "follow" });
+}
+
+describe("preman copy (curl)", () => {
+  it("givenAFixtureRequest_whenCopiedThenTheWordsAreReplayed_thenTheBytesOnTheWireMatch", async () => {
+    const ran = await runCli(args("admin/Login"));
+    expect(ran.code).toBe(EXIT.OK);
+    const sent = http.received[0];
+    http.received.length = 0;
+
+    const copied = await runCli([
+      "copy",
+      "admin/Login",
+      "-d",
+      FIXTURE_HTTP_WS,
+      "-e",
+      "QC",
+      "--var",
+      `http_url=${http.origin}`,
+      "--json",
+    ]);
+    expect(copied.code).toBe(EXIT.OK);
+    // Describing the call sends nothing; the replay below is the only second request.
+    expect(http.received).toHaveLength(0);
+
+    await replayCurl((JSON.parse(copied.stdout) as { words: string[] }).words);
+    expect(http.received).toHaveLength(1);
+    const replayed = http.received[0]!;
+
+    expect(replayed.method).toBe("POST");
+    expect(replayed.url).toBe(sent!.url);
+    expect(replayed.bodyBuffer.equals(sent!.bodyBuffer)).toBe(true);
+    expect(replayed.headers["content-type"]).toBe(sent!.headers["content-type"]);
+  });
+});
