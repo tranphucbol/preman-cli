@@ -1,0 +1,41 @@
+Google common protocol buffers
+==============================
+
+The .proto files under this directory are vendored verbatim from googleapis:
+
+    https://github.com/googleapis/googleapis
+    Copyright 2015-2025 Google LLC
+    Apache-2.0 (see LICENSE)
+
+They are the import closure of the set that `proto-google-common-protos` publishes — the same
+files Maven drops into `target/protoc-dependencies/<hash>/` when a service builds. Fetch them
+again with the loop in ADR 045; the set is closed under `import`, so a re-vendor that adds a
+file adds whatever that file imports too.
+
+
+Why they are here
+-----------------
+
+A spec that says `import "google/api/annotations.proto"` has to find that file somewhere.
+preman's include dirs are the spec's own ancestors, bounded by the workspace, the checkout or
+the shared link (ADRs 038 and 042). A `google/` tree is never an ancestor of a service's proto,
+so the import can only resolve if preman brings one.
+
+`google/protobuf/*` is not here and must not be added: protobufjs answers those from its own
+bundled `common` map before an include dir is ever consulted, and @grpc/proto-loader registers
+four more on top. A copy here would be dead weight that the loader cannot reach.
+
+Verbatim also means unformatted: this directory is in `.prettierignore`, so re-vendoring is a
+readable diff instead of a reflow.
+
+
+Known upstream defect
+---------------------
+
+`google/api/service.proto` does not load, here or anywhere else. It imports both
+`google/protobuf/api.proto` and `google/protobuf/type.proto`, and protobufjs's bundled copies of
+those two both declare `Option`, so the second registration throws `duplicate name 'Option' in
+Namespace .google.protobuf`. This reproduces with no vendored file present at all — it is not
+something this directory caused or can fix. It is kept because the set is vendored closed rather
+than curated, and because dropping it would only move the failure from "this file" to "the file
+that imports it".

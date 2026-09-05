@@ -2,6 +2,7 @@ import { builtinModules } from "node:module";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import { FAKER_MODULE, SANDBOX_ALIASES, SANDBOX_PACKAGES } from "./src/scripts/module-names.js";
+import { vendorProtos } from "./vite.vendor.js";
 
 const BUILD_TARGET = "node20";
 const OUT_FILE = "core.js";
@@ -27,6 +28,9 @@ export const EXTERNAL_PACKAGES = [...new Set([...NODE_BUILTINS, ...RUNTIME_PACKA
 
 /** Core is never published as a bundle; this build only proves the boundary compiles standalone. */
 export default defineConfig({
+  // Carried here too so `dist/core.js` is a faithful proof: a bundle of core that cannot find its
+  // own protos would compile and still be wrong.
+  plugins: [vendorProtos()],
   resolve: {
     alias: {
       "@preman/core": SOURCE_ROOT,

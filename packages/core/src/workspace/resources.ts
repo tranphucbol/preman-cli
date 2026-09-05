@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { PremanError } from "@preman/core/errors.js";
+import { withBundledProtoRoot } from "./bundled.js";
 import { linkRootFor, ownCheckoutPath, repoRootFor, resolveSharedPath, sharedProtoRoot } from "./links.js";
 import { resourcesFileSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
@@ -23,6 +24,10 @@ export interface Resources {
    * Its own tree has to be offered first. The pool stays behind it, because a
    * workspace may legitimately declare a proto that imports from a repository it
    * declares separately, and that resolved before this existed.
+   *
+   * preman's own vendored `google/**` root comes last of all, so a repository that ships its
+   * own copy still answers first. It is not in {@link Resources.includeDirs} above, which
+   * reports the workspace and is printed (ADR 045).
    */
   includeDirsFor: (spec: string) => string[];
 }
@@ -84,7 +89,9 @@ const EMPTY_RESOURCES: Resources = {
   workspaceId: undefined,
   specs: [],
   includeDirs: [],
-  includeDirsFor: () => [],
+  // An HTTP-only workspace declares no protos, but a caller may still load one by path, and a
+  // `google/` import should not depend on whether `resources.yaml` happened to exist.
+  includeDirsFor: () => withBundledProtoRoot([]),
 };
 
 export function loadResources(ws: Workspace): Resources {
@@ -122,7 +129,8 @@ export function loadResources(ws: Workspace): Resources {
     workspaceId: parsed.data.workspace?.id,
     specs,
     includeDirs: pooled,
-    includeDirsFor: (spec) => [...new Set([...deriveIncludeDirs([spec], ws.root, sharedRoot, repoRoot), ...pooled])],
+    includeDirsFor: (spec) =>
+      withBundledProtoRoot([...new Set([...deriveIncludeDirs([spec], ws.root, sharedRoot, repoRoot), ...pooled])]),
   };
 }
 

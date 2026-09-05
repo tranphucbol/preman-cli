@@ -53,6 +53,7 @@ The CLI's own design predates the practice.
 | [042](042-the-resolver-has-two-roots.md)                            | The resolver has two roots, and the writer has one                     |
 | [043](043-importing-a-pasted-command.md)                            | Importing a pasted command, behind a fence                             |
 | [044](044-a-command-is-built-from-the-request.md)                   | A command is built from the request, not from the send                 |
+| [045](045-preman-ships-the-google-common-protos.md)                 | preman ships the google common protos                                  |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -237,5 +238,21 @@ the document being typed and not the one on disk. The cost it cannot argue away 
 in this directory: a request whose header is set by a script copies to a command that is wrong,
 says so in a caveat, and stays wrong until the Console entry point 024 already has a place for
 exists.
+
+045 is the third record about where a proto's imports come from, and the first to answer with
+files this repository carries rather than with a rule about the ones it finds. 038 and 042 both
+took the include dirs to be ancestors of the spec, which is a walk that climbs — so it can reach a
+repository's own tree and never a sibling one, and `import "google/api/annotations.proto"` had no
+way to resolve at all. The alternatives were all cheaper: protobufjs already ships two of the files
+in its own package, `protobuf.common()` looks like a registration point for the rest, and an extra
+include dir in `preman.yaml` would have been a day's work. The first covers a quarter of the
+imports observed, the second cannot be reached because the map is checked against an
+already-resolved absolute path, and the third asks every user of every workspace to perform the
+same setup — the objection 038 raised against per-machine paths, arriving from the other side. So
+59 files are vendored closed under `import`, and the two costs are stated rather than solved: one
+of them, `google/api/service.proto`, does not load anywhere, for a reason that reproduces with the
+directory deleted; and the root is appended last so a repository's own copy still wins, which means
+two workspaces on one machine can resolve the same import to different files and neither will
+mention it.
 
 `TEMPLATE.md` is the shape of a new one.

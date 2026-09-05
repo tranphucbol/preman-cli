@@ -20,6 +20,7 @@ import { parseDocument, type Document } from "yaml";
 import { PremanError } from "@preman/core/errors.js";
 import { LOAD_OPTIONS } from "@preman/core/grpc/schema.js";
 import { writeFileAtomic } from "@preman/core/workspace/atomic.js";
+import { withBundledProtoRoot } from "@preman/core/workspace/bundled.js";
 import { requireWorkspace, type Workspace } from "@preman/core/workspace/discover.js";
 import {
   declaredSharedPath,
@@ -296,7 +297,9 @@ function loadErrorFor(
   // same ones it gets inside it — which is what lets this check run before any link exists.
   // Own tree first, then the workspace, matching `Resources.includeDirsFor`: check it the
   // way it will be loaded, or this answers a question nobody asked.
-  const includeDirs = [...new Set([...deriveIncludeDirs([source], repoRoot, sharedRoot), ...extra])];
+  const includeDirs = withBundledProtoRoot([
+    ...new Set([...deriveIncludeDirs([source], repoRoot, sharedRoot), ...extra]),
+  ]);
   try {
     protoLoader.loadSync(source, { ...LOAD_OPTIONS, includeDirs });
     return undefined;

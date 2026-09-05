@@ -9,10 +9,12 @@ import {
   NODE_MAIN_FIELDS,
   SOURCE_ROOT,
 } from "./vite.shared.js";
+import { vendorProtos } from "../core/vite.vendor.js";
 
 const OUT_FILE = "entry.js";
 
 export default defineConfig({
+  plugins: [vendorProtos()],
   resolve: { alias: ALIASES, mainFields: NODE_MAIN_FIELDS, conditions: NODE_CONDITIONS },
   build: {
     target: BUILD_TARGET,

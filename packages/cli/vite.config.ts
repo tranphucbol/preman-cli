@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import packageJson from "./package.json" with { type: "json" };
 import { FAKER_MODULE, SANDBOX_ALIASES, SANDBOX_PACKAGES } from "../core/src/scripts/module-names.js";
+import { vendorProtos } from "../core/vite.vendor.js";
 
 const BUILD_TARGET = "node20";
 const OUT_FILE = "preman.js";
@@ -31,6 +32,7 @@ const NODE_BUILTINS = builtinModules.flatMap((moduleName) => {
 export const EXTERNAL_PACKAGES = [...new Set([...NODE_BUILTINS, ...RUNTIME_PACKAGES])];
 
 export default defineConfig({
+  plugins: [vendorProtos()],
   define: {
     __PREMAN_VERSION__: JSON.stringify(process.env[VERSION_ENV_VAR] ?? packageJson.version),
   },
