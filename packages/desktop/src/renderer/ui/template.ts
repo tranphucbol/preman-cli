@@ -34,6 +34,7 @@
  * simplicity of a single length-preserving substitution.
  */
 
+import type { CommentTokens } from "@codemirror/commands";
 import { jsonLanguage } from "@codemirror/lang-json";
 import { Language, LanguageSupport } from "@codemirror/language";
 import { type Diagnostic, linter } from "@codemirror/lint";
@@ -50,7 +51,13 @@ import {
 import { type Input, Parser, type PartialParse, type TreeFragment } from "@lezer/common";
 
 import { VARIABLE_TOKEN_SOURCE } from "@preman/desktop/engine/protocol.js";
-import { commentRanges, maskComments } from "@preman/desktop/renderer/model/comments.js";
+import {
+  BLOCK_CLOSE,
+  BLOCK_OPEN,
+  LINE_COMMENT,
+  commentRanges,
+  maskComments,
+} from "@preman/desktop/renderer/model/comments.js";
 import { tokenAt } from "@preman/desktop/renderer/model/tokens.js";
 
 /**
@@ -189,6 +196,31 @@ function commentDecorations(view: EditorView): DecorationSet {
   const ranges = commentRanges(doc.toString());
   return Decoration.set(ranges.map((range) => COMMENT_MARK.range(range.from, range.to)));
 }
+
+/**
+ * What `Cmd+/` writes, and the reason it did nothing before decision 048.
+ *
+ * `defaultKeymap` has bound `Mod-/` to `toggleComment` all along; the command reads
+ * `commentTokens` out of the language data at the caret and gives up when nobody published any.
+ * Plain JSON has no comments, so `@codemirror/lang-json` publishes none — which is correct for it
+ * and wrong here, since this is the language for a body 047 lets carry both forms. So the keystroke
+ * was never missing, only the two markers it needed, and the editor that already *paints* a comment
+ * refused to write one.
+ *
+ * The markers come from the scanner rather than being restated, so the toggle cannot write a form
+ * the mask and the painter would then fail to recognise.
+ *
+ * Both forms, though `Cmd+/` reaches only the first: `toggleComment` takes `line` whenever a
+ * language has one and never consults `block`, so what the shortcut does is always whole lines.
+ * `block` is published anyway because this facet describes the language and not the keymap — 047
+ * makes both forms legal in the file, `toggleBlockComment` is a command a keymap could bind, and
+ * `lang-javascript` publishes the pair on the same grounds. Omitting it would encode a fact about
+ * today's bindings into an answer about JSON.
+ */
+export const COMMENT_TOKENS: CommentTokens = {
+  line: LINE_COMMENT,
+  block: { open: BLOCK_OPEN, close: BLOCK_CLOSE },
+};
 
 const commentPainter = ViewPlugin.fromClass(
   class {
@@ -336,11 +368,22 @@ export function tokenClicks(report: TokenReporter): Extension {
  * and a gutter would change the editor's layout for a class of problem the Preview pane above
  * already lists in a banner. The field is an argument rather than something this module owns, so
  * the language stays a pure function of what it was handed and the pane keeps the async.
+ *
+ * `COMMENT_TOKENS` goes in here rather than into `templateJsonLanguage`'s own extensions, which
+ * matters because that language shares `jsonLanguage.data` — the facet is reused deliberately, so
+ * language-data lookups keep resolving. Providing the pair as part of *this* `LanguageSupport`
+ * scopes it to a state configured with it, so a response body on plain `json` publishes nothing
+ * and keeps the shortcut inert where a comment would be a lie about bytes off the wire.
  */
 export function jsonTemplate(unresolved?: StateField<UnresolvedNames>): LanguageSupport {
   const lint =
     unresolved === undefined
       ? NO_EXTRA_EXTENSIONS
       : [unresolved, linter((view) => unresolvedDiagnostics(view.state.doc.toString(), view.state.field(unresolved)))];
-  return new LanguageSupport(templateJsonLanguage, [Prec.highest(tokenPainter), Prec.highest(commentPainter), ...lint]);
+  return new LanguageSupport(templateJsonLanguage, [
+    templateJsonLanguage.data.of({ commentTokens: COMMENT_TOKENS }),
+    Prec.highest(tokenPainter),
+    Prec.highest(commentPainter),
+    ...lint,
+  ]);
 }

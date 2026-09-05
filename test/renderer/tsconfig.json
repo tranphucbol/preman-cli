@@ -10,7 +10,10 @@
     "paths": {
       "@preman/core": ["packages/core/src/index.ts"],
       "@preman/core/*": ["packages/core/src/*"],
-      "@preman/desktop/*": ["packages/desktop/src/*"]
+      "@preman/desktop/*": ["packages/desktop/src/*"],
+      // CodeMirror is a dependency of the desktop package, so it is not resolvable from here by
+      // walking up. `vitest.config.ts` says why a test ever spells it directly.
+      "@codemirror/*": ["packages/desktop/node_modules/@codemirror/*"]
     },
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx"

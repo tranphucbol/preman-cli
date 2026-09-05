@@ -12,6 +12,14 @@ const DESKTOP_SOURCE_ROOT = resolve(WORKSPACE_ROOT, "packages/desktop/src");
  * Aliased so both spell the same module, which is what makes `main/hosts.ts` testable at all.
  */
 const ELECTRON_MODULE = resolve(WORKSPACE_ROOT, "packages/desktop/node_modules/electron");
+/**
+ * CodeMirror lives in the desktop package for the same reason, and so is invisible from `test/`.
+ * The renderer's own modules reach it by walking up from their own directory and need none of
+ * this; a test does, whenever the behaviour under test *is* a CodeMirror one — a command that
+ * reads language data, say, where asserting the constant handed to the facet proves only that the
+ * constant is the one written down and not that pressing the key does anything.
+ */
+const CODEMIRROR_SCOPE = resolve(WORKSPACE_ROOT, "packages/desktop/node_modules/@codemirror");
 const TEST_FILES = ["test/**/*.test.ts"];
 const TEST_TIMEOUT_MS = 20_000;
 const NODE_MAIN_FIELDS = ["module", "jsnext:main", "jsnext", "main"];
@@ -37,6 +45,7 @@ export default defineConfig({
       // additionally needs a `contextBridge` to exist, so it stays read as text.
       "@preman/desktop": DESKTOP_SOURCE_ROOT,
       electron: ELECTRON_MODULE,
+      "@codemirror": CODEMIRROR_SCOPE,
     },
     mainFields: NODE_MAIN_FIELDS,
     conditions: NODE_CONDITIONS,

@@ -293,4 +293,19 @@ each side of the renderer fence, which is the right duplication: it is a definit
 syntax and not any behaviour of preman's. What it costs is that preman now accepts a superset of
 JSON, so a body that round-trips here is not proof that the file is JSON.
 
+048 finishes what 047 started and is mostly a story about how little was missing. `Cmd+/` had been
+bound the whole time — `defaultKeymap` binds it to a command that asks the language for its comment
+markers and gives up quietly when there are none — so the shortcut worked in scripts and in YAML
+and did nothing in the one editor that had just been taught to paint a comment. Two markers, read
+out of the scanner rather than restated, so the toggle cannot write a form the mask would fail to
+recognise. The part worth reopening is that it is offered in the raw HTTP body too, which 047 puts
+firmly on the other side of its line: those bytes go out verbatim, so `//` typed there reaches the
+server. The alternative — a flag threaded from the two panes that parse — was written out and
+rejected, on the grounds that it makes a keystroke conditional on something invisible while leaving
+the louder signal, the colour, saying the opposite. If that turns out wrong, the thing to change is
+the painting and not the shortcut. Its smaller consequence is that `test/` can now spell
+`@codemirror` at all, aliased for the same reason `electron` was: `toggleComment` is a
+`StateCommand` and wants a state, not a window, so the assertion can be the document that comes
+back instead of the constant that went in.
+
 `TEMPLATE.md` is the shape of a new one.

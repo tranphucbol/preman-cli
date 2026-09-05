@@ -6,9 +6,13 @@
  * enclosing object. So the assertions are mostly about nodes *after* a token rather than about the
  * token itself — the token was never the part that looked wrong.
  */
+import { toggleComment } from "@codemirror/commands";
+import { EditorSelection, EditorState, type SelectionRange, type Transaction } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
+import { BLOCK_CLOSE, BLOCK_OPEN, LINE_COMMENT } from "@preman/desktop/renderer/model/comments.js";
 import {
+  COMMENT_TOKENS,
   NOTHING_ASKED,
   jsonTemplate,
   maskTemplates,
@@ -140,6 +144,95 @@ describe("parsing a template body", () => {
     expect(errors).toBe(0);
     expect(properties).toStrictEqual(['"a"', '"b"', '"c"']);
     expect(strings).toStrictEqual(['"text"']);
+  });
+});
+
+/**
+ * `Cmd+/`, run for real.
+ *
+ * `toggleComment` is a `StateCommand`, so it needs a state and not a view, which is the only
+ * reason this can be asserted end to end in a suite with no DOM. It is worth doing that way:
+ * every part of this was already present and correct before decision 048 except the two markers,
+ * so a test that checked `COMMENT_TOKENS` would have passed against the version where the
+ * keystroke did nothing at all.
+ */
+describe("commenting a template body", () => {
+  /** What the command produced, or `null` if it declined - which is what it did before 048. */
+  function toggled(doc: string, at: SelectionRange): string | null {
+    let next: string | null = null;
+    const applied = toggleComment({
+      state: EditorState.create({ doc, selection: EditorSelection.create([at]), extensions: [jsonTemplate()] }),
+      dispatch: (transaction: Transaction) => {
+        next = transaction.state.doc.toString();
+      },
+    });
+    return applied ? next : null;
+  }
+
+  it("givenACaretOnAField_whenToggled_thenTheLineIsCommentedOut", () => {
+    const doc = `{\n  "amount": "100",\n  "type": "BT_FREEZE"\n}`;
+
+    expect(toggled(doc, EditorSelection.cursor(doc.indexOf(`"amount"`)))).toBe(
+      `{\n  // "amount": "100",\n  "type": "BT_FREEZE"\n}`,
+    );
+  });
+
+  it("givenACommentedField_whenToggledAgain_thenItComesBack", () => {
+    const doc = `{\n  // "amount": "100",\n  "type": "BT_FREEZE"\n}`;
+
+    expect(toggled(doc, EditorSelection.cursor(doc.indexOf(LINE_COMMENT)))).toBe(
+      `{\n  "amount": "100",\n  "type": "BT_FREEZE"\n}`,
+    );
+  });
+
+  it("givenSeveralLines_whenToggled_thenEveryLineInTheSelectionIsCommented", () => {
+    const doc = `{\n  "a": 1,\n  "b": 2\n}`;
+
+    expect(toggled(doc, EditorSelection.range(doc.indexOf(`"a"`), doc.indexOf(`2`)))).toBe(
+      `{\n  // "a": 1,\n  // "b": 2\n}`,
+    );
+  });
+
+  it("givenPartOfOneLine_whenToggled_thenTheWholeLineIsStillCommented", () => {
+    // `toggleComment` consults `block` only when a language has no `line`, so the shortcut is
+    // always whole lines however small the selection. Asserted because the opposite is the
+    // reasonable guess, and because it is why `block` is published for the language rather than
+    // for this keystroke.
+    const doc = `{ "a": 1 }`;
+    const from = doc.indexOf(`"a"`);
+
+    expect(toggled(doc, EditorSelection.range(from, from + `"a": 1`.length))).toBe(`${LINE_COMMENT} ${doc}`);
+  });
+
+  it("givenTheBlockForm_whenPublished_thenItIsTheOneTheScannerCloses", () => {
+    // Unreachable from the keymap today, so nothing else would notice it drifting.
+    expect(COMMENT_TOKENS.block).toStrictEqual({ open: BLOCK_OPEN, close: BLOCK_CLOSE });
+  });
+
+  it("givenWhatTheToggleWrote_whenParsed_thenTheDocumentIsStillClean", () => {
+    // The loop that has to close: the mask and the painter recognise what the keystroke writes,
+    // because both ends read the markers out of `model/comments.ts`.
+    const commented = toggled(`{\n  "a": 1,\n  "b": 2\n}`, EditorSelection.cursor(4)) ?? "";
+
+    const { errors, properties } = nodes(commented);
+
+    expect(commented).toContain(LINE_COMMENT);
+    expect(errors).toBe(0);
+    expect(properties).toStrictEqual(['"b"']);
+  });
+
+  it("givenPlainJson_whenToggled_thenNothingIsOffered", () => {
+    // A response body is `json`, not `json-template`, and publishes no tokens: commenting out a
+    // line of what came back off the wire would be a claim about bytes that already happened.
+    const applied = toggleComment({
+      state: EditorState.create({ doc: `{ "a": 1 }`, selection: EditorSelection.cursor(2) }),
+      dispatch: () => {
+        throw new Error("plain JSON must not offer a comment toggle");
+      },
+    });
+
+    expect(applied).toBe(false);
+    expect(COMMENT_TOKENS.line).toBe(LINE_COMMENT);
   });
 });
 

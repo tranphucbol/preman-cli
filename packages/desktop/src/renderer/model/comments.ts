@@ -14,9 +14,15 @@
  * whatever follows it. That is exactly enough to tell a comment from a `//` inside a URL.
  */
 
-const LINE_COMMENT = "//";
-const BLOCK_OPEN = "/*";
-const BLOCK_CLOSE = "*/";
+/**
+ * The three markers, exported because `ui/template.ts` hands them to the comment commands so that
+ * what `Cmd+/` writes is by construction what this scanner recognises. One definition, both
+ * directions: a scanner that learned a fourth marker could not be shipped without the keystroke
+ * learning it too.
+ */
+export const LINE_COMMENT = "//";
+export const BLOCK_OPEN = "/*";
+export const BLOCK_CLOSE = "*/";
 const QUOTE = '"';
 const BACKSLASH = "\\";
 const LINE_BREAK = "\n";
