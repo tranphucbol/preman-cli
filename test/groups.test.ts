@@ -5,6 +5,7 @@ import {
   listRequests,
   resolveSelector,
   targetLabel,
+  targetLabels,
   targetPath,
   type RequestEntry,
   type RunTarget,
@@ -102,6 +103,37 @@ describe("resolveSelector", () => {
     expect(candidates.map(targetPath)).toEqual(["payment/Echo", "payment/nested/Deep Echo"]);
   });
 
+  it("givenWorkspaceRelativeFile_whenResolving_thenPicksThatRequest", () => {
+    const resolved = target("postman/collections/payment/nested/Deep Echo.request.yaml");
+    expect(targetPath(resolved)).toBe("payment/nested/Deep Echo");
+  });
+
+  it("givenAbsoluteFile_whenResolving_thenPicksThatRequest", () => {
+    const resolved = target(entryOf("payment/Echo").filePath);
+    expect(targetPath(resolved)).toBe("payment/Echo");
+  });
+
+  it("givenBareFilename_whenResolving_thenPicksThatRequest", () => {
+    // Any tail of the path resolves, so the shortest unambiguous one is enough.
+    const resolved = target("Deep Echo.request.yaml");
+    expect(targetPath(resolved)).toBe("payment/nested/Deep Echo");
+  });
+
+  it("givenWindowsSeparators_whenResolving_thenStillPicksThatRequest", () => {
+    const resolved = target("payment\\nested\\Deep Echo.request.yaml");
+    expect(targetPath(resolved)).toBe("payment/nested/Deep Echo");
+  });
+
+  it("givenUnknownFile_whenResolving_thenNothingMatches", () => {
+    expect(resolveSelector(requests, "Nothing.request.yaml")).toEqual({ target: undefined, candidates: [] });
+  });
+
+  it("givenPartialFilename_whenResolving_thenTheFileTierIsNotConsulted", () => {
+    // The tier is guarded by the suffix, so an ordinary selector cannot fall into it: "Echo"
+    // resolves by name, not by the file that happens to be called `Echo.request.yaml`.
+    expect(targetPath(target("Echo"))).toBe("payment/Echo");
+  });
+
   it("givenUnknownSelector_whenResolving_thenNothingMatches", () => {
     expect(resolveSelector(requests, "nope")).toEqual({ target: undefined, candidates: [] });
   });
@@ -126,6 +158,50 @@ describe("targetLabel", () => {
     const [collection, folder] = listGroups(requests);
     expect(targetLabel({ kind: "group", group: collection! })).toBe("payment (collection, 5 requests)");
     expect(targetLabel({ kind: "group", group: folder! })).toBe("payment/nested (folder, 1 request)");
+  });
+});
+
+describe("targetLabels", () => {
+  it("givenDistinctCandidates_whenLabelling_thenNothingIsAppended", () => {
+    const targets: RunTarget[] = [
+      { kind: "request", entry: entryOf("payment/Echo") },
+      { kind: "request", entry: entryOf("payment/nested/Deep Echo") },
+    ];
+    expect(targetLabels(targets)).toEqual(["payment/Echo", "payment/nested/Deep Echo"]);
+  });
+
+  it("givenSiblingsSharingAName_whenLabelling_thenEachCarriesItsFile", () => {
+    // Two sibling requests that declare the same `name` share a path, which is exactly the
+    // case that made an ambiguity error list the selector back to the reader twice.
+    const first = entryOf("payment/Echo");
+    const second: RequestEntry = { ...entryOf("payment/Ping"), name: first.name, path: first.path };
+    const targets: RunTarget[] = [
+      { kind: "request", entry: first },
+      { kind: "request", entry: second },
+    ];
+
+    expect(targetLabels(targets)).toEqual([`payment/Echo  ${first.file}`, `payment/Echo  ${second.file}`]);
+  });
+
+  it("givenColliderAmongDistinctRows_whenLabelling_thenOnlyTheCollidersGrow", () => {
+    const echo = entryOf("payment/Echo");
+    const targets: RunTarget[] = [
+      { kind: "request", entry: entryOf("payment/nested/Deep Echo") },
+      { kind: "request", entry: echo },
+      { kind: "request", entry: { ...entryOf("payment/Ping"), name: echo.name, path: echo.path } },
+    ];
+
+    expect(targetLabels(targets)[0]).toBe("payment/nested/Deep Echo");
+    expect(
+      targetLabels(targets)
+        .slice(1)
+        .every((label) => label.startsWith("payment/Echo  ")),
+    ).toBe(true);
+  });
+
+  it("givenGroups_whenLabelling_thenTheyAreLeftAlone", () => {
+    const [collection] = listGroups(requests);
+    expect(targetLabels([{ kind: "group", group: collection! }])).toEqual(["payment (collection, 5 requests)"]);
   });
 });
 

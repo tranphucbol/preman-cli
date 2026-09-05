@@ -8,6 +8,7 @@ const LEAF_FILES = [
   "packages/core/src/errors.ts",
   "packages/core/src/tls/**/*.ts",
   "packages/core/src/data/**/*.ts",
+  "packages/core/src/json/**/*.ts",
   "packages/core/src/vars/**/*.ts",
 ];
 const CORE_FILES = ["packages/core/src/**/*.ts"];

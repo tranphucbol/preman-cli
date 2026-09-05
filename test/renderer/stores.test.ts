@@ -10,18 +10,20 @@
  * not a stub. A hand-written `NodeDocument` would let a reload test pass while the reload was
  * reading a field the engine does not actually send.
  */
-import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
 import type {
   Catalog,
   CatalogNode,
   EnginePayload,
+  EnginePush,
   EngineRequest,
   EngineRequestKind,
   EngineResults,
+  RunArgs,
   RunEvent,
 } from "@preman/desktop/engine/protocol.js";
 import { EXIT_CODES, ORDER_STEP } from "@preman/desktop/engine/protocol.js";
@@ -1341,6 +1343,92 @@ describe("creating an environment", () => {
   });
 });
 
+/**
+ * A run that dies before core opens it. `runSelection` resolves the selector and the environment
+ * before it emits `run-start`, so an ambiguous selector, a missing environment or an unrunnable
+ * combination produces no events at all - and the window, which paints a request from its events,
+ * painted nothing and left the previous response sitting there looking current.
+ */
+/** A second environment, so that "which one" becomes a question core will not answer itself. */
+const SECOND_ENVIRONMENT = "name: QC\nvalues:\n  - key: greeting\n    value: hi\n";
+
+describe("a run that fails before core opens it", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+  let pushed: EnginePush[];
+
+  beforeEach(async () => {
+    resetStores();
+    workspace = cloneFixtureWorkspace();
+    pushed = [];
+    host = createEngineHost({
+      root: workspace.root,
+      post: (message) => {
+        if ("push" in message) pushed.push(message);
+      },
+      log: () => undefined,
+    });
+    await hostClient(host, workspace.root).send("catalog", {});
+  });
+
+  afterEach(() => {
+    host.dispose();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  async function runAndSettle(args: RunArgs): Promise<RunEvent[]> {
+    const { runId } = await hostClient(host, workspace.root).send("run", { args });
+    // The run is deliberately not awaited by the host, so wait for its terminal push.
+    await vi.waitFor(() => {
+      expect(pushed.some((push) => push.push === "run-done" && push.runId === runId)).toBe(true);
+    });
+    return pushed.filter((push) => push.push === "run-event").map((push) => push.event);
+  }
+
+  it("givenARequestThatCannotRun_whenRun_thenTheFailureIsAttributedToIt", async () => {
+    // Iterations need a group; asking a lone request for five is refused before `run-start`.
+    const events = await runAndSettle({ nodeId: PING_ID, iterationCount: 5 });
+
+    expect(events.map((event) => event.type)).toStrictEqual([
+      "run-start",
+      "request-start",
+      "response-failure",
+      "request-end",
+      "run-end",
+    ]);
+    const failure = events.find((event) => event.type === "response-failure");
+    expect(failure).toMatchObject({ nodeId: PING_ID, stage: "build" });
+    expect(failure?.type === "response-failure" && failure.message).toContain("iterations require");
+  });
+
+  it("givenNoEnvironmentChosen_whenSeveralExist_thenTheWindowIsToldWhereToChoose", async () => {
+    // The workspace ships one environment, which core adopts without asking. A second makes the
+    // choice real, and the window must not be told to pass a flag it does not have.
+    writeFileSync(join(workspace.root, "postman", "environments", "QC.environment.yaml"), SECOND_ENVIRONMENT);
+    await hostClient(host, workspace.root).send("catalog", {});
+
+    // Omitted, not `null`: `null` is the answer "none", which core honours without asking.
+    const events = await runAndSettle({ nodeId: PING_ID });
+
+    const failure = events.find((event) => event.type === "response-failure");
+    expect(failure?.type === "response-failure" && failure.message).toBe(
+      "no environment is selected, and this workspace has more than one",
+    );
+    expect(failure?.type === "response-failure" && failure.details).toContain(
+      "choose one from the environment menu in the toolbar:",
+    );
+  });
+
+  it("givenAnUnknownNode_whenRun_thenTheRunBoundaryStillCloses", async () => {
+    // Nothing to attribute a request row to, so none is invented: `RunnerPane` paints the run's
+    // own error. What matters is that the run does not hang open.
+    const events = await runAndSettle({ nodeId: "postman/collections/payment/Nope.request.yaml" });
+
+    expect(events.map((event) => event.type)).toStrictEqual(["run-start", "run-end"]);
+  });
+});
+
 describe("what the collection runner reads off a run", () => {
   beforeEach(resetStores);
   afterEach(resetStores);
@@ -1415,9 +1503,9 @@ describe("what the collection runner reads off a run", () => {
   });
 
   /**
-   * `run-end` cannot be relied on - a run that dies on its selector never emits one - so `finish`
-   * is the terminal signal, and it has to leave nothing spinning or the export buttons never
-   * enable and a row claims forever that it is still in flight.
+   * `run-end` is core's, and says nothing about a run core never opened, so `finish` is the
+   * terminal signal. It has to leave nothing spinning or the export buttons never enable and a
+   * row claims forever that it is still in flight.
    */
   it("givenARunThatDiedMidRequest_whenFinished_thenNothingIsLeftRunning", () => {
     apply({ type: "run-start", runId: RUN_ID, total: ITERATED_TOTAL });
@@ -1434,6 +1522,21 @@ describe("what the collection runner reads off a run", () => {
     expect(run?.cancelled).toBe(true);
     expect(run?.warnings).toStrictEqual([RUN_WARNING]);
     expect(useRunsStore.getState().requests.get(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION))?.status).toBe("done");
+  });
+
+  /**
+   * The last resort: a failure so early that not even `run-start` got out. Dropping it is what
+   * made an unrunnable request report nothing at all, so the run is materialised to carry it.
+   */
+  it("givenARunThatNeverStarted_whenFinished_thenTheErrorIsStillReported", () => {
+    const error = { message: '"payment/Freeze" is ambiguous', details: ["a", "b"], exitCode: EXIT_CODES.CLI };
+
+    useRunsStore.getState().finish(RUN_ID, { warnings: [], cancelled: false, error });
+
+    const run = useRunsStore.getState().runs.get(RUN_ID);
+    expect(run?.done).toBe(true);
+    expect(run?.error).toStrictEqual(error);
+    expect(run?.items).toStrictEqual([]);
   });
 });
 

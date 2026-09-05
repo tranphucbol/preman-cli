@@ -2,6 +2,7 @@ import { PremanError, EXIT, type ExitCode } from "./errors.js";
 import { rowFor, type DataRow } from "./data/rows.js";
 import { applyGrpcAuth } from "./grpc/auth.js";
 import { invokeUnary, type InvokeResult } from "./grpc/invoke.js";
+import { parseMessageBody } from "./grpc/message.js";
 import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
 import { resolveTarget, type GrpcTarget } from "./grpc/target.js";
 import { CookieJar } from "./http/cookies.js";
@@ -603,14 +604,10 @@ async function runGrpcRequest(
     .map((item) => ({ key: item.key.toLowerCase(), value: item.value }));
   const metadata = groupProperties(sentMetadata);
 
-  let sentMessage: unknown = {};
-  if (liveRequest.body.raw.trim().length > 0) {
-    try {
-      sentMessage = JSON.parse(liveRequest.body.raw);
-    } catch (cause) {
-      throw new PremanError(`request body is not valid JSON after pre-request scripts: ${(cause as Error).message}`);
-    }
-  }
+  const sentMessage = parseMessageBody(
+    liveRequest.body.raw,
+    "request body is not valid JSON after pre-request scripts",
+  );
 
   // 2. Resolve schema and target from the possibly changed route.
   const method = resolveMethod({

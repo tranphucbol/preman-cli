@@ -99,4 +99,41 @@ describe("formatJsonTemplate", () => {
 
     expect(refused(oversize)).toContain(String(MASK_LIMIT_CHARS));
   });
+
+  it("givenCommentedBody_whenFormatted_thenItIsIndentedRatherThanRefused", () => {
+    // The shape a commented-out field leaves behind. Before 047 this was refused, and the reason
+    // blamed tokens that were not there.
+    const authored = ['{ "id": "7",', '// "request_time": "",', '"type": "BT_FREEZE" }'].join("\n");
+
+    expect(formatted(authored)).toBe(
+      ["{", '  "id": "7",', '  // "request_time": "",', '  "type": "BT_FREEZE"', "}"].join("\n"),
+    );
+  });
+
+  it("givenCommentAboveACloser_whenFormatted_thenTheCloserKeepsTheOuterIndent", () => {
+    // The comment opens a line at the inner depth; the brace has to take it back.
+    expect(formatted(`{"a": 1\n// last word\n}`)).toBe(["{", '  "a": 1', "  // last word", "}"].join("\n"));
+  });
+
+  it("givenBlockCommentAndTrailingComment_whenFormatted_thenBothSurvive", () => {
+    const out = formatted(`{/* why */ "a": 1} // after`);
+
+    expect(out).toBe(["{", "  /* why */", '  "a": 1', "}", "// after"].join("\n"));
+  });
+
+  it("givenCommentMarkersInsideAString_whenFormatted_thenTheyAreNotTreatedAsComments", () => {
+    expect(formatted(`{"url":"https://h//p"}`)).toBe(`{\n  "url": "https://h//p"\n}`);
+  });
+
+  it("givenNothingButComments_whenFormatted_thenOkAndUnchanged", () => {
+    // It masks to nothing, so there is no structure to re-derive - and it is a draft that sends
+    // as an empty message, so a refusal would be saying something untrue about it.
+    expect(formatJsonTemplate("// nothing yet\n")).toStrictEqual({ ok: true, text: "// nothing yet\n" });
+  });
+
+  it("givenFormattedCommentedBody_whenFormattedAgain_thenUnchanged", () => {
+    const once = formatted(`{"a": 1\n// note\n}`);
+
+    expect(formatted(once)).toBe(once);
+  });
 });

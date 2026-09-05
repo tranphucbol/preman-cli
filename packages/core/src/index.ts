@@ -8,6 +8,7 @@ export {
   listGroups,
   listRequests,
   targetLabel,
+  targetLabels,
   type RequestEntry,
   type RequestGroup,
   type RunTarget,

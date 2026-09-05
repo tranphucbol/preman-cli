@@ -125,15 +125,34 @@ actually ran; it does not invent skipped cases for requests never reached.
 
 ## Selecting requests
 
-A request selector is matched case-insensitively in four tiers. Matching stops at the first tier
+A request selector is matched case-insensitively in five tiers. Matching stops at the first tier
 with a result:
 
-1. Exact path, such as `payment/Long Chau`
-2. Exact request name, such as `Long Chau`
-3. Path suffix, such as `nested/Deep Echo`
-4. Substring
+1. Request file, such as `postman/collections/payment/Echo.request.yaml`
+2. Exact path, such as `payment/Long Chau`
+3. Exact request name, such as `Long Chau`
+4. Path suffix, such as `nested/Deep Echo`
+5. Substring
 
-Ambiguous selectors fail and list their candidates. `preman` never chooses one silently.
+The file tier is consulted only for a selector ending in `.request.yaml`, so an ordinary name never
+reaches it. The path may be absolute, relative to the workspace root, or any trailing part of one,
+and either separator works.
+
+Ambiguous selectors fail and list their candidates. `preman` never chooses one silently. Two
+requests in the same folder may carry the same `name` — preman's own import writes
+`Echo (2).request.yaml` beside `Echo.request.yaml` rather than renaming what you wrote — so
+candidates that would otherwise read alike are listed with the file that tells them apart:
+
+```text
+$ preman run "payment/Echo"
+error: "payment/Echo" is ambiguous
+candidates:
+  payment/Echo  postman/collections/payment/Echo.request.yaml
+  payment/Echo  postman/collections/payment/Echo (2).request.yaml
+```
+
+Every row of that list is itself a selector: the file tier exists so that the answer to an
+ambiguity error is always something you can paste back.
 
 When the selector is omitted in an interactive terminal, `preman` opens a searchable picker. In a
 non-interactive shell it prints the candidates and exits with code `1`.

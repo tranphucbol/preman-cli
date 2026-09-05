@@ -1,5 +1,5 @@
 import { failOnAmbiguity, type SelectionPort } from "@preman/core/api/select.js";
-import { targetLabel, type RunTarget } from "@preman/core/workspace/collections.js";
+import { targetLabels, type RunTarget } from "@preman/core/workspace/collections.js";
 import type { EnvironmentEntry } from "@preman/core/workspace/environments.js";
 
 /** Prompting is only honest when a human is on both ends of the pipe. */
@@ -12,13 +12,15 @@ export const interactiveSelection: SelectionPort = {
     if (!isInteractive()) return failOnAmbiguity.pickRequest(candidates, selector);
 
     const { search } = await import("@inquirer/prompts");
+    // Labelled once, up front, and as a set: a picker whose rows read identically is a coin
+    // toss wearing a list. Pairing each label with its target here also keeps the filter and
+    // the row showing the same string.
+    const rows = targetLabels(candidates).map((name, index) => ({ name, value: candidates[index]! }));
     return search<RunTarget>({
       message: selector === undefined ? "Select a request" : `Select what to run matching "${selector}"`,
       source: (term) => {
         const needle = (term ?? "").toLowerCase();
-        return candidates
-          .filter((t) => needle.length === 0 || targetLabel(t).toLowerCase().includes(needle))
-          .map((t) => ({ name: targetLabel(t), value: t }));
+        return rows.filter((row) => needle.length === 0 || row.name.toLowerCase().includes(needle));
       },
     });
   },

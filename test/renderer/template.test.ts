@@ -109,6 +109,31 @@ describe("parsing a template body", () => {
     expect(nodes(`{ "app_id": {{ac_fee_app_id}}1, "next": 2 }`).properties).toStrictEqual(['"app_id"', '"next"']);
   });
 
+  it("givenACommentedOutField_whenParsed_thenThereAreNoErrorNodes", () => {
+    // Decision 047 made the engine send this body. Before the comment mask the grammar met a `/`
+    // where a property name belongs, so the editor called a body the engine was happy with broken.
+    const commented = ["{", '  "amount": "100",', '  // "request_time": "",', '  "type": "BT_FREEZE"', "}"].join("\n");
+
+    const { errors, properties } = nodes(commented);
+
+    expect(errors).toBe(0);
+    expect(properties).toStrictEqual(['"amount"', '"type"']);
+  });
+
+  it("givenACommentedOutFieldHoldingAToken_whenParsed_thenBothMasksApply", () => {
+    const { errors, properties } = nodes(`{\n  // "id": {{app_id}},\n  "n": {{app_id}}\n}`);
+
+    expect(errors).toBe(0);
+    expect(properties).toStrictEqual(['"n"']);
+  });
+
+  it("givenCommentMarkersInsideAString_whenParsed_thenTheStringIsIntact", () => {
+    const { errors, strings } = nodes(`{ "url": "https://h//p" }`);
+
+    expect(errors).toBe(0);
+    expect(strings).toStrictEqual(['"https://h//p"']);
+  });
+
   it("givenPlainJson_whenParsed_thenItParsesExactlyAsJsonWould", () => {
     const { errors, properties, strings } = nodes(`{ "a": 1, "b": [true, null], "c": "text" }`);
 

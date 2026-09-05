@@ -22,6 +22,12 @@
  * would read as a number and a quoted one as part of its string, and the whole point is that a
  * token looks like a token wherever it appears.
  *
+ * Comments are masked the same way and for a related reason. Decision 047 lets a body preman parses
+ * carry `//` and `/* *\/`, so the grammar must not see them either — left in, they are error nodes
+ * in a document the engine is perfectly happy to send, and the editor and the engine disagree about
+ * the same text. Blanking them to spaces is a legal JSON document again. They are then painted back
+ * on, from the scan rather than from the tree, since by parse time they are whitespace.
+ *
  * Two holes remain, both far narrower than the one this closes: a bare token used as a *key*
  * (`{{name}}: 1`) still fails, because a number is not a legal key, and two bare tokens with
  * nothing between them mask to one malformed number. Both are rare enough to be worth the
@@ -44,6 +50,7 @@ import {
 import { type Input, Parser, type PartialParse, type TreeFragment } from "@lezer/common";
 
 import { VARIABLE_TOKEN_SOURCE } from "@preman/desktop/engine/protocol.js";
+import { commentRanges, maskComments } from "@preman/desktop/renderer/model/comments.js";
 import { tokenAt } from "@preman/desktop/renderer/model/tokens.js";
 
 /**
@@ -88,8 +95,22 @@ export function maskTemplates(text: string): string {
   return text.replace(MASK_PATTERN, (match) => MASK_LEAD + MASK_DIGIT.repeat(match.length - MASK_LEAD.length));
 }
 
+/**
+ * Both masks, in the order that cannot misread either.
+ *
+ * Tokens first. A name is not a string, so `{{a//b}}` would otherwise have its tail blanked as a
+ * comment and stop being a token at all; masked to digits first, it is safe from the comment scan.
+ * The reverse hazard does not exist — a token inside a comment masks to digits and is then blanked
+ * with the rest of the line, which is the same answer either way.
+ *
+ * Both are length-preserving, so composing them is still length-preserving.
+ */
+export function maskAuthored(text: string): string {
+  return maskComments(maskTemplates(text));
+}
+
 function maskedInput(input: Input): Input {
-  const masked = maskTemplates(input.read(0, input.length));
+  const masked = maskAuthored(input.read(0, input.length));
 
   return {
     length: input.length,
@@ -141,6 +162,46 @@ const tokenPainter = ViewPlugin.fromClass(
 
     update(update: ViewUpdate) {
       this.decorations = TOKEN_MATCHER.updateDeco(update, this.decorations);
+    }
+  },
+  { decorations: (plugin) => plugin.decorations },
+);
+
+/**
+ * The same colour and slant `highlight.ts` gives `t.comment`, reached the long way round.
+ *
+ * A comment cannot be painted off the tree the way every other token is, because the mask has
+ * already turned it into whitespace by the time the grammar runs — which is the point, and is what
+ * stops it becoming a run of error nodes. So it is painted from the scan instead.
+ */
+const COMMENT_MARK = Decoration.mark({
+  attributes: { style: `color: var(--syntax-comment); font-style: italic` },
+});
+
+/**
+ * Painted from a whole-document scan rather than a viewport one, because `//` is only a comment
+ * when it is not inside a string, and a viewport can begin in the middle of one. The scan is the
+ * same cost as the mask the parser already runs, over a document `MASK_LIMIT_CHARS` bounds.
+ */
+function commentDecorations(view: EditorView): DecorationSet {
+  const doc = view.state.doc;
+  if (doc.length > MASK_LIMIT_CHARS) return Decoration.none;
+  const ranges = commentRanges(doc.toString());
+  return Decoration.set(ranges.map((range) => COMMENT_MARK.range(range.from, range.to)));
+}
+
+const commentPainter = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+
+    constructor(view: EditorView) {
+      this.decorations = commentDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+      // Only a text change can move a comment; scrolling cannot, because the scan is not viewport
+      // bound. Recomputing on every update would rescan the document on every cursor movement.
+      if (update.docChanged) this.decorations = commentDecorations(update.view);
     }
   },
   { decorations: (plugin) => plugin.decorations },
@@ -281,5 +342,5 @@ export function jsonTemplate(unresolved?: StateField<UnresolvedNames>): Language
     unresolved === undefined
       ? NO_EXTRA_EXTENSIONS
       : [unresolved, linter((view) => unresolvedDiagnostics(view.state.doc.toString(), view.state.field(unresolved)))];
-  return new LanguageSupport(templateJsonLanguage, [Prec.highest(tokenPainter), ...lint]);
+  return new LanguageSupport(templateJsonLanguage, [Prec.highest(tokenPainter), Prec.highest(commentPainter), ...lint]);
 }

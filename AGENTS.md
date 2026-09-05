@@ -43,6 +43,8 @@ packages/core/                   @preman/core - the engine, private, bundled fro
                                  include-dir climb at whichever root answered
   src/vars/                      scoped store, {{token}} interpolation, dynamic vars
   src/scripts/                   node:vm sandbox (pm shim), chai + gRPC assertions
+  src/json/comments.ts           the comment mask every body preman parses runs through; 047 says
+                                 which bodies those are and 023 why the mask preserves length
   src/grpc/                      schema resolution, target/TLS, unary invoke
   src/http/                      target/URL, bodies, cookies, redirects, auth, compression, invoke
   src/tls/certs.ts               --ssl-* layering, secure context, gRPC credentials, handshake hints

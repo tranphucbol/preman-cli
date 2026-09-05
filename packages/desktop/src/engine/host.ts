@@ -12,7 +12,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { BodyStore } from "@preman/core/api/bodies.js";
 import { buildCatalog, refreshCatalog, type Catalog, type CatalogNode } from "@preman/core/api/catalog.js";
-import type { RunEvent, RunEventSink } from "@preman/core/api/events.js";
+import type { HeaderPairs, RunEvent, RunEventSink } from "@preman/core/api/events.js";
 import { readGitStatus, type GitStatus } from "@preman/core/api/git.js";
 import { grepWorkspace, type GrepResult } from "@preman/core/api/grep.js";
 import type { ProtoCache } from "@preman/core/api/protos.js";
@@ -33,12 +33,15 @@ import {
 import { writeEnvironmentValue } from "@preman/core/api/environments.js";
 import type { TextPreview } from "@preman/core/api/preview.js";
 import type { RunSelectionArgs, RunSelectionResult } from "@preman/core/api/run.js";
+import { failOnAmbiguity, type SelectionPort } from "@preman/core/api/select.js";
 import { readVariables, type VariableView } from "@preman/core/api/variables.js";
 import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 import { toJunitReport, type RunReport } from "@preman/core/report/junit.js";
 import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
 import { canonicalSharedPath, repoRootFor, sharedProtoRoot } from "@preman/core/workspace/links.js";
+import type { RunTarget } from "@preman/core/workspace/collections.js";
+import type { EnvironmentEntry } from "@preman/core/workspace/environments.js";
 import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
 import { toEngineError } from "@preman/desktop/engine/errors.js";
 import {
@@ -206,8 +209,15 @@ function draftDocument(draft: RequestDraft | undefined): unknown {
 
 /**
  * The `RunTarget` selector for a node, rebuilt from the catalog rather than looked up
- * in a second full read. `RequestEntry.path` and `RequestGroup.path` are the chain of
- * declared names, which is exactly what walking `parentId` produces.
+ * in a second full read. `RequestGroup.path` is the chain of declared names, which is
+ * exactly what walking `parentId` produces.
+ *
+ * A request is named by its file instead. The window did not ask for "whatever is called
+ * Freeze under gRpc - ZAS", it asked for a row the reader clicked, and that row is a file;
+ * rebuilding a name path out of it throws away the one thing about it that is unique, so a
+ * workspace holding two requests with the same declared name — which Postman allows and
+ * preman's own import writes — would answer a click with "ambiguous" and list the row twice.
+ * `resolveSelector`'s file tier exists so this can say what it means.
  */
 function selectorFor(catalog: Catalog, nodeId: string): string {
   const byId = new Map(catalog.nodes.map((node) => [node.id, node] as const));
@@ -215,6 +225,7 @@ function selectorFor(catalog: Catalog, nodeId: string): string {
   if (start === undefined) {
     throw usage(`"${nodeId}" is not in the catalog`, ["reload the workspace and try again"]);
   }
+  if (start.kind === "request") return start.file;
 
   const segments: string[] = [];
   let cursor: CatalogNode | undefined = start;
@@ -224,6 +235,75 @@ function selectorFor(catalog: Catalog, nodeId: string): string {
   }
   return segments.join(SELECTOR_SEPARATOR);
 }
+
+/** A synthesised run holds the one request that was asked for and never started. */
+const UNSTARTED_TOTAL = 1;
+const FIRST_ITERATION = 0;
+const NO_TRAILERS: HeaderPairs = [];
+
+/**
+ * Report a run that failed before core emitted anything.
+ *
+ * `runSelection` resolves the selector and the environment before it emits `run-start`, so a
+ * workspace that cannot answer "which one did you mean" produces a run with no events at all.
+ * `run-done` still carries the error, but a terminal signal for a run nothing has heard of is
+ * not a report: the runner has no row to redden, and the response pane goes on showing the last
+ * response this node had, so the send looks like it never happened. That silence is the bug this
+ * exists to close.
+ *
+ * Synthesised in the host rather than in core because core has no node to attribute it to — the
+ * failure *is* that it could not pick one. The host does: it is the argument it was called with.
+ * Attributing it here is what lets every consumer downstream stay unchanged, and the pane paint
+ * it the way it paints any other failure that never reached the wire — ADR 019's `build` stage,
+ * which says exactly this: nothing was sent, so no status is implied.
+ *
+ * A group gets the run boundary and no request row. Inventing a request named after a folder
+ * would be a lie about what was going to run, and the runner already paints a run's own error.
+ */
+function reportUnstarted(sink: RunEventSink, node: CatalogNode | undefined, nodeId: string, cause: unknown): void {
+  const error = toEngineError(cause);
+  sink.emit({ type: "run-start", runId: sink.runId, total: UNSTARTED_TOTAL });
+  if (node?.kind === "request") {
+    sink.emit({ type: "request-start", runId: sink.runId, nodeId, name: node.name, iteration: FIRST_ITERATION });
+    sink.emit({
+      type: "response-failure",
+      runId: sink.runId,
+      nodeId,
+      stage: "build",
+      message: error.message,
+      details: [...error.details],
+      trailers: NO_TRAILERS,
+    });
+    sink.emit({ type: "request-end", runId: sink.runId, nodeId, exitCode: error.exitCode });
+  }
+  sink.emit({ type: "run-end", runId: sink.runId, exitCode: error.exitCode });
+}
+
+/**
+ * The window's answer to a question core will not guess at.
+ *
+ * `failOnAmbiguity` is core's default and says "pass -e <NAME>", which is true of the CLI and
+ * meaningless in a window that has no flags — the reader is looking at the toolbar the answer is
+ * in. A `SelectionPort` is the seam that exists for exactly this, so the wording about how to
+ * disambiguate belongs to whoever is in front rather than to the engine.
+ *
+ * Requests are handed back to core untouched: `selectorFor` names a request by its file, so a
+ * candidate list here would mean the catalog and the workspace disagree, and core's listing of
+ * them is the better report of that.
+ */
+const windowSelection: SelectionPort = {
+  pickRequest(candidates: RunTarget[], selector: string | undefined): Promise<RunTarget> {
+    return failOnAmbiguity.pickRequest(candidates, selector);
+  },
+
+  pickEnvironment(candidates: EnvironmentEntry[]): Promise<EnvironmentEntry> {
+    return Promise.reject(
+      new PremanError("no environment is selected, and this workspace has more than one", {
+        details: ["choose one from the environment menu in the toolbar:", ...candidates.map((it) => `  ${it.name}`)],
+      }),
+    );
+  },
+};
 
 /** What ran, as one path, so an exported file is named after it rather than after the run id. */
 function reportSubject(report: RunReport): string {
@@ -531,10 +611,17 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     const state: RunState = { cancelled: false };
     runs.set(runId, state);
 
+    /**
+     * Whether core got as far as opening a run, which is what decides who has to report a
+     * failure. Past this point every failure already has a row of its own to land on; before
+     * it, nothing downstream has heard of this run at all.
+     */
+    let started = false;
     const sink: RunEventSink = {
       runId,
       emit: (event: RunEvent) => {
         if (state.cancelled) return;
+        if (event.type === "run-start") started = true;
         post({ push: "run-event", event });
       },
     };
@@ -550,6 +637,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
           dir: root,
           selector: selectorFor(catalogNow, args.nodeId),
           env: args.environment,
+          select: windowSelection,
           url: undefined,
           tls: undefined,
           tlsCerts: {},
@@ -578,6 +666,15 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         }
       } catch (cause) {
         if (!state.cancelled) {
+          // Best-effort lookup: `ensureCatalog` is one of the things that can have thrown, and a
+          // failure the reader cannot see is worse than one labelled with a stale name.
+          if (!started)
+            reportUnstarted(
+              sink,
+              catalog?.nodes.find((node) => node.id === args.nodeId),
+              args.nodeId,
+              cause,
+            );
           post({ push: "run-done", runId, warnings: [], cancelled: false, error: toEngineError(cause) });
         }
       } finally {
@@ -715,6 +812,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       dir: root,
       selector: selectorFor(catalogNow, request.nodeId),
       env: request.environment,
+      select: windowSelection,
       draft: draftDocument(request.draft),
       url: undefined,
       tls: undefined,

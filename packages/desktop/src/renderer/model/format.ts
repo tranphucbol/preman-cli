@@ -19,14 +19,19 @@
  * `{{…}}` is matched before `{` is read as a brace, because a bare token is brace-balanced and a
  * scanner that met `{` first would indent inside a variable name.
  *
- * Well-formedness is answered by `JSON.parse(maskTemplates(text))`, which is already-tested code,
+ * A comment (decision 047) is a fourth thing copied through untouched, and the only one that
+ * constrains the layout rather than being laid out: `//` runs to the end of its line, so whatever
+ * follows a comment must start on a new one or the comment would eat it.
+ *
+ * Well-formedness is answered by `JSON.parse(maskAuthored(text))`, which is already-tested code,
  * and its answer never touches the output. That leaves the scanner free to assume balance. The
  * masker's two documented holes — a bare token as a key, two bare tokens with nothing between them
  * — are inherited here as a refusal, which is the direction that cannot mangle anything.
  */
 
 import { VARIABLE_TOKEN_SOURCE } from "@preman/desktop/engine/protocol.js";
-import { MASK_LIMIT_CHARS, maskTemplates } from "@preman/desktop/renderer/ui/template.js";
+import { commentRanges } from "@preman/desktop/renderer/model/comments.js";
+import { MASK_LIMIT_CHARS, maskAuthored } from "@preman/desktop/renderer/ui/template.js";
 
 export type FormatOutcome =
   { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string };
@@ -73,8 +78,13 @@ export function formatJsonTemplate(text: string): FormatOutcome {
   if (text.trim().length === NOTHING) return { ok: true, text };
   if (text.length > MASK_LIMIT_CHARS) return { ok: false, reason: TOO_LONG_REASON };
 
+  // A body that is nothing but comments has no structure to re-derive, and refusing it would say
+  // something untrue about a draft that is going to send as an empty message quite happily.
+  const masked = maskAuthored(text);
+  if (masked.trim().length === NOTHING) return { ok: true, text };
+
   try {
-    JSON.parse(maskTemplates(text));
+    JSON.parse(masked);
   } catch {
     return { ok: false, reason: UNPARSEABLE_REASON };
   }
@@ -84,12 +94,29 @@ export function formatJsonTemplate(text: string): FormatOutcome {
 
 function reindent(text: string): FormatOutcome {
   const token = new RegExp(VARIABLE_TOKEN_SOURCE, AT_THIS_POSITION);
+  // One definition of where a comment is, shared with the mask and the painter, rather than a
+  // second one written inline here that could drift from it.
+  const comments = new Map(commentRanges(text).map((range) => [range.from, range.to]));
   let out = EMPTY;
   let depth = NOTHING;
   let at = START;
 
   while (at < text.length) {
     const char = text.charAt(at);
+
+    const commentEnd = comments.get(at);
+    if (commentEnd !== undefined) {
+      // A comment is copied exactly and gets a line to itself, which is the only layout this can
+      // give it: `//` runs to the end of its line, so anything sharing that line after it would be
+      // swallowed, and anything before it was written on a line the re-indenter has already
+      // rebuilt. Opening the line as well as closing it is what covers a comment following a
+      // value or a closer, where nothing else has opened one.
+      out = out.trimEnd();
+      if (out.length > NOTHING) out += NEWLINE + INDENT.repeat(depth);
+      out += text.slice(at, commentEnd).trimEnd() + NEWLINE + INDENT.repeat(depth);
+      at = commentEnd;
+      continue;
+    }
 
     if (char === OPEN_BRACE && text.charAt(at + NEXT) === OPEN_BRACE) {
       token.lastIndex = at;
@@ -131,7 +158,9 @@ function reindent(text: string): FormatOutcome {
 
     if (CLOSERS.has(char)) {
       depth -= ONE_LEVEL;
-      out += NEWLINE + INDENT.repeat(depth) + char;
+      // `trimEnd` because a comment on the line above has already opened this one at the inner
+      // depth, and the closer belongs at the outer one.
+      out = out.trimEnd() + NEWLINE + INDENT.repeat(depth) + char;
       at += NEXT;
       continue;
     }
@@ -153,7 +182,9 @@ function reindent(text: string): FormatOutcome {
     at += NEXT;
   }
 
-  return { ok: true, text: out };
+  // A comment after the last closer leaves the line it opened behind it. Nothing else can end the
+  // output in whitespace, so this is a no-op for every body that has no comment in it.
+  return { ok: true, text: out.trimEnd() };
 }
 
 /** The index just past the closing quote of the string opening at `quoteAt`. */

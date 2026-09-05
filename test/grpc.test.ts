@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PremanError } from "@preman/core/errors.js";
+import { parseMessageBody } from "@preman/core/grpc/message.js";
 import { listMethods, resolveMethod, splitMethodPath } from "@preman/core/grpc/schema.js";
 import { parseAuthority, readLocalGrpcPort, resolveTarget, shouldUseTls } from "@preman/core/grpc/target.js";
 import { DEFAULT_SHARED_PROTO_ROOT, SHARED_PROTO_ROOT_ENV } from "@preman/core/workspace/links.js";
@@ -315,6 +316,81 @@ describe("resolveTarget", () => {
       const cliError = error as PremanError;
       expect(cliError.message).toContain("has no port");
       expect(cliError.details.join("\n")).toContain("--url");
+    }
+  });
+});
+
+describe("parseMessageBody", () => {
+  const LABEL = "request body is not valid JSON";
+
+  function detailsOf(raw: string): string[] {
+    try {
+      parseMessageBody(raw, LABEL);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      return (error as PremanError).details;
+    }
+  }
+
+  it("givenValidJson_whenParsed_thenTheValueComesBack", () => {
+    expect(parseMessageBody('{"amount":"1"}', LABEL)).toEqual({ amount: "1" });
+  });
+
+  it("givenBlankBody_whenParsed_thenAnEmptyMessage", () => {
+    // A unary method with no required field is legitimately called with `{}`.
+    expect(parseMessageBody("   \n  ", LABEL)).toEqual({});
+  });
+
+  it("givenCommentedBody_whenParsed_thenTheCommentsAreDroppedAndTheRestIsSent", () => {
+    // Exactly the shape a commented-out field leaves behind in a real workspace.
+    const raw = ["{", '  "id": "7",', '  // "request_time": "",', '  /* "timestamp": "72", */', '  "n": 1', "}"].join(
+      "\n",
+    );
+
+    expect(parseMessageBody(raw, LABEL)).toEqual({ id: "7", n: 1 });
+  });
+
+  it("givenATrailingLineComment_whenParsed_thenItIsDropped", () => {
+    expect(parseMessageBody('{"id": "7"} // send it', LABEL)).toEqual({ id: "7" });
+  });
+
+  it("givenACommentOnlyBody_whenParsed_thenAnEmptyMessage", () => {
+    // Everything the author wrote is commented out, which is an empty message and not a parse error.
+    expect(parseMessageBody("// nothing yet\n", LABEL)).toEqual({});
+  });
+
+  it("givenSlashesInsideAString_whenParsed_thenTheyAreData", () => {
+    expect(parseMessageBody('{"url": "https://host//path", "note": "a /* b"}', LABEL)).toEqual({
+      url: "https://host//path",
+      note: "a /* b",
+    });
+  });
+
+  it("givenAnEscapedQuoteBeforeAComment_whenParsed_thenTheStringIsStillClosed", () => {
+    // A string ending in `\"` must not read as still open, or the comment below is treated as data.
+    expect(parseMessageBody('{"q": "say \\"hi\\"",\n  // dropped\n  "n": 1}', LABEL)).toEqual({ q: 'say "hi"', n: 1 });
+  });
+
+  it("givenCommentsAboveTheFault_whenParsed_thenTheReportedLineIsStillTheAuthorsLine", () => {
+    // The mask is length-preserving, so the parser's position still indexes the author's text:
+    // two comment lines above the fault must not shift the line it is reported on.
+    const raw = ["{", "  // one", "  // two", '  "a": 1,', "}"].join("\n");
+
+    expect(detailsOf(raw)).toEqual(["  line 5: }"]);
+  });
+
+  it("givenAnEngineThatNamedNoPosition_whenParsed_thenNoLineIsInvented", () => {
+    // Whether a position comes back is the engine's business - V8 gives one for some faults and
+    // not others, JavaScriptCore never does - so the detail is best effort and never a guess.
+    expect(detailsOf('{\n  "amount": }\n}')).toEqual([]);
+  });
+
+  it("givenInvalidJson_whenParsed_thenTheLabelPrefixesTheParserMessage", () => {
+    try {
+      parseMessageBody("{oops", LABEL);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect((error as PremanError).message.startsWith(`${LABEL}: `)).toBe(true);
     }
   });
 });

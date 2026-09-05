@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { basename, extname } from "node:path";
 import { PremanError } from "@preman/core/errors.js";
+import { maskComments, offendingLine } from "@preman/core/json/comments.js";
 import { interpolateStrict } from "@preman/core/vars/interpolate.js";
 import type { VariableStore } from "@preman/core/vars/store.js";
 import type { Property } from "@preman/core/scripts/property-list.js";
@@ -35,6 +36,8 @@ export interface RequestBody {
 }
 
 const EMPTY_BODY: RequestBody = { mode: "", raw: "", urlencoded: undefined };
+/** Variables that are nothing but comments send no `variables` key, the way commenting out the last one reads. */
+const COMMENTED_OUT = "";
 
 export interface WireBody {
   /** Bytes to write. `undefined` means no body at all. */
@@ -160,12 +163,19 @@ export function buildBody(options: BuildBodyOptions): { wire: WireBody; warnings
     let variables: unknown;
     if (graphql.variables !== undefined) {
       const source = interpolateStrict(graphql.variables, options.store, "GraphQL variables");
+      // preman parses these to build the payload, so a comment in them is not data — the same
+      // side of decision 047's line as a gRPC message, and unlike the raw body just below.
+      const masked = maskComments(source);
+      // Only a source that had something in it and masks to nothing is treated as absent. A
+      // genuinely blank one keeps its old answer, whatever that is; comments are the whole change.
+      const allComments = source.trim().length > COMMENTED_OUT.length && masked.trim().length === COMMENTED_OUT.length;
       try {
-        variables = JSON.parse(source);
+        variables = allComments ? undefined : JSON.parse(masked);
       } catch (cause) {
         const label = options.requestLabel === undefined ? "request" : `request ${options.requestLabel}`;
+        const message = cause instanceof Error ? cause.message : String(cause);
         throw new PremanError(`GraphQL variables in ${label} are not valid JSON`, {
-          details: [cause instanceof Error ? cause.message : String(cause)],
+          details: [message, ...offendingLine(source, message)],
         });
       }
     }

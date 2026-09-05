@@ -12,9 +12,9 @@
  * around.
  */
 import { applyGrpcAuth } from "./auth.js";
+import { parseMessageBody } from "./message.js";
 import { resolveMethod, type ResolvedMethod } from "./schema.js";
 import { resolveTarget, type GrpcTarget } from "./target.js";
-import { PremanError } from "@preman/core/errors.js";
 import { normalizeProperties, type KeyValue } from "@preman/core/http/headers.js";
 import { PropertyList } from "@preman/core/scripts/property-list.js";
 import type { VariableStore } from "@preman/core/vars/store.js";
@@ -26,7 +26,6 @@ import type { GrpcRequest } from "@preman/core/workspace/schemas.js";
 /** Metadata is a `PropertyList` only so `applyGrpcAuth` can write into it; it is never scripted. */
 const METADATA_LIST_OPTIONS = { caseInsensitive: true, label: "request metadata" } as const;
 const METADATA_LABEL = "metadata";
-const EMPTY_MESSAGE = {};
 /**
  * The url and the method path are read before anything could rescue them - one has to name a
  * host, the other a method in a schema - so a literal token in either is an error here.
@@ -86,14 +85,7 @@ export function resolveGrpcCall(options: ResolveGrpcCallOptions): ResolvedGrpcCa
   warnings.push(...authWarnings);
 
   const raw = new Template(request.message?.content ?? "", store, "message body").resolved;
-  let message: unknown = EMPTY_MESSAGE;
-  if (raw.trim().length > 0) {
-    try {
-      message = JSON.parse(raw);
-    } catch (cause) {
-      throw new PremanError(`request body is not valid JSON: ${(cause as Error).message}`);
-    }
-  }
+  const message = parseMessageBody(raw, "request body is not valid JSON");
 
   const method = resolveMethod({
     requestFilePath: entry.filePath,

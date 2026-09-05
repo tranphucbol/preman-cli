@@ -33,6 +33,7 @@ function chain(ancestors: GroupDefinition[], requestScripts: RequestScript[] | u
 function entryWith(ancestors: GroupDefinition[]): RequestEntry {
   return {
     filePath: "/tmp/Some.request.yaml",
+    file: "Some.request.yaml",
     name: "Some",
     kind: "grpc-request",
     order: undefined,

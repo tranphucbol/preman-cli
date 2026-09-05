@@ -174,6 +174,46 @@ describe("buildBody", () => {
     });
   });
 
+  /**
+   * preman parses these to build the payload, so a comment in them is not data — decision 047.
+   * The raw body two tests down is the other side of that line and keeps its comments.
+   */
+  it("givenGraphqlVariablesWithComments_whenBuild_thenTheCommentsAreDropped", () => {
+    const result = buildBody({
+      body: {
+        type: "graphql",
+        graphql: { query: "query Q", variables: '{\n  "id": 7,\n  // "draft": true,\n  "n": "//x"\n}' },
+      },
+      store: store(),
+      files: files(),
+    });
+    expect(result.wire.content).toBe('{"query":"query Q","variables":{"id":7,"n":"//x"}}');
+  });
+
+  it("givenGraphqlVariablesThatAreAllComments_whenBuild_thenNoVariablesAreSent", () => {
+    const result = buildBody({
+      body: { type: "graphql", graphql: { query: "query Q", variables: "// none for now\n" } },
+      store: store(),
+      files: files(),
+    });
+    expect(result.wire.content).toBe('{"query":"query Q"}');
+  });
+
+  it("givenGraphqlVariablesThatFailForAnotherReason_whenBuild_thenTheAuthorsLineIsNamed", () => {
+    // The comment above the fault must not shift the line it is reported on.
+    try {
+      buildBody({
+        body: { type: "graphql", graphql: { query: "query Q", variables: '{\n  // one\n  "a": 1,\n}' } },
+        store: store(),
+        files: files(),
+        requestLabel: "Admin Query",
+      });
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect((error as PremanError).details).toContain("  line 4: }");
+    }
+  });
+
   it("givenGraphqlBodyWithInvalidVariables_whenBuild_thenThrowsPremanError", () => {
     expect(() =>
       buildBody({

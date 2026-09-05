@@ -1,5 +1,5 @@
 import { PremanError } from "@preman/core/errors.js";
-import { targetLabel, type RunTarget } from "@preman/core/workspace/collections.js";
+import { targetLabels, type RunTarget } from "@preman/core/workspace/collections.js";
 import type { EnvironmentEntry } from "@preman/core/workspace/environments.js";
 
 /**
@@ -21,7 +21,9 @@ export const failOnAmbiguity: SelectionPort = {
     const heading = selector === undefined ? "several requests exist; name one" : `"${selector}" is ambiguous`;
     return Promise.reject(
       new PremanError(heading, {
-        details: ["candidates:", ...candidates.map((target) => `  ${targetLabel(target)}`)],
+        // Labelled as a set, not one by one: two candidates that read the same tell the reader
+        // nothing about which is which and leave them with nothing to type.
+        details: ["candidates:", ...targetLabels(candidates).map((label) => `  ${label}`)],
       }),
     );
   },

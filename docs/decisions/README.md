@@ -54,6 +54,8 @@ The CLI's own design predates the practice.
 | [043](043-importing-a-pasted-command.md)                            | Importing a pasted command, behind a fence                             |
 | [044](044-a-command-is-built-from-the-request.md)                   | A command is built from the request, not from the send                 |
 | [045](045-preman-ships-the-google-common-protos.md)                 | preman ships the google common protos                                  |
+| [046](046-a-request-is-named-by-its-file.md)                        | A request is named by its file, and a run that never opened reports    |
+| [047](047-a-parsed-body-may-carry-comments.md)                      | A body preman parses may carry comments                                |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -254,5 +256,41 @@ of them, `google/api/service.proto`, does not load anywhere, for a reason that r
 directory deleted; and the root is appended last so a repository's own copy still wins, which means
 two workspaces on one machine can resolve the same import to different files and neither will
 mention it.
+
+046 is what a workspace with two requests named `Freeze` in one folder proved: the rule that
+ambiguity is an error and lists its candidates degenerates when the candidates render as the same
+string, and there is no third option — every selector tier matched display names, so neither
+request could be run by any string at all. The fix is that the unique thing was always there and
+unused. A file is unique, stable, and openable, so `RequestEntry` carries it, a selector tier
+matches it, and only the rows that collide are labelled with it; the alternatives were an ordinal
+in the path, which changes when a sibling is added, and rejecting the duplicate at load, which
+would make a workspace preman's own import wrote unloadable. The window had it worst and knew it
+best: `nodeId` is a file and was being converted back into a name before being handed to core.
+The second half is the one to reopen if it ages badly — the engine host now emits `RunEvent`s core
+did not, for a run core declined to start, because the host is the only layer holding both the
+node the window asked for and the throw. It reuses 019's `build` stage rather than adding a
+`selection` one, on the grounds that the reader's question is still "did this reach the wire".
+What it buys is the literal complaint that opened it: a request that failed before the run began
+now paints a failure instead of leaving the previous response on screen with nothing said. What it
+costs is that `preman list` still prints both rows identically, so the duplicate is only visible
+once you have already tripped over it.
+
+047 is the same workspace's second complaint and the more embarrassing one, because the first
+answer to it was written, tested and then reversed. Two commented-out fields made a gRPC body
+unparseable, and the strict reading — refuse it, list the offending lines — was defensible right up
+until you notice that Postman's body editor accepts comments and drops them, so the file was
+correct for the tool that wrote it. A comment is not the ambiguous half of a document; it is the
+half everything in this space already agrees is not data, so there was no guess to protect the
+author from. The removal reuses 023's length-preserving mask, which buys the thing deletion would
+have put at risk: when a body fails to parse for some other reason, the engine's position still
+points at the author's line. Its first draft said "the gRPC body alone" and was wrong within a day,
+which is the more useful half of the record: the rule is what preman parses, so GraphQL variables
+were always on the same side of it and a raw HTTP body — bytes the far end defines and preman only
+interpolates — was always on the other. The editor had to follow the engine or call a body broken
+that was about to be sent, and the sharp end of that was not colour but Beautify, which refused a
+valid body and blamed two token mistakes that were not in it. So the scanner is written twice, once
+each side of the renderer fence, which is the right duplication: it is a definition of JSON's
+syntax and not any behaviour of preman's. What it costs is that preman now accepts a superset of
+JSON, so a body that round-trips here is not proof that the file is JSON.
 
 `TEMPLATE.md` is the shape of a new one.

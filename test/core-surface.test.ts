@@ -59,6 +59,7 @@ const DECLARED_SURFACE = [
   "selectEnvironment",
   "sharedProtoRoot",
   "targetLabel",
+  "targetLabels",
   "toGroupJsonReport",
   "toJsonReport",
   "toJunitReport",

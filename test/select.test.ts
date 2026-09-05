@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runSelection, type RunSelectionArgs, type RunSelectionResult } from "@preman/core/api/run.js";
@@ -69,6 +69,11 @@ function keepOnlyRequest(root: string, keep: string): void {
   rmSync(collectionPath(root, "payment", "nested"), { recursive: true, force: true });
 }
 
+/** Where a second request declaring `name: Echo` goes, named the way `resolveCollision` names it. */
+function duplicateEcho(root: string): string {
+  return collectionPath(root, "payment", "Echo (2).request.yaml");
+}
+
 describe("request selection", () => {
   it("givenNoRequests_whenSelecting_thenErrorNamesTheEmptyWorkspace", async () => {
     const ws = cloneFixtureWorkspace();
@@ -100,6 +105,44 @@ describe("request selection", () => {
     expect(error).toBeInstanceOf(PremanError);
     expect((error as PremanError).message).toBe('"cho" is ambiguous');
     expect((error as PremanError).details).toEqual(["candidates:", "  payment/Echo", "  payment/nested/Deep Echo"]);
+  });
+
+  /**
+   * The case an error built from `targetLabel` alone could not describe: two siblings that
+   * declare the same `name` share a path, so both rows read as the selector the reader just
+   * typed. Preman's own import writes this - `resolveCollision` keeps the name and numbers the
+   * file - so it is not a workspace anyone had to hand-corrupt to reach.
+   */
+  it("givenSiblingsSharingAName_whenAmbiguous_thenEachCandidateNamesItsFile", async () => {
+    const ws = cloneFixtureWorkspace();
+    try {
+      copyFileSync(collectionPath(ws.root, "payment", "Echo.request.yaml"), duplicateEcho(ws.root));
+      const error = await run({ dir: ws.root, selector: "Echo" }).catch((cause: unknown) => cause as PremanError);
+
+      expect(error).toBeInstanceOf(PremanError);
+      expect((error as PremanError).message).toBe('"Echo" is ambiguous');
+      const [heading, ...rows] = (error as PremanError).details;
+      expect(heading).toBe("candidates:");
+      expect([...rows].sort()).toEqual([
+        "  payment/Echo  postman/collections/payment/Echo (2).request.yaml",
+        "  payment/Echo  postman/collections/payment/Echo.request.yaml",
+      ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it("givenSiblingsSharingAName_whenSelectedByFile_thenTheNamedOneRuns", async () => {
+    const ws = cloneFixtureWorkspace();
+    try {
+      copyFileSync(collectionPath(ws.root, "payment", "Echo.request.yaml"), duplicateEcho(ws.root));
+      // Every row the ambiguity error printed is itself a selector; that is what makes it usable.
+      const result = await run({ dir: ws.root, selector: "postman/collections/payment/Echo (2).request.yaml" });
+
+      expect(result.outcome?.entry.file).toBe("postman/collections/payment/Echo (2).request.yaml");
+    } finally {
+      ws.cleanup();
+    }
   });
 
   it("givenAmbiguousSelector_whenPortSupplied_thenPortChoiceIsUsed", async () => {

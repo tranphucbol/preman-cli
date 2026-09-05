@@ -5,6 +5,7 @@ import { PremanError } from "@preman/core/errors.js";
 import { readGroupDefinition } from "./definitions.js";
 import type { GroupDefinition } from "./definitions.js";
 import type { Workspace } from "./discover.js";
+import { nodeIdFor } from "./paths.js";
 
 const REQUEST_SUFFIX = ".request.yaml";
 const RESOURCES_DIR = ".resources";
@@ -13,6 +14,18 @@ const COLLECTIONS_DIR = "collections";
 export interface RequestEntry {
   /** Absolute path of the `*.request.yaml` file. */
   filePath: string;
+  /**
+   * Posix path relative to the workspace root, e.g.
+   * `postman/collections/payment/Echo.request.yaml`. The same string as `CatalogNode.id`.
+   *
+   * The only field here that is guaranteed unique, and that is why it exists. `name` is
+   * whatever the YAML declares and `path` is the chain of those declared names, so two
+   * sibling requests can share both — preman's own import writes `Echo (2).request.yaml`
+   * while keeping `name: Echo`, exactly as Postman allows. When that happens `path` can no
+   * longer tell the two apart, and a selector, a picker row and an ambiguity error all need
+   * something that can.
+   */
+  file: string;
   /** `name` from the YAML, falling back to the filename. */
   name: string;
   /** e.g. `grpc-request`, `http-request`. */
@@ -105,7 +118,7 @@ export function compareOrderThenName(a: Ordered, b: Ordered): number {
   return a.name.localeCompare(b.name);
 }
 
-function walk(dir: string, ancestors: GroupDefinition[], out: RequestEntry[]): void {
+function walk(root: string, dir: string, ancestors: GroupDefinition[], out: RequestEntry[]): void {
   const parent = ancestors[ancestors.length - 1]!;
   const siblings: Sibling[] = [];
 
@@ -120,7 +133,7 @@ function walk(dir: string, ancestors: GroupDefinition[], out: RequestEntry[]): v
       siblings.push({
         order: definition.order,
         name: definition.name,
-        emit: (target) => walk(full, [...ancestors, definition], target),
+        emit: (target) => walk(root, full, [...ancestors, definition], target),
       });
       continue;
     }
@@ -130,6 +143,7 @@ function walk(dir: string, ancestors: GroupDefinition[], out: RequestEntry[]): v
     const [collection, ...folders] = ancestors;
     const request: RequestEntry = {
       filePath: full,
+      file: nodeIdFor(root, full),
       name: header.name,
       kind: header.kind,
       order: header.order,
@@ -165,7 +179,7 @@ export function listRequests(ws: Workspace): RequestEntry[] {
     collections.push({
       order: definition.order,
       name: definition.name,
-      emit: (target) => walk(dir, [definition], target),
+      emit: (target) => walk(ws.root, dir, [definition], target),
     });
   }
 
@@ -266,20 +280,70 @@ export function targetLabel(target: RunTarget): string {
   return `${group.path} (${group.kind}, ${count} ${count === 1 ? "request" : "requests"})`;
 }
 
+const SOLE_OCCURRENCE = 1;
+const NO_OCCURRENCE = 0;
+
+/**
+ * Labels for a set of candidates, every one of them distinct.
+ *
+ * {@link targetLabel} cannot do this on its own, and not because it is missing information:
+ * whether two rows read the same is a property of the pair, and it is handed one target. Two
+ * sibling requests that declare the same `name` have the same `path`, so an ambiguity error
+ * built from `targetLabel` alone lists the selector back to the reader twice and gives them
+ * nothing to type — the worst kind of error, one that is right and useless.
+ *
+ * Only the colliding rows carry their file, so the common case stays as short as it was. The
+ * file is printed workspace-relative because that is both the shortest unambiguous name for
+ * it and, since {@link resolveSelector}'s first tier, a selector that will run it.
+ */
+export function targetLabels(targets: readonly RunTarget[]): string[] {
+  const labels = targets.map(targetLabel);
+  const counts = new Map<string, number>();
+  for (const label of labels) counts.set(label, (counts.get(label) ?? NO_OCCURRENCE) + SOLE_OCCURRENCE);
+
+  return labels.map((label, index) => {
+    if (counts.get(label) === SOLE_OCCURRENCE) return label;
+    const target = targets[index]!;
+    // A group's path is its identity — two groups cannot collide without being one group,
+    // because `listGroups` keys them by path — so only a request has a file to fall back on.
+    return target.kind === "request" ? `${label}  ${target.entry.file}` : label;
+  });
+}
+
 export interface SelectorResolution {
   target: RunTarget | undefined;
   /** Populated when the selector matched more than one thing. */
   candidates: RunTarget[];
 }
 
+const WINDOWS_SEPARATOR = /\\/g;
+const POSIX_SEPARATOR = "/";
+
+/**
+ * Whether a selector names this request's file.
+ *
+ * Matched against the absolute path so that the absolute path, the workspace-relative one and
+ * any tail of either all resolve — a reader who copied a row out of an ambiguity error, one who
+ * tab-completed a path in their shell, and the desktop, which knows the exact file and should
+ * never have to describe it by name.
+ */
+function namesFile(entry: RequestEntry, needle: string): boolean {
+  const file = entry.filePath.replace(WINDOWS_SEPARATOR, POSIX_SEPARATOR).toLowerCase();
+  return file === needle || file.endsWith(`${POSIX_SEPARATOR}${needle}`);
+}
+
 /**
  * Resolve a selector to a single request or to a collection/folder to run whole.
  *
- * Tiers, stopping at the first that produces any match: exact request path,
+ * Tiers, stopping at the first that produces any match: request file, exact request path,
  * exact group path, exact request name, exact group name, request path suffix,
  * group path suffix, then request substring. Groups deliberately stop before the
  * substring tier — `preman run pay` should still mean the one request whose path
  * contains `pay`, not silently fan out to a whole collection.
+ *
+ * The file tier is first because it is the only selector that cannot be ambiguous, and it is
+ * guarded by the suffix because a display name never ends in `.request.yaml`: a workspace with
+ * no duplicate names never reaches it, and one with duplicates has no other way to say which.
  */
 export function resolveSelector(requests: RequestEntry[], selector: string): SelectorResolution {
   const needle = selector.trim().toLowerCase();
@@ -288,8 +352,10 @@ export function resolveSelector(requests: RequestEntry[], selector: string): Sel
   const groups = listGroups(requests);
   const asRequest = (entry: RequestEntry): RunTarget => ({ kind: "request", entry });
   const asGroup = (group: RequestGroup): RunTarget => ({ kind: "group", group });
+  const file = needle.replace(WINDOWS_SEPARATOR, POSIX_SEPARATOR);
 
   const tiers: Array<() => RunTarget[]> = [
+    () => (file.endsWith(REQUEST_SUFFIX) ? requests.filter((r) => namesFile(r, file)).map(asRequest) : []),
     () => requests.filter((r) => r.path.toLowerCase() === needle).map(asRequest),
     () => groups.filter((g) => g.path.toLowerCase() === needle).map(asGroup),
     () => requests.filter((r) => r.name.toLowerCase() === needle).map(asRequest),

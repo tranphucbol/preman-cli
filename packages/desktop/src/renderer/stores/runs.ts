@@ -149,12 +149,33 @@ export interface RunsState {
   // Function properties rather than method signatures: these are read off the state object and
   // handed to event handlers, and none of them uses `this`.
   apply: (event: RunEvent) => void;
-  /** The engine's terminal signal. `run-end` cannot be relied on: a bad selector never emits one. */
+  /**
+   * The engine's terminal signal, and the only one that carries the run's own error. `run-end`
+   * is not a substitute: it is core's, so it says nothing about a run core never opened.
+   */
   finish: (runId: string, outcome: { warnings: readonly string[]; cancelled: boolean; error?: EngineError }) => void;
   focus: (runId: string, key: string) => void;
   toggleCall: (itemKey: string) => void;
   clearConsole: () => void;
   clear: () => void;
+}
+
+const NO_REQUESTS = 0;
+
+/** A run that ended without ever opening: no total, no items, and an error to carry. */
+function unstartedRun(runId: string): Run {
+  return {
+    runId,
+    total: NO_REQUESTS,
+    done: false,
+    cancelled: false,
+    exitCode: null,
+    warnings: [],
+    error: null,
+    iterations: SINGLE_ITERATION,
+    tests: NO_TESTS,
+    items: [],
+  };
 }
 
 export const useRunsStore = create<RunsState>((set) => ({
@@ -254,8 +275,12 @@ export const useRunsStore = create<RunsState>((set) => ({
   finish(runId, outcome) {
     set((state) => {
       const runs = new Map(state.runs);
-      const run = runs.get(runId);
-      if (run === undefined) return {};
+      // A run nothing has heard of, rather than one that is over: the engine synthesises a
+      // `run-start` for a failure that beats one out of core, so this is the last resort and
+      // not the common path. It materialises the run anyway, because the alternative is
+      // dropping the only account of what went wrong on the floor - which is what this store
+      // used to do, and why a request that could not be resolved reported nothing at all.
+      const run = runs.get(runId) ?? unstartedRun(runId);
       runs.set(runId, {
         ...run,
         done: true,
