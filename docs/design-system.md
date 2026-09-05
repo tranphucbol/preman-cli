@@ -311,6 +311,19 @@ and only two tones: `danger` and `warn`. `ok` and `neutral` do not warrant a bar
 one prose line each, which is what a `PremanError` carries. It exists because four panes wanted it
 and three had already written their own with three different class strings.
 
+`details` is capped at eight lines and scrolls past that, with the count said beside the message
+once there is more than the box shows. It is the box that is bounded and never the list: those lines
+come the whole way from core's `PremanError`, the CLI prints all of them, and a window that drops
+the last fourteen is worse than the terminal. `danger` carries a copy button before its action for
+the same reason — being able to paste every line is what makes capping the visible ones honest — and
+`warn` does not, because nothing it says is a bug report. The height and the count are two spellings
+of one number, so `test/renderer/banner.test.ts` holds them to agreeing.
+
+A banner takes one optional action as `children`, to the right of the copy button. `App.tsx` used to
+own a second banner for exactly that and it is gone; `RequestEditor`'s `ConflictBanner` is the one
+remaining bar of its own, because it offers two answers to a question rather than one action, and it
+spreads `BANNER_MOTION` so it at least arrives the same way.
+
 A failure that fills a pane is centred in `max-w-lg`: a 24px mark, the headline with its status tag
 beside it, one line of guidance, then the server's own words verbatim in a
 `rounded-sm border-danger/30 bg-danger/10` block, with any `PremanError` details inside that same

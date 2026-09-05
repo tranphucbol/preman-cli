@@ -34,11 +34,9 @@ import {
 import {
   AddIcon,
   BranchIcon,
-  CheckIcon,
   CollapseAllIcon,
   CollectionIcon,
   ConsoleIcon,
-  CopyIcon,
   EnvironmentIcon,
   ExpandAllIcon,
   ICON_DEFAULTS,
@@ -49,9 +47,8 @@ import {
   SearchIcon,
   SettingsIcon,
   SidebarIcon,
-  WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
-import { BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
+import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence, MotionRoot, m } from "@preman/desktop/renderer/ui/motion.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { ConsoleDrawer } from "@preman/desktop/renderer/panes/ConsoleDrawer.js";
@@ -1426,7 +1423,7 @@ function DegradedBanner(): React.JSX.Element {
   return (
     <AnimatePresence>
       {degraded === null ? null : (
-        <Banner tone="warn" message={degraded} details={[]}>
+        <Banner tone="warn" message={degraded}>
           <Button
             onClick={() => {
               setDegraded(null);
@@ -1455,91 +1452,5 @@ function FailureBanner({
         </Banner>
       )}
     </AnimatePresence>
-  );
-}
-
-/** How long the copy button shows "Copied" before it reverts to naming the action. */
-const COPY_FEEDBACK_MS = 1500;
-
-/**
- * One banner shape for every failure.
- *
- * `details` is rendered rather than summarised because it is carried the whole way from core's
- * `PremanError`, the CLI prints it, and a GUI that drops it is worse than the CLI. `danger` gets a
- * copy button beside its action for the same reason: a transport failure or a host crash carries
- * the one string worth pasting into a bug report, and `warn` (today, only "degraded") never does.
- */
-function Banner({
-  tone,
-  message,
-  details,
-  children,
-}: {
-  readonly tone: "danger" | "warn";
-  readonly message: string;
-  readonly details: readonly string[];
-  readonly children: React.ReactNode;
-}): React.JSX.Element {
-  const palette =
-    tone === "danger" ? "border-danger/30 bg-danger/10 text-danger" : "border-warn/30 bg-warn/10 text-warn";
-  return (
-    <m.div
-      role="alert"
-      {...BANNER_MOTION}
-      className={`flex shrink-0 items-start gap-2 border-b px-3 py-2 text-xs ${palette}`}
-    >
-      <span className="mt-0.5 shrink-0">
-        <WarningIcon />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="font-medium">{message}</p>
-        {details.map((detail) => (
-          <p key={detail} className="mt-0.5 leading-relaxed text-ink-dim">
-            {detail}
-          </p>
-        ))}
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {tone === "danger" && <CopyErrorButton message={message} details={details} />}
-        {children}
-      </div>
-    </m.div>
-  );
-}
-
-/**
- * Copies `message` and `details` as the reader would want to paste them: one line each, message
- * first. A timeout rather than a store flag - this is one button's own transient state, and giving
- * it to `useSessionStore` would make every banner re-render when any one of them was clicked.
- */
-function CopyErrorButton({
-  message,
-  details,
-}: {
-  readonly message: string;
-  readonly details: readonly string[];
-}): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
-  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeout.current !== null) clearTimeout(timeout.current);
-    };
-  }, []);
-
-  const onClick = useCallback(() => {
-    void navigator.clipboard.writeText([message, ...details].join("\n"));
-    setCopied(true);
-    if (timeout.current !== null) clearTimeout(timeout.current);
-    timeout.current = setTimeout(() => {
-      setCopied(false);
-    }, COPY_FEEDBACK_MS);
-  }, [message, details]);
-
-  return (
-    <IconButton label={copied ? "Copied" : "Copy error"} onClick={onClick}>
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </IconButton>
   );
 }

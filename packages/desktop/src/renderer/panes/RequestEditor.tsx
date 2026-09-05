@@ -1406,8 +1406,10 @@ function SectionLabel({ children }: { readonly children: React.ReactNode }) {
  */
 function ConflictBanner({ nodeId, orphaned }: { readonly nodeId: string; readonly orphaned: boolean }) {
   return (
-    // Its own bar rather than a `Banner`, because it carries two actions and no icon column - but
-    // it arrives the same way, or the two bars stacked here would disagree about what a notice is.
+    // Its own bar rather than a `Banner`, because it offers two answers to a question rather than
+    // the one action a `Banner` takes, and they sit centred against a single line instead of top-
+    // aligned against a stack. It arrives the same way, or the two bars stacked here would
+    // disagree about what a notice is.
     <m.div
       {...BANNER_MOTION}
       className="flex shrink-0 items-center gap-2 border-b border-warn/40 bg-warn/10 px-gutter py-1.5"
