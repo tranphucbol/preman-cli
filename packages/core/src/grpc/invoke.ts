@@ -14,6 +14,11 @@ export interface InvokeOptions {
   timeoutMs: number;
   /** Resolved certificate material; inert unless the target is TLS. */
   tlsCerts: TlsCertOptions;
+  /**
+   * Stops the call on demand, reported as a `CANCELLED` status like any other
+   * non-OK one. Decision 051.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 export interface InvokeResult {
@@ -81,6 +86,7 @@ export function invokeUnary(options: InvokeOptions): Promise<InvokeResult> {
       { deadline: Date.now() + timeoutMs },
       (error, response) => {
         const durationMs = elapsedMs();
+        options.signal?.removeEventListener("abort", abort);
         client.close();
 
         if (error) {
@@ -112,6 +118,18 @@ export function invokeUnary(options: InvokeOptions): Promise<InvokeResult> {
         });
       },
     );
+
+    // `cancel` makes the unary callback above fire with CANCELLED, so the abort is
+    // reported through the one path every other non-OK status already takes. Listening
+    // is skipped on an already-aborted signal because `abort` has been and gone by then
+    // and a listener added now would never run.
+    const abort = (): void => {
+      call.cancel();
+    };
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) abort();
+      else options.signal.addEventListener("abort", abort, { once: true });
+    }
 
     call.on("metadata", (md: grpc.Metadata) => {
       responseMetadata = md;

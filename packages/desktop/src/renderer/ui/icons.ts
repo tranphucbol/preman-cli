@@ -11,6 +11,11 @@
  */
 export {
   ArrowClockwise as RefreshIcon,
+  // Which way a frame went. Every event in a server-sent stream came down, so today this is the
+  // only direction there is - it is here because the alternative, an unmarked row, reads as a log
+  // line rather than as something that arrived, and because a stream that can also send (a
+  // websocket) needs its opposite and should not have to invent a matching pair at that point.
+  ArrowDown as InboundIcon,
   // The two halves of one button. Vertical because that is the axis a tree folds along: the arrows
   // meet where the rows are about to close up, and part where they are about to make room.
   ArrowsInLineVertical as CollapseAllIcon,

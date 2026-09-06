@@ -58,6 +58,11 @@ export interface RunSelectionArgs {
   sink?: RunEventSink;
   /** Where response bodies are deposited so the events can name them, not carry them. */
   bodies?: BodyStore;
+  /**
+   * Stops the run. Omitted by the CLI, which has no one to press the button; a window
+   * passes the signal of the run it is showing. Decision 051.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 export interface RunSelectionResult {
@@ -117,6 +122,7 @@ export async function runSelection(args: RunSelectionArgs): Promise<RunSelection
     save: args.save,
     ...(args.sink === undefined ? {} : { sink: args.sink }),
     ...(args.bodies === undefined ? {} : { bodies: args.bodies }),
+    ...(args.signal === undefined ? {} : { signal: args.signal }),
   };
 
   if (target.kind === "group") {

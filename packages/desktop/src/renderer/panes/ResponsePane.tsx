@@ -10,23 +10,29 @@
  * thousand items does not re-render it five thousand times.
  */
 import * as Tabs from "@radix-ui/react-tabs";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import {
   durationOf,
+  ELAPSED_TICK_MS,
+  elapsedMs,
   exitLabel,
   exitTone,
   formatDuration,
+  headersMsOf,
   isCleanExit,
   parseSetCookie,
+  settledMs,
   testTone,
   testTotals,
   toneClass,
+  waitedMs,
   type HeaderPairs,
   type SentRequest,
   type TestResult,
 } from "@preman/desktop/renderer/model/response.js";
 import { formatBytes } from "@preman/desktop/renderer/model/body.js";
+import { frameTally, streamContentType } from "@preman/desktop/renderer/model/stream.js";
 import { useLatestRunFor, type RequestRun } from "@preman/desktop/renderer/stores/runs.js";
 import { CodeEditor } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
@@ -35,6 +41,7 @@ import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
 
 import { BodyViewer } from "./BodyViewer.js";
 import { ResponseFailure } from "./ResponseFailure.js";
+import { StreamViewer } from "./StreamViewer.js";
 
 const TABS = ["body", "headers", "cookies", "tests", "timeline"] as const;
 type ResponseTab = (typeof TABS)[number];
@@ -108,6 +115,12 @@ export function ResponseView({ run }: { readonly run: RequestRun | undefined }) 
         {run.failure !== null ? (
           // A failed call has no body, and "no body" is not a report of what went wrong.
           <ResponseFailure status={run.head?.status} failure={run.failure} />
+        ) : run.stream !== null ? (
+          // Checked before the body, and it stays checked after the stream closes. A stream does
+          // get a body event at the end - the raw bytes go to the engine like any other response -
+          // but flipping the reader to a concatenated document the moment the last frame lands
+          // would take away the view they had been reading for the previous thirty seconds.
+          <StreamViewer stream={run.stream} contentType={streamContentType(run.head?.headers ?? [])} />
         ) : run.body === null ? (
           <Hint>{run.status === "running" ? RUNNING_HINT : NO_BODY_HINT}</Hint>
         ) : (
@@ -161,7 +174,6 @@ function Hint({ children }: { readonly children: ReactNode }) {
  */
 function Summary({ run }: { readonly run: RequestRun }) {
   const status = run.head?.status;
-  const ms = durationOf(run.head);
   return (
     <div className="flex shrink-0 items-center gap-2.5 text-2xs">
       {run.status === "running" && <span className="text-ink-faint">{RUNNING_HINT}</span>}
@@ -171,13 +183,55 @@ function Summary({ run }: { readonly run: RequestRun }) {
           return_code <span className="text-ink">{run.returnCode}</span>
         </span>
       )}
-      {ms !== null && <span className="text-ink-dim">{formatDuration(ms)}</span>}
-      {run.body !== null && <span className="text-ink-dim">{formatBytes(run.body.byteLength)}</span>}
+      {/* Keyed on the clock it shows: a second send mounts a fresh one rather than inheriting a
+          `now` last read during the previous request, which would read 0ms for a tick. */}
+      <Elapsed key={run.startedAt} run={run} />
+      {/* A stream states its own size and count, because its body event does not exist until it
+          closes and a header that showed nothing for the whole of a live stream would be reporting
+          on the one response it can watch arrive. */}
+      {run.stream !== null && <span className="text-ink-dim">{frameTally(run.stream.total)}</span>}
+      {run.stream !== null ? (
+        <span className="text-ink-dim tabular-nums">{formatBytes(run.stream.byteLength)}</span>
+      ) : (
+        run.body !== null && <span className="text-ink-dim">{formatBytes(run.body.byteLength)}</span>
+      )}
       {run.exitCode !== null && !isCleanExit(run.exitCode) && (
         <span className={toneClass(exitTone(run.exitCode))}>{exitLabel(run.exitCode)}</span>
       )}
     </div>
   );
+}
+
+/**
+ * The clock, counting up while the request is in flight and settling on the transport's own
+ * duration when it lands.
+ *
+ * Its own component, and therefore its own render, because `ResponseView` above it owns the body
+ * viewer: a `setInterval` living in `Summary` would re-render the pane and everything under it
+ * ten times a second for as long as a request ran. Here the only thing React reconciles on a tick
+ * is one span of text.
+ *
+ * `tabular-nums` so the row does not shuffle sideways as the digits change width.
+ */
+function Elapsed({ run }: { readonly run: RequestRun }) {
+  const running = run.status === "running";
+  // Read at mount rather than seeded from an effect, so the first frame is already right and the
+  // interval only ever has to keep it right.
+  const [now, setNow] = useState(Date.now);
+
+  useEffect(() => {
+    if (!running) return;
+    const tick = setInterval(() => {
+      setNow(Date.now());
+    }, ELAPSED_TICK_MS);
+    return () => {
+      clearInterval(tick);
+    };
+  }, [running]);
+
+  const ms = running ? elapsedMs(run.startedAt, now) : settledMs(run.head, waitedMs(run.startedAt, run.finishedAt));
+  if (ms === null) return null;
+  return <span className="text-ink-dim tabular-nums">{formatDuration(ms)}</span>;
 }
 
 function Headers({ headers }: { readonly headers: HeaderPairs }) {
@@ -259,11 +313,23 @@ function TestList({ tests }: { readonly tests: readonly TestResult[] }) {
  */
 function Timeline({ run }: { readonly run: RequestRun }) {
   const ms = durationOf(run.head);
+  // Both clocks, because the header can only show one and the gap between them is the answer to
+  // "why did that feel slower than it says". `duration` is the exchange; `waited` is that plus
+  // the save, the trip to the engine and every pre-request script.
+  const waited = waitedMs(run.startedAt, run.finishedAt);
+  // Only a stream reports this, and only a stream needs it: for a buffered response the head and
+  // the last byte arrive together, so a second number would be the same number twice. For a
+  // stream it is the one that says how long the server took to start answering.
+  const headers = headersMsOf(run.head);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <dl className="shrink-0 border-b border-line px-2 py-1.5 text-2xs">
         <Entry label="target">{run.target ?? "not resolved"}</Entry>
+        {headers !== null && <Entry label="time to headers">{formatDuration(headers)}</Entry>}
         {ms !== null && <Entry label="duration">{formatDuration(ms)}</Entry>}
+        {waited !== null && <Entry label="waited">{formatDuration(waited)}</Entry>}
+        {run.stream !== null && <Entry label="events">{frameTally(run.stream.total)}</Entry>}
+        {run.stream?.cutShort != null && <Entry label="stream ended">{run.stream.cutShort}</Entry>}
         {run.exitCode !== null && <Entry label="outcome">{exitLabel(run.exitCode)}</Entry>}
         {run.returnCode !== null && <Entry label="return_code">{run.returnCode}</Entry>}
         <Entry label="iteration">{String(run.iteration)}</Entry>

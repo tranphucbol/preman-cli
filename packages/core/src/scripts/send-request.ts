@@ -30,6 +30,8 @@ export interface SendScriptRequestOptions {
   timeoutMs: number;
   /** Shared with the main request, so a script's call trusts the same CAs. */
   tlsCerts: TlsCertOptions;
+  /** Shared with the main request, so cancelling the run stops this call too. */
+  signal?: AbortSignal | undefined;
 }
 
 interface RequestShape {
@@ -127,5 +129,6 @@ export async function sendScriptRequest(options: SendScriptRequestOptions): Prom
     timeoutMs: options.timeoutMs,
     jar: options.jar,
     tlsCerts: options.tlsCerts,
+    signal: options.signal,
   });
 }

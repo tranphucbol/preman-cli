@@ -44,6 +44,7 @@ import type { RunTarget } from "@preman/core/workspace/collections.js";
 import type { EnvironmentEntry } from "@preman/core/workspace/environments.js";
 import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
 import { toEngineError } from "@preman/desktop/engine/errors.js";
+import { createFrameBatcher, type FrameBatcher } from "@preman/desktop/engine/frames.js";
 import {
   BODY_WINDOW_BYTES,
   markPhase,
@@ -159,6 +160,17 @@ export interface EngineHost {
 
 interface RunState {
   cancelled: boolean;
+  /**
+   * Stops the run in core. Separate from `cancelled`, which stops the reporting: the
+   * abort takes time to land - a socket has to be destroyed and the outcome unwound -
+   * and until it does, the events it produces are no longer anybody's business.
+   */
+  controller: AbortController;
+  /**
+   * Frames waiting to cross the port, held here so cancelling can throw them away
+   * along with its timer rather than let one last batch arrive after `run-done`.
+   */
+  frames?: FrameBatcher;
 }
 
 function usage(message: string, details: string[] = []): PremanError {
@@ -621,7 +633,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
 
   function startRun(args: RunArgs): string {
     const runId = `${RUN_ID_PREFIX}${String(nextRun++)}`;
-    const state: RunState = { cancelled: false };
+    const state: RunState = { cancelled: false, controller: new AbortController() };
     runs.set(runId, state);
 
     /**
@@ -630,11 +642,23 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
      * it, nothing downstream has heard of this run at all.
      */
     let started = false;
+    const batcher = createFrameBatcher((event) => {
+      post({ push: "run-event", event });
+    });
+    state.frames = batcher;
     const sink: RunEventSink = {
       runId,
       emit: (event: RunEvent) => {
         if (state.cancelled) return;
         if (event.type === "run-start") started = true;
+        if (event.type === "response-frames") {
+          batcher.add(event);
+          return;
+        }
+        // Every other event is a statement about a stream that these frames are part
+        // of - it closed, here is its body, here is the exit code - so the frames go
+        // first. Ordering is the only thing the batcher is allowed to change.
+        batcher.flush();
         post({ push: "run-event", event });
       },
     };
@@ -670,6 +694,7 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
           safeEval: false,
           sink,
           bodies,
+          signal: state.controller.signal,
         };
         const result = await runSelection(selection);
         remember(runId, result);
@@ -699,14 +724,20 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   }
 
   /**
-   * Core has no cancellation and Phase 2 deliberately did not add one: an in-flight
-   * request completes, its writeback still happens, and what stops is the reporting.
-   * Saying so here is the honest version of a Cancel button.
+   * Stop a run, for real: the abort reaches the socket, so an exchange that would
+   * otherwise have run to completion ends now. Decision 051 replaced the earlier
+   * reporting-only Cancel, which could not close a response that never ends.
+   *
+   * The reader is told immediately rather than when the abort lands. Unwinding takes a
+   * moment, and a button that stays lit until core agrees reads as a button that did
+   * not work; `cancelled` silences whatever that unwinding still emits.
    */
   function cancelRun(runId: string): null {
     const state = runs.get(runId);
     if (state === undefined || state.cancelled) return null;
     state.cancelled = true;
+    state.controller.abort();
+    state.frames?.discard();
     post({ push: "run-done", runId, warnings: [], cancelled: true });
     return null;
   }
@@ -984,7 +1015,13 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       gitTimer = undefined;
       if (prefetchTimer !== undefined) clearTimeout(prefetchTimer);
       prefetchTimer = undefined;
-      for (const state of runs.values()) state.cancelled = true;
+      // Aborted as well as silenced: a workspace being closed must not leave a stream
+      // reading into a host nobody is listening to any more.
+      for (const state of runs.values()) {
+        state.cancelled = true;
+        state.controller.abort();
+        state.frames?.discard();
+      }
       runs.clear();
       reports.clear();
     },

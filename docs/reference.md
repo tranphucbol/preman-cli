@@ -197,7 +197,7 @@ aborted: folder ZAS script "http:beforeRequest" failed: login returned 500
 
 With the JSON reporter, a group emits an object containing `group`, `items`, `bailed`, `bailReason`,
 `iterations`, aggregate `tests`, `savedVars`, and `exitCode`. Each item carries a zero-based `iteration`.
-`bailReason` is `"bail-flag"`, `"inherited-script"`, `"timeout"`, or `null`.
+`bailReason` is `"bail-flag"`, `"inherited-script"`, `"timeout"`, `"cancelled"`, or `null`.
 
 ## Iterations and data files
 
@@ -713,6 +713,33 @@ origin changes. Reaching the limit produces a warning. `--verbose` prints the re
 
 `gzip`, `deflate`, and Brotli responses are decoded before scripts receive them.
 
+A response that stops before it is complete is a transport failure, not a short body. Whether the
+peer hung up mid-message or the per-request deadline fired while bytes were still arriving, preman
+reports no response and exits `2`. A half-read body is never handed to a script to assert against,
+and never printed as though it were the whole thing.
+
+### Streaming responses
+
+A `text/event-stream` response is read as it arrives **in the desktop app**, which shows each
+server-sent event as its own row while the stream is still open. `preman run` does not: the CLI
+buffers the whole response like any other, so `--timeout-request` stays a hard ceiling and a run
+that never ends cannot wedge a pipeline. A stream that outlives that deadline is reported as a
+timed-out request, not as the part of it that arrived. The same request therefore behaves
+differently in the two front ends, deliberately; see
+[Decision 052](decisions/052-a-stream-is-a-response-in-parts.md).
+
+Where the app does stream, the per-request deadline stops applying once the response head arrives.
+What ends the request is the server closing it, the connection dying, or Cancel. A stream that ends
+before the server closed it still reports its status and the bytes it received, and adds a warning
+saying why it stopped — unlike a request cancelled before any response, which is a transport
+failure.
+
+Two cases are read buffered even in the app, because reading them live would report them wrongly: a
+compressed event-stream (`content-encoding` other than `identity`), and the body of a redirect.
+
+Scripts are unaffected. `pm.response.text()` is the whole raw stream, and `afterResponse` runs once
+the stream has closed rather than per event.
+
 ## TLS and certificates
 
 The certificate options apply to gRPC and HTTP alike, including calls made by `pm.sendRequest`.
@@ -1075,6 +1102,18 @@ blank until it ends:
 
 `run-start` → per request `request-start`, `request-sent`, `response-head`, `response-body`,
 interleaved `console`, `test`, and `side-request`, then `request-end` → `run-end`.
+
+A streamed response is the one place `response-head` is not the last word about the exchange. It
+arrives as soon as the headers do, with `streaming: true` and a `headersMs` timing but no
+`durationMs`, because the exchange has not finished yet. Batches of `response-frames` follow, and
+`stream-end` closes the sequence with the `durationMs` the head could not carry plus the true frame
+`total`. The raw bytes still become one `response-body` afterwards, exactly as for a buffered
+response, so nothing downstream has to special-case a stream to read its body.
+
+`response-frames` is batched by the engine rather than emitted per event: a model streaming tokens
+dispatches faster than any window can paint. Batching changes when a frame arrives, never which,
+in what order, or after `stream-end`. A batch that had to be trimmed to stay bounded says so in
+`dropped`, and `stream-end.total` remains the number core actually dispatched.
 
 Every variant carries `runId`, so two concurrent runs cannot be interleaved by mistake. Every
 per-request variant carries `nodeId`, which is the same string as that node's `CatalogNode.id`.

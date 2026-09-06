@@ -7,8 +7,9 @@ import { resolveMethod, type SchemaSource } from "./grpc/schema.js";
 import { resolveTarget, type GrpcTarget } from "./grpc/target.js";
 import { CookieJar } from "./http/cookies.js";
 import { normalizeProperties } from "./http/headers.js";
-import { invokeHttp, NO_RESPONSE_STATUS, type HttpInvokeResult } from "./http/invoke.js";
+import { invokeHttp, NO_RESPONSE_STATUS, type HttpInvokeResult, type HttpStreamSink } from "./http/invoke.js";
 import { buildLiveHttpRequest, finaliseHttpRequest } from "./http/request.js";
+import type { SseFrame } from "./http/sse.js";
 import type { HttpTarget } from "./http/target.js";
 import {
   hasScriptOf,
@@ -72,6 +73,12 @@ const BODY_ENCODING = "utf8";
 const CONTENT_TYPE_HEADER = "content-type";
 /** HTTP has no trailing metadata; named so the empty array reads as a statement. */
 const NO_TRAILERS: HeaderPairs = [];
+/** The parser hands over every frame it dispatches; only a coalescer ever drops one. */
+const NOTHING_DROPPED = 0;
+const NO_FRAMES = 0;
+/** Whether a head opens a stream, named so the call sites do not read as bare booleans. */
+const STREAMED = true;
+const NOT_STREAMED = false;
 const TLS_SCHEME = "grpcs";
 const PLAIN_SCHEME = "grpc";
 /** Stands in for a request body that is not text, so no viewer tries to show it. */
@@ -134,6 +141,14 @@ export interface RunOptions {
    * store there is nowhere to hand a 50MB body to, so none is announced.
    */
   bodies?: BodyStore;
+  /**
+   * Stops the run on demand. It reaches the wire - the request's own call and any
+   * `pm.sendRequest` a script is waiting on - so what ends is the exchange and not
+   * merely the reporting of it. A cancelled request still reports: it ends as a
+   * transport failure whose message says it was cancelled, because the alternative
+   * is a row that stops updating and never says why. Decision 051.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 interface BaseRunOutcome {
@@ -280,9 +295,22 @@ interface BodySource {
 }
 
 interface RequestEvents {
+  /**
+   * Whether anything is watching closely enough to be shown a response in parts.
+   *
+   * Read only to decide whether to hand the transport a stream sink, which is what
+   * turns off the exchange timeout. The CLI has no window and no way to show a
+   * half-arrived response, so it keeps `--timeout` as a hard ceiling and waits for
+   * the batch outcome. See `docs/decisions/052-a-stream-is-a-response-in-parts.md`.
+   */
+  streaming: boolean;
   start: (name: string, iteration: number) => void;
   sent: (target: string, sent: SentRequest) => void;
-  head: (status: number | string, headers: HeaderPairs, timings: Record<string, number>) => void;
+  head: (status: number | string, headers: HeaderPairs, timings: Record<string, number>, streaming: boolean) => void;
+  /** One chunk's worth of parsed frames, with the raw bytes read so far. */
+  frames: (frames: SseFrame[], byteLength: number) => void;
+  /** The stream closed. Carries the duration the early `head` could not. */
+  streamEnd: (total: number, durationMs: number, cutShort: string | undefined) => void;
   /**
    * Lazy on purpose. Encoding a 50MB response into a `Buffer` for a CLI run that
    * will never look at it is exactly the cost this whole seam exists to avoid.
@@ -302,9 +330,12 @@ interface RequestEvents {
 }
 
 const NO_REQUEST_EVENTS: RequestEvents = {
+  streaming: false,
   start: () => undefined,
   sent: () => undefined,
   head: () => undefined,
+  frames: () => undefined,
+  streamEnd: () => undefined,
   body: () => undefined,
   failure: () => undefined,
   end: () => undefined,
@@ -320,9 +351,24 @@ function requestEvents(options: Pick<RunOptions, "sink" | "bodies" | "workspace"
   const bodies = options.bodies;
 
   return {
+    streaming: true,
     start: (name, iteration) => sink.emit({ type: "request-start", runId, nodeId, name, iteration }),
     sent: (target, sent) => sink.emit({ type: "request-sent", runId, nodeId, target, sent }),
-    head: (status, headers, timings) => sink.emit({ type: "response-head", runId, nodeId, status, headers, timings }),
+    head: (status, headers, timings, streaming) =>
+      sink.emit({ type: "response-head", runId, nodeId, status, headers, timings, streaming }),
+    // Core never drops a frame; the count is here because whoever coalesces these
+    // events downstream may, and the reader is owed the difference.
+    frames: (frames, byteLength) =>
+      sink.emit({ type: "response-frames", runId, nodeId, frames, dropped: NOTHING_DROPPED, byteLength }),
+    streamEnd: (total, durationMs, cutShort) =>
+      sink.emit({
+        type: "stream-end",
+        runId,
+        nodeId,
+        total,
+        durationMs,
+        ...(cutShort === undefined ? {} : { cutShort }),
+      }),
     body: (produce) => {
       if (bodies === undefined) return;
       const { bytes, contentType } = produce();
@@ -393,6 +439,8 @@ interface ScriptSinkOptions {
   iterationCount?: number;
   /** `pm.sendRequest` dials over the same trust store as the request itself. */
   tlsCerts: TlsCertOptions;
+  /** Cancels a `pm.sendRequest` the same way it cancels the request's own call. */
+  signal?: AbortSignal | undefined;
   /**
    * Read once per script so the same live object is shared across the chain and
    * then exposed read-only to post-response scripts.
@@ -451,6 +499,7 @@ function scriptSink(options: ScriptSinkOptions): ScriptSink {
           iteration: options.iteration,
           iterationCount: options.iterationCount,
           tlsCerts: options.tlsCerts,
+          signal: options.signal,
           observer: collect,
           ...(response === undefined ? {} : { response }),
         });
@@ -581,6 +630,7 @@ async function runGrpcRequest(
     iteration: options.iteration,
     iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,
+    signal: options.signal,
     request: () => liveRequest,
     ...(events.observer === undefined ? {} : { observer: events.observer }),
   });
@@ -647,11 +697,12 @@ async function runGrpcRequest(
     metadata: sentMetadata,
     timeoutMs: options.timeoutMs,
     tlsCerts: options.tlsCerts,
+    signal: options.signal,
   });
   freezeRequest(liveRequest);
   // Metadata only: trailers arrive after the message, and on a success the batch
   // outcome is the only thing that carries them.
-  events.head(invoke.codeName, flattenHeaders(invoke.metadata), { durationMs: invoke.durationMs });
+  events.head(invoke.codeName, flattenHeaders(invoke.metadata), { durationMs: invoke.durationMs }, NOT_STREAMED);
   if (invoke.ok) {
     // gRPC returns a decoded message, not bytes; the viewer wants the JSON it would
     // have printed anyway, so that is what gets stored.
@@ -752,6 +803,7 @@ async function runHttpRequest(
     iteration: options.iteration,
     iterationCount: options.iterationCount,
     tlsCerts: options.tlsCerts,
+    signal: options.signal,
     request: () => live.request,
     ...(events.observer === undefined ? {} : { observer: events.observer }),
   });
@@ -776,6 +828,20 @@ async function runHttpRequest(
     headers: built.headers.map(({ key, value }): [string, string] => [key, value]),
     body: typeof built.body === "string" ? built.body : built.body === undefined ? undefined : BINARY_BODY,
   });
+  // A stream announces itself only once the response head is in, so the decision to
+  // narrate rather than wait is made by the transport and reported back through here.
+  let streamed = false;
+  let frameTotal = NO_FRAMES;
+  const stream: HttpStreamSink = {
+    open: (open) => {
+      streamed = true;
+      events.head(open.statusCode, flattenHeaders(open.headers), { headersMs: open.headersMs }, STREAMED);
+    },
+    frames: (frames, byteLength) => {
+      frameTotal += frames.length;
+      events.frames([...frames], byteLength);
+    },
+  };
   const invoke = await invokeHttp({
     url: built.url,
     method: built.method,
@@ -784,11 +850,17 @@ async function runHttpRequest(
     timeoutMs: options.timeoutMs,
     jar: cookies,
     tlsCerts: options.tlsCerts,
+    signal: options.signal,
+    ...(events.streaming ? { stream } : {}),
   });
   syncFinalHttpRequest(live.request, invoke, built.body);
   freezeRequest(live.request);
   if (invoke.statusCode !== NO_RESPONSE_STATUS) {
-    events.head(invoke.statusCode, flattenHeaders(invoke.headers), { durationMs: invoke.durationMs });
+    // A streamed response already has its head. Repeating it to attach the duration
+    // would make the reader watch the status flicker for no reason.
+    if (streamed) events.streamEnd(frameTotal, invoke.durationMs, invoke.cutShort);
+    else
+      events.head(invoke.statusCode, flattenHeaders(invoke.headers), { durationMs: invoke.durationMs }, NOT_STREAMED);
     events.body(() => ({
       bytes: Buffer.from(invoke.body, BODY_ENCODING),
       contentType: contentTypeOf(invoke.headers),
@@ -888,9 +960,9 @@ export interface GroupRunOptions extends Omit<
 /**
  * Why a group run stopped before its last request. `bail-flag` is the user asking for it;
  * `inherited-script` means a shared precondition broke; `timeout` means the run budget
- * elapsed between requests.
+ * elapsed between requests; `cancelled` means the caller aborted the run.
  */
-export type BailReason = "bail-flag" | "inherited-script" | "timeout";
+export type BailReason = "bail-flag" | "inherited-script" | "timeout" | "cancelled";
 
 export interface GroupRunOutcome {
   groupPath: string;
@@ -953,6 +1025,15 @@ function runBudgetExhausted(runTimeoutMs: number, started: number): boolean {
   return runTimeoutMs !== NO_RUN_BUDGET && performance.now() - started >= runTimeoutMs;
 }
 
+/**
+ * A function rather than an inline `signal?.aborted === true`, because `aborted` is a
+ * readonly property: narrowing it at the top of the loop would tell the compiler it is
+ * still false after the `await` that is the whole reason for asking twice.
+ */
+function cancelled(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
 /** Replace the transient data layer without disturbing the shared mutable scopes. */
 function replaceData(store: VariableStore, data: DataRow | undefined): void {
   for (const key of Object.keys(store.snapshot("data"))) store.unset("data", key);
@@ -990,6 +1071,14 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
     replaceData(store, data);
 
     for (const entry of options.entries) {
+      // The request already on the wire is aborted by the signal itself; this is what
+      // stops the run entering the next one, so a cancelled collection does not go on
+      // opening sockets after the reader has said stop.
+      if (cancelled(options.signal)) {
+        bailReason = "cancelled";
+        stop = true;
+        break;
+      }
       if (runBudgetExhausted(options.runTimeoutMs, started)) {
         bailReason = "timeout";
         stop = true;
@@ -1014,6 +1103,13 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
       }
 
       if (attemptedRequest && options.delayRequestMs > 0) await delay(options.delayRequestMs);
+      // Re-checked after the delay: `--delay-request` can be seconds long, and waiting
+      // it out before honouring a cancel is the same lie as not honouring it at all.
+      if (cancelled(options.signal)) {
+        bailReason = "cancelled";
+        stop = true;
+        break;
+      }
       if (runBudgetExhausted(options.runTimeoutMs, started)) {
         bailReason = "timeout";
         stop = true;

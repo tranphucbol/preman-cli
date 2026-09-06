@@ -59,6 +59,8 @@ The CLI's own design predates the practice.
 | [048](048-the-comment-shortcut-is-offered-wherever-a-token-is.md)   | The comment shortcut is offered wherever a `{{token}}` is              |
 | [049](049-a-group-is-a-document-you-can-open.md)                    | A group is a document you can open, and auth is one editor             |
 | [050](050-the-auth-block-wins-over-an-authored-header.md)           | The auth block wins over an authored header                            |
+| [051](051-cancel-reaches-the-socket.md)                             | Cancel reaches the socket                                              |
+| [052](052-a-stream-is-a-response-in-parts.md)                       | A stream is a response in parts                                        |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -333,5 +335,34 @@ alignment for inheritance. So the block wins, replacing in place under core's sp
 and the Headers pane says so before the send — which is where Postman shows it too. It is a
 behaviour change for any workspace that declares both, with the warning as its only notice, and it
 flipped the two tests that had asserted the old direction.
+
+051 is the first record to reverse something that was never argued for, only admitted. `cancelRun`
+carried a comment saying core had no cancellation and that Phase 2 had deliberately not added one —
+a true description of a Cancel button that stopped the reporting and let the request finish. It held
+up as long as every response was finite, because `--timeout` destroys the socket even when nobody
+asks. Streaming removes that floor: a `text/event-stream` ends when the server says so, the exchange
+timer has to be cleared for it, and a Cancel that only looks away would leak one socket per press
+into a process with no reference left that could close it. So the signal now goes all the way down —
+including into `pm.sendRequest`, which is the other place a cancelled run can still be holding one.
+The alternative, killing the utility process, was rejected for taking the whole workspace with it
+(012). What it cost is small and specific: a function that exists only because `aborted` is readonly
+and the compiler would otherwise narrow it across the `await` the second check is there for, and a
+gap of up to one script timeout when the cancel lands inside `node:vm`, which is bounded where the
+socket was not.
+
+052 is what 051 was clearing the way for, and its shape is one optional argument: a caller of
+`invokeHttp` that passes a stream sink gets a `text/event-stream` read as it arrives, and a caller
+that passes nothing gets the buffered exchange it always got. That the desktop passes one and the
+CLI does not is the record's real content. Handing over a sink means giving up `timeoutMs` after the
+head, which a window can afford because someone is watching and there is a button, and which CI
+cannot afford at all. The head therefore goes out early carrying `headersMs` and no `durationMs`,
+which loosens the event contract enough to be worth writing down: `response-head` is no longer the
+last word, and `stream-end` exists to deliver the number it could not carry. The frames are batched
+in the engine on a 32ms tick, because the renderer loses a race against a token stream long before
+the network does, and the window keeps a bounded ring of the newest thousand for 013's reason,
+which does not weaken just because the bytes arrived in pieces. Two costs are worth knowing before
+reading the code: a gzipped event-stream is read the buffered way and says nothing about it, and a
+cancelled stream ends as a success with a warning where a cancelled request ends as a transport
+failure — the same word, one function apart, meaning two defensible but different things.
 
 `TEMPLATE.md` is the shape of a new one.
