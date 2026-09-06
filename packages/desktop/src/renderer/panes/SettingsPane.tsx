@@ -156,9 +156,9 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
       </Tabs.List>
 
       <Pane value="appearance">
-        <ThemeSection />
         <DensitySection />
         <FontSection />
+        <ThemeSection />
       </Pane>
 
       {/* Its own tab rather than a fourth card under Appearance: where this machine resolves the

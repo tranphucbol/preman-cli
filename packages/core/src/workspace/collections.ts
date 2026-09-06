@@ -50,6 +50,8 @@ export interface RequestEntry {
 const HTTP_KIND = "http-request";
 const GRPC_KIND = "grpc-request";
 const DEFAULT_HTTP_METHOD = "GET";
+/** What core makes of a declared but empty `auth.type`; see `renderAuth`. */
+const NO_AUTH_TYPE = "noauth";
 
 function readLabel(kind: string, raw: Record<string, unknown>): string | undefined {
   if (kind === HTTP_KIND) {
@@ -61,18 +63,35 @@ function readLabel(kind: string, raw: Record<string, unknown>): string | undefin
   return undefined;
 }
 
+/**
+ * The declared `auth.type`, normalised, or `undefined` when no block is declared at all.
+ *
+ * The distinction matters more than the value: a missing block is what `resolveAuth` walks the
+ * ancestor chain for, while a block with an empty `type` is `noauth` and stops the walk. So an
+ * empty type is reported as the word core makes of it rather than as the absence.
+ */
+export function authTypeOf(raw: unknown): string | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const declared = (raw as Record<string, unknown>).type;
+  const type = typeof declared === "string" ? declared.trim().toLowerCase() : "";
+  return type.length === 0 ? NO_AUTH_TYPE : type;
+}
+
 export interface RequestHeader {
   name: string;
   kind: string;
   order: number | undefined;
   label: string | undefined;
+  /** See {@link authTypeOf}. */
+  auth: string | undefined;
 }
 
 /**
  * The fields needed to place and label a request without interpreting it.
  *
- * Deliberately parses the whole document and keeps four fields: the parse is the
- * expensive part and a second reader would drift from this one's fallbacks.
+ * Deliberately parses the whole document and keeps five fields: the parse is the
+ * expensive part and a second reader would drift from this one's fallbacks. `auth` is
+ * the type only, for the reason `CatalogNode.auth` gives.
  */
 export function readRequestHeader(filePath: string): RequestHeader {
   const fallbackName = basename(filePath).slice(0, -REQUEST_SUFFIX.length);
@@ -88,6 +107,7 @@ export function readRequestHeader(filePath: string): RequestHeader {
     kind,
     order: typeof raw.order === "number" ? raw.order : undefined,
     label: readLabel(kind, raw),
+    auth: authTypeOf(raw.auth),
   };
 }
 

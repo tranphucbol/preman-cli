@@ -33,6 +33,28 @@ export function isSubTab(value: string): value is SubTab {
   return (SUB_TABS as readonly string[]).includes(value);
 }
 
+/** One entry of an editor's sub-tab row: the id it persists as, and how it is read out loud. */
+export interface SubTabEntry {
+  readonly id: SubTab;
+  readonly label: string;
+}
+
+/**
+ * Which sub-tab to draw, given the one this tab remembers.
+ *
+ * `SUB_TABS` is one list across every kind of document, so a remembered id routinely names a tab
+ * the open document does not have: a tab switched protocol, or gRPC dropped its Headers, or the
+ * document is a group, whose list is two entries long. The fallback is the first entry of *this*
+ * list rather than `DEFAULT_SUB_TAB` - that is `body`, which a group cannot render, and the
+ * resolution would land on a pane with no trigger.
+ *
+ * Nothing is written back: the stale id costs a render, and correcting it here would be a store
+ * write during a render.
+ */
+export function resolveSubTab(entries: readonly SubTabEntry[], remembered: SubTab): SubTab {
+  return entries.some((entry) => entry.id === remembered) ? remembered : entries[0]!.id;
+}
+
 /**
  * Whether the Body sub-tab is showing the text as authored or as it would be sent.
  *

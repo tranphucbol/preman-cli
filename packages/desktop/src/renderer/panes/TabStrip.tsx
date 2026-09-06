@@ -9,7 +9,7 @@
  */
 import type { MouseEvent } from "react";
 
-import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { CloseIcon, CollectionIcon, FolderIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { GRPC_LABEL, UNSUPPORTED_LABEL, methodClass } from "@preman/desktop/renderer/ui/method.js";
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
@@ -104,6 +104,11 @@ function TabButton({
 function TabLabel({ nodeId }: { readonly nodeId: string }): React.JSX.Element | null {
   const node = useNode(nodeId);
   if (node === undefined) return null;
+  // A group carries neither protocol nor method, so without an arm of its own it would be the one
+  // tab with no glyph - which reads as a request whose method failed to load rather than as a
+  // collection. Same two glyphs the sidebar rows use, for the same reason the label is shared.
+  if (node.kind === "collection") return <CollectionIcon className="shrink-0 text-ink-dim" />;
+  if (node.kind === "folder") return <FolderIcon className="shrink-0 text-ink-dim" />;
   if (node.protocol === "unsupported") {
     return <span className="shrink-0 font-mono text-2xs text-ink-faint">{UNSUPPORTED_LABEL}</span>;
   }

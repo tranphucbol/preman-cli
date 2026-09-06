@@ -152,6 +152,17 @@ export function readText(data: unknown, path: readonly (string | number)[]): str
   return text(at(data, path));
 }
 
+/**
+ * Whether the document carries this key at all.
+ *
+ * `readText` cannot answer it: an absent field and an empty one both read as `""`. For most
+ * fields that is the right conflation, because a control renders the same either way. For
+ * `auth:` it is the whole distinction — an absent block inherits and an empty one does not.
+ */
+export function declares(data: unknown, path: readonly (string | number)[]): boolean {
+  return at(data, path) !== undefined;
+}
+
 export function readKind(data: unknown): string {
   return text(at(data, ["$kind"]));
 }
@@ -251,6 +262,10 @@ export function hasDescriptor(data: unknown): boolean {
  * others, and core accepts both. The editor reads either and, crucially, *writes back the
  * shape it found*: turning a hand-written map into an array on the first keystroke would
  * rewrite a file the user did not ask to restructure.
+ *
+ * `auth.credentials` is the third such field and reads through `readPairsAt`. Its writer is
+ * `model/auth.ts`'s rather than the five below, because a credential has no `disabled` and no
+ * order, and an absent block is created as a map - see that module for why.
  */
 export type PairShape = "map" | "array" | "absent";
 
@@ -277,7 +292,12 @@ export interface PairList {
 }
 
 export function readPairs(data: unknown, field: string): PairList {
-  const raw = at(data, [field]);
+  return readPairsAt(data, [field]);
+}
+
+/** `readPairs` for a nested list. The two shapes are one rule, so there is one reader of them. */
+export function readPairsAt(data: unknown, path: readonly (string | number)[]): PairList {
+  const raw = at(data, path);
   if (Array.isArray(raw)) {
     const pairs = raw.map((entry, index) => {
       const holder = record(entry);

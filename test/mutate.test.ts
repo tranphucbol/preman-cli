@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { buildCatalog } from "@preman/core/api/catalog.js";
 import {
   createCollection,
@@ -9,6 +10,7 @@ import {
   createRequestFile,
   deleteNode,
   duplicateRequestFile,
+  editDefinitionFile,
   editRequestFile,
   moveNode,
   renameNode,
@@ -185,6 +187,37 @@ describe("editRequestFile", () => {
     const file = payment("Ping.request.yaml");
 
     await expectUsageError(() => editRequestFile(file, [{ path: [], value: 1 }]));
+  });
+});
+
+describe("editDefinitionFile", () => {
+  it("givenAGroupWithADefinition_whenEditDefinitionFile_thenTheAuthBlockLands", async () => {
+    const file = definitionPath(ws().root, "payment");
+
+    await editDefinitionFile(file, [{ path: ["auth"], value: { type: "bearer", credentials: { token: "t" } } }]);
+
+    expect(parse(readFileSync(file, "utf8"))).toMatchObject({ auth: { type: "bearer", credentials: { token: "t" } } });
+  });
+
+  it("givenAGroupWithNoDefinition_whenEditDefinitionFile_thenTheFileIsCreated", async () => {
+    const file = definitionPath(ws().root, "payment");
+    rmSync(file);
+
+    await editDefinitionFile(file, [{ path: ["auth", "type"], value: "noauth" }]);
+
+    // The group editor's first save on an imported tree: nothing to read, and it still lands.
+    expect(parse(readFileSync(file, "utf8"))).toEqual({ $kind: "collection", auth: { type: "noauth" } });
+  });
+
+  it("givenAGroupWithNoDefinition_whenEditDefinitionFileWouldBeUnreadable_thenUsageErrorAndNoFile", async () => {
+    const file = definitionPath(ws().root, "payment");
+    rmSync(file);
+
+    // `order` is a number in the schema, so a string one must be refused - and refusing must not
+    // leave the file it was about to create.
+    await expectUsageError(() => editDefinitionFile(file, [{ path: ["order"], value: "first" }]));
+
+    expect(existsSync(file)).toBe(false);
   });
 });
 

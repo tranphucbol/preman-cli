@@ -382,6 +382,26 @@ already holds is refused rather than resolved to `Foo (2)`: an environment is re
 the picker and by `-e` alike, so two files answering to one name would be one of them silently
 ignored. The picker is present in every workspace, including one with no environments yet.
 
+The **Auth** sub-tab picks a type — **No Auth**, **Bearer Token**, **Basic Auth** or **API Key** —
+and then asks for exactly the credentials that type sends, so a `{{token}}` goes in a field named
+Token rather than a row you had to know to add. Its first option, **Inherit from parent**, removes
+the request's own `auth:` block, which is how the format spells inheritance; the pane then names
+the collection or folder your token is coming from and which type it is, and that name is a button
+that opens it. A type preman cannot send says so in the pane instead of at the send. Credentials
+the file carries that the chosen type does not read are kept and shown below, because nothing here
+deletes something you wrote without saying so.
+
+The block also wins over a header you wrote by hand, the way Postman's does. If a request declares
+`bearer` auth and also carries an `Authorization` header, the block is what goes on the wire — so
+the **Headers** sub-tab says which header is being replaced and what it said, above the list, before
+you send. This is the direction Postman takes; the header that used to quietly beat a correct token
+is the reason it changed.
+
+A collection or a folder is a document too — **Edit collection** or **Edit folder** on its context
+menu opens its `.resources/definition.yaml` as a tab, with an **Auth** tab of its own and a
+**YAML** one. There is no Send: a group is not an exchange, and running one is still **Run…**. A
+group that has no definition file yet opens empty, and saving writes it.
+
 A raw HTTP body and a gRPC message can be re-indented from the **Beautify** glyph at the right of
 their toolbar. It rewrites whitespace and nothing else, so a bare `{{token}}`, `1e3`, `1.0` and a
 twenty-digit id all survive byte for byte — a body is bytes that go on the wire, and a formatter that

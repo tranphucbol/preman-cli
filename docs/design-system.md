@@ -68,9 +68,11 @@ Current assignment, which is the audit as much as the rule:
   such band on purpose — its one action is an `IconButton` in the header, because a 40px footer
   holding a single button took a tenth of a narrow aside to say what a glyph beside the title says.
 - `h-tab` — everything else: the tab bar and sidebar header and status bar (`App.tsx`), the
-  breadcrumb and the message and body toolbars (`RequestEditor`), `KeyValueGrid`, `RunnerPane`,
-  `VariablesPane`, `ConsoleDrawer`, the `CommandPane` header, both `BodyViewer` strips, and the
-  sub-tab triggers in `RequestEditor` and `ResponsePane`, which are text and take the shorter row.
+  breadcrumb (`DocumentChrome`), the message and body toolbars (`RequestEditor`), `KeyValueGrid`,
+  `RunnerPane`, `VariablesPane`, `ConsoleDrawer`, the `CommandPane` header, both `BodyViewer`
+  strips, and the sub-tab triggers in `RequestEditor`, `GroupEditor` and `ResponsePane`, which are
+  text and take the shorter row. `GroupEditor` hangs its Save in that row, because a group has no
+  request bar to put it in and the alternative was a footer band for one glyph.
 
 That `h-bar` has two callers and not twelve is the rule working, not a token going spare: a pane
 toolbar that wanted `h-bar` was a toolbar that had not been asked which tier its buttons were in.

@@ -1,6 +1,13 @@
 $kind: collection
 name: admin
 description: HTTP-only collection. This workspace has no .postman/ on purpose.
+# The one group-level auth block in the fixtures, so the inheritance walk has something real to
+# resolve. Nothing here changes what any request sends: every request in this collection declares
+# its own `auth:`, and a request's own block always wins (`workspace/inherit.ts`).
+auth:
+  type: bearer
+  credentials:
+    token: "{{token}}"
 scripts:
   - type: http:beforeRequest
     language: javascript

@@ -10,9 +10,31 @@
  * editable, and the engine validates it against the same schemas before it lands.
  */
 
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import type { FieldEdit, MethodChoice } from "@preman/desktop/engine/protocol.js";
+import type { CatalogNode, FieldEdit, MethodChoice } from "@preman/desktop/engine/protocol.js";
+import {
+  API_KEY_IN_HEADER,
+  API_KEY_IN_QUERY,
+  AUTH_SCHEMES,
+  type AuthChoice,
+  type AuthScheme,
+  CREDENTIAL_FIELDS,
+  type CredentialField,
+  INHERIT,
+  INHERIT_LABEL,
+  INHERIT_VALUE,
+  SCHEME_LABELS,
+  authOverride,
+  credentialValue,
+  editAuthChoice,
+  editCredential,
+  editCredentialRemoved,
+  hasCredentials,
+  inheritedAuth,
+  readAuth,
+  schemeLabel,
+} from "@preman/desktop/renderer/model/auth.js";
 import {
   BODY_TYPES,
   type BodyType,
@@ -45,22 +67,22 @@ import {
   readSettings,
   readText,
 } from "@preman/desktop/renderer/model/request.js";
-import { listMethods, messageSkeleton, type Failure } from "@preman/desktop/renderer/actions.js";
+import { listMethods, messageSkeleton, openNode, type Failure } from "@preman/desktop/renderer/actions.js";
 import { formatJsonTemplate } from "@preman/desktop/renderer/model/format.js";
 import type { PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { flushPending } from "@preman/desktop/renderer/pending.js";
-import { useAncestors, useNode } from "@preman/desktop/renderer/stores/catalog.js";
+import { useAncestors } from "@preman/desktop/renderer/stores/catalog.js";
 import { useAsideStore } from "@preman/desktop/renderer/stores/aside.js";
 import { useOverlayStore } from "@preman/desktop/renderer/stores/overlay.js";
-import { loadTab } from "@preman/desktop/renderer/stores/session.js";
 import {
   BODY_VIEWS,
   DEFAULT_BODY_VIEW,
-  DEFAULT_SUB_TAB,
   type BodyView,
   type SubTab,
+  type SubTabEntry,
   type Tab,
   isDirty,
+  resolveSubTab,
   useTabsStore,
 } from "@preman/desktop/renderer/stores/tabs.js";
 import type { Ask } from "@preman/desktop/renderer/ui/Dialog.js";
@@ -82,25 +104,23 @@ import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import {
   CancelIcon,
-  CaretRightIcon,
-  CollectionIcon,
   CommandIcon,
+  DeleteIcon,
   FormatIcon,
   GenerateIcon,
-  GLYPH_CLASS,
   InsecureIcon,
   LinkIcon,
   PickerIcon,
   SaveIcon,
   SecureIcon,
   SendIcon,
-  WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { commandTitle, formatForKind, HIDE_LABEL } from "@preman/desktop/renderer/model/command.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 import { BANNER_MOTION, Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence, m } from "@preman/desktop/renderer/ui/motion.js";
 import { BodyPreview } from "@preman/desktop/renderer/panes/BodyPreview.js";
+import { DocumentChrome, LoadFailure, Notice, SubTabPane } from "@preman/desktop/renderer/panes/DocumentChrome.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { KeyValueGrid } from "@preman/desktop/renderer/panes/KeyValueGrid.js";
 
@@ -109,10 +129,20 @@ const PARAMS_FIELD = "queryParams";
 const METADATA_FIELD = "metadata";
 const URLENCODED_FIELD = "body";
 
-interface SubTabEntry {
-  readonly id: SubTab;
-  readonly label: string;
-}
+/** `noauth` as the catalog spells it; the pane only ever compares against it. */
+const NO_AUTH_TYPE = "noauth";
+const SECTION_HEADING_CLASS = "text-2xs font-medium tracking-wide text-ink-dim uppercase";
+const AUTH_TYPE_HINT = "Inheriting means the nearest parent that declares auth supplies it.";
+const DELETE_AUTH_WARNING =
+  "Inheriting is the absence of an auth block, so the credentials below are removed. Save to write it.";
+const EXTRA_HEADING = "Other credentials in this file";
+const EXTRA_NOTE = "Kept and written back untouched. This scheme does not read them.";
+const NO_INHERITED_AUTH = "No parent declares auth, so this request is sent unauthenticated.";
+const PARENT_OPTED_OUT = "That parent opted out, so this request is sent unauthenticated.";
+/** What the row below says, so the banner can show the value that is not being sent. */
+const AUTHORED_PREFIX = "Not sent: ";
+const OVERRIDE_REMEDY = "Set Type to Inherit from parent on the Auth tab to send this header instead.";
+const OVERRIDE_REMEDY_INHERITED = "Set Type to No Auth on the Auth tab to send this header instead.";
 
 /** Sub-tab order matches Postman's, so muscle memory lands on the right one. */
 const HTTP_SUB_TABS: readonly SubTabEntry[] = [
@@ -257,27 +287,15 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
   const box = useTokenBox();
 
   if (tab.loading) return <Notice message="Loading." />;
-  if (tab.error !== null) return <Failure title={tab.error.message} details={tab.error.details} />;
+  if (tab.error !== null) return <LoadFailure title={tab.error.message} details={tab.error.details} />;
   if (saved === null) return <Notice message="Nothing loaded." />;
 
   const subTabs = grpc ? GRPC_SUB_TABS : HTTP_SUB_TABS;
-  // A sub-tab remembered from the other protocol - or from before gRPC lost its Headers tab -
-  // names a tab this request does not have, so it is resolved against the list rather than
-  // trusted, exactly as `ScriptsPane` resolves the script phase. Nothing is written back: the
-  // stale id costs a render, and correcting it here would be a store write during a render.
-  const subTab = subTabs.some((entry) => entry.id === tab.subTab) ? tab.subTab : DEFAULT_SUB_TAB;
+  const subTab = resolveSubTab(subTabs, tab.subTab);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Breadcrumb nodeId={tab.nodeId} />
-      <AnimatePresence>
-        {tab.conflicted ? <ConflictBanner nodeId={tab.nodeId} orphaned={tab.orphaned} /> : null}
-      </AnimatePresence>
-      <AnimatePresence>
-        {tab.orphaned ? (
-          <Banner tone="danger" message="This file is gone from disk. Saving will write it back." detail={saved.file} />
-        ) : null}
-      </AnimatePresence>
+      <DocumentChrome tab={tab} />
 
       <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-gutter py-2">
         {grpc ? null : (
@@ -413,31 +431,31 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
           ))}
         </Tabs.List>
 
-        <Pane value="params">
+        <SubTabPane value="params">
           {grpc ? (
             <PairPane field={METADATA_FIELD} noun="metadata entry" data={data} apply={apply} />
           ) : (
             <PairPane field={PARAMS_FIELD} noun="param" data={data} apply={apply} />
           )}
-        </Pane>
+        </SubTabPane>
 
         {/* Same rule as Headers below: no trigger, so no content. gRPC's `auth:` block still runs,
             it is just YAML-only now. */}
         {grpc ? null : (
-          <Pane value="auth">
-            <AuthPane data={data} apply={apply} />
-          </Pane>
+          <SubTabPane value="auth">
+            <AuthPane nodeId={tab.nodeId} data={data} apply={apply} onAsk={onAsk} />
+          </SubTabPane>
         )}
 
         {/* Not rendered at all for gRPC rather than rendered empty: a `Tabs.Content` with no
             trigger is a pane nothing can reach, and the trigger it used to have was a signpost. */}
         {grpc ? null : (
-          <Pane value="headers">
-            <PairPane field={HEADERS_FIELD} noun="header" data={data} apply={apply} />
-          </Pane>
+          <SubTabPane value="headers">
+            <HeadersPane nodeId={tab.nodeId} data={data} apply={apply} />
+          </SubTabPane>
         )}
 
-        <Pane value="body">
+        <SubTabPane value="body">
           {grpc ? (
             <MessagePane
               nodeId={tab.nodeId}
@@ -450,17 +468,17 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
           ) : (
             <BodyPane nodeId={tab.nodeId} view={tab.bodyView} data={data} apply={apply} onFail={onFail} />
           )}
-        </Pane>
+        </SubTabPane>
 
-        <Pane value="scripts">
+        <SubTabPane value="scripts">
           <ScriptsPane tab={tab} data={data} grpc={grpc} apply={apply} />
-        </Pane>
+        </SubTabPane>
 
-        <Pane value="settings">
+        <SubTabPane value="settings">
           <SettingsPane data={data} grpc={grpc} apply={apply} />
-        </Pane>
+        </SubTabPane>
 
-        <Pane value="yaml">
+        <SubTabPane value="yaml">
           <CodeEditor
             value={tab.text ?? saved.text}
             language="yaml"
@@ -468,7 +486,7 @@ export function RequestEditor({ tab, running, onSend, onCancel, onSave, onAsk, o
               if (next !== (tab.text ?? saved.text)) useTabsStore.getState().setText(tab.nodeId, next);
             }}
           />
-        </Pane>
+        </SubTabPane>
       </Tabs.Root>
 
       <CommandPalette
@@ -528,42 +546,6 @@ function TlsToggle({ data, apply }: { readonly data: unknown; readonly apply: Ap
         {tls ? <SecureIcon /> : <InsecureIcon />}
       </button>
     </Tooltip>
-  );
-}
-
-/**
- * Where this request lives, above the bar that sends it.
- *
- * The tab strip can only afford the name, and a workspace has four requests called `Create` in
- * four collections. This is the row that says which one is open - the same answer the sidebar
- * gives by position, written out for the times the sidebar is scrolled somewhere else or shut.
- *
- * Read-only on purpose. Postman makes the crumbs links, but a click target in the row directly
- * above Send, on a name that is also a directory on disk, buys a navigation the sidebar already
- * does and risks a rename nobody asked for.
- *
- * Renders nothing once the node is gone: an orphaned tab has a banner two rows down that says so
- * properly, and a breadcrumb pointing into a tree that no longer contains it would be a lie.
- */
-function Breadcrumb({ nodeId }: { readonly nodeId: string }) {
-  const node = useNode(nodeId);
-  const ancestors = useAncestors(nodeId);
-  if (node === undefined) return null;
-
-  return (
-    <nav
-      aria-label="Location"
-      className="flex h-tab shrink-0 items-center gap-1.5 border-b border-line px-gutter text-sm"
-    >
-      <CollectionIcon className="shrink-0 text-ink-dim" />
-      {ancestors.map((crumb) => (
-        <Fragment key={crumb.id}>
-          <span className="min-w-0 truncate text-ink-dim">{crumb.name}</span>
-          <CaretRightIcon className={cn("shrink-0", GLYPH_CLASS)} />
-        </Fragment>
-      ))}
-      <span className="min-w-0 truncate font-medium text-ink">{node.name}</span>
-    </nav>
   );
 }
 
@@ -634,14 +616,6 @@ function useMethodPicker(nodeId: string, apply: Apply, onFail: (failure: Failure
   return { open, items, show, dismiss, choose };
 }
 
-function Pane({ value, children }: { readonly value: SubTab; readonly children: React.ReactNode }) {
-  return (
-    <Tabs.Content value={value} className="flex min-h-0 flex-1 flex-col focus:outline-none">
-      {children}
-    </Tabs.Content>
-  );
-}
-
 /** One grid, wired to whichever field it edits. The shape-preserving edits live in the model. */
 function PairPane({
   field,
@@ -682,40 +656,187 @@ function PairPane({
 }
 
 /**
- * Auth is an open `{type, credentials}` block in the format and every provider names its
- * credentials differently, so this surfaces the type plus whatever keys the file already
- * carries rather than pretending to know the shape of nine auth schemes.
+ * The headers, and a word about the one the auth block is going to take.
+ *
+ * `applyAuth` deletes a colliding header and sends the block's value instead, so the grid can
+ * show a row that will never leave the machine - which is exactly the confusion that sent
+ * `Bearer $KEY` at a live endpoint for weeks. Postman answers this here, marking the entry that
+ * loses, rather than on the Authorization tab, so this is read here too.
+ *
+ * A banner rather than a marker on the row: `KeyValueGrid` is a four-column grid with no room for
+ * a fifth, and the sentence needs to name both the scheme and where it came from.
  */
-function AuthPane({ data, apply }: { readonly data: unknown; readonly apply: Apply }) {
-  const type = readText(data, FIELD.authType);
-  const credentials = readCredentials(data);
-  const box = useTokenBox();
+function HeadersPane({
+  nodeId,
+  data,
+  apply,
+}: {
+  readonly nodeId: string;
+  readonly data: unknown;
+  readonly apply: Apply;
+}) {
+  const ancestors = useAncestors(nodeId);
+  const override = authOverride(data, ancestors);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-gutter">
-      <Labelled label="Type" htmlFor="auth-type" hint="Empty means inherit from the folder. Core resolves the chain.">
+    <>
+      <AnimatePresence initial={false}>
+        {override !== null && (
+          <m.div key="auth-override" {...BANNER_MOTION}>
+            <Banner
+              tone="warn"
+              message={`${override.type} auth replaces the "${override.name}" header ${override.origin === null ? "below" : `inherited from ${override.origin.label}`}.`}
+              details={[
+                ...override.displaced.map((value) => `${AUTHORED_PREFIX}${value}`),
+                override.origin === null ? OVERRIDE_REMEDY : OVERRIDE_REMEDY_INHERITED,
+              ]}
+            />
+          </m.div>
+        )}
+      </AnimatePresence>
+      <PairPane field={HEADERS_FIELD} noun="header" data={data} apply={apply} />
+    </>
+  );
+}
+
+/**
+ * Auth: a type picker, the credentials that type reads, and whatever else the file carries.
+ *
+ * This pane used to show the type as free text and only the credential keys the file already
+ * had, on the stated grounds that it would not "pretend to know the shape of nine auth schemes".
+ * There are four, `renderAuth` names each one's keys, and the cost of not naming them was that a
+ * new request could not be given auth at all and a migrated one - whose credentials are an array,
+ * which the old reader rejected - showed an empty tab while authenticating fine on the wire.
+ *
+ * Shared with the group editor, unchanged: that a folder and a request both carry `auth:` is why
+ * inheritance exists, so one editor for it is that fact expressed once rather than twice.
+ */
+export function AuthPane({
+  nodeId,
+  data,
+  apply,
+  onAsk,
+}: {
+  readonly nodeId: string;
+  readonly data: unknown;
+  readonly apply: Apply;
+  readonly onAsk: (ask: Ask) => void;
+}) {
+  const block = readAuth(data);
+  const ancestors = useAncestors(nodeId);
+  const box = useTokenBox();
+  const choice = block.choice;
+
+  const choose = (next: AuthChoice): void => {
+    // The one edit in this pane that deletes user data: the absence of the key is the only way
+    // the format says "inherit", so there is no non-destructive spelling of it. Asked about only
+    // when there is something to lose, or the dialog becomes the thing you click through.
+    if (next.kind === "inherit" && hasCredentials(block)) {
+      onAsk({
+        kind: "confirm",
+        title: "Delete this auth block?",
+        body: DELETE_AUTH_WARNING,
+        submit: "Delete",
+        onConfirm: () => {
+          apply(editAuthChoice(next));
+        },
+      });
+      return;
+    }
+    apply(editAuthChoice(next));
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-gutter">
+      <Labelled label="Type" htmlFor="auth-type" hint={AUTH_TYPE_HINT}>
         <div className="w-56">
-          <Field
+          <Select
             id="auth-type"
-            key={type}
-            mono
-            defaultValue={type}
-            placeholder="bearer"
-            onToken={box.report}
-            onBlur={(event) => {
-              if (event.currentTarget.value !== type) apply([edit(FIELD.authType, event.currentTarget.value)]);
+            aria-label="Auth type"
+            full
+            value={choice.kind === "inherit" ? INHERIT_VALUE : choice.kind === "scheme" ? choice.scheme : block.type}
+            onValueChange={(next) => {
+              choose(
+                next === INHERIT_VALUE
+                  ? INHERIT
+                  : AUTH_SCHEMES.includes(next as AuthScheme)
+                    ? { kind: "scheme", scheme: next as AuthScheme }
+                    : { kind: "unsupported", type: next },
+              );
             }}
-          />
+          >
+            <SelectOption value={INHERIT_VALUE}>{INHERIT_LABEL}</SelectOption>
+            {AUTH_SCHEMES.map((scheme) => (
+              <SelectOption key={scheme} value={scheme}>
+                {SCHEME_LABELS[scheme]}
+              </SelectOption>
+            ))}
+            {/* The file's own value, so a type this app cannot render is still the one on screen.
+                Radix shows nothing for a value that is not an item, which would hide it. */}
+            {choice.kind === "unsupported" && <SelectOption value={block.type}>{block.type}</SelectOption>}
+          </Select>
         </div>
       </Labelled>
-      <FieldRows
-        rows={credentials}
-        empty="No credentials here. Either the folder supplies them, or add them on the YAML tab."
-        onToken={box.report}
-        onCommit={(key, value) => {
-          apply([edit(["auth", "credentials", key], value)]);
-        }}
-      />
+
+      {choice.kind === "unsupported" && (
+        <Banner
+          tone="danger"
+          message={`This app cannot render auth type "${block.type}".`}
+          detail={`Sending it fails with: supported types: ${AUTH_SCHEMES.join(", ")}. Edit the block on the YAML tab.`}
+        />
+      )}
+
+      {choice.kind === "inherit" && <InheritedAuth ancestors={ancestors} />}
+
+      {choice.kind === "scheme" && CREDENTIAL_FIELDS[choice.scheme].length > 0 && (
+        <div className="flex flex-col gap-3">
+          {CREDENTIAL_FIELDS[choice.scheme].map((field) => (
+            <CredentialRow
+              key={field.key}
+              field={field}
+              value={credentialValue(block, field.key)}
+              onToken={box.report}
+              onCommit={(value) => {
+                apply(editCredential(block, field.key, value));
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {block.extra.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <p className={SECTION_HEADING_CLASS}>{EXTRA_HEADING}</p>
+          <p className="text-2xs text-ink-faint">{EXTRA_NOTE}</p>
+          {block.extra.map((pair) => (
+            <div key={String(pair.at)} className="flex items-center gap-2 border-b border-line">
+              <span className="w-44 shrink-0 truncate font-mono text-xs text-ink-dim">{pair.key}</span>
+              <div className="min-w-0 flex-1">
+                <CellField
+                  key={`${pair.key}:${pair.value}`}
+                  defaultValue={pair.value}
+                  aria-label={pair.key}
+                  onToken={box.report}
+                  onBlur={(event) => {
+                    if (event.currentTarget.value !== pair.value) {
+                      apply(editCredential(block, pair.key, event.currentTarget.value));
+                    }
+                  }}
+                />
+              </div>
+              <IconButton
+                label={`Remove ${pair.key}`}
+                onClick={() => {
+                  apply(editCredentialRemoved(block, pair));
+                }}
+              >
+                <DeleteIcon />
+              </IconButton>
+            </div>
+          ))}
+        </div>
+      )}
+
       {box.clicked !== null && (
         <TokenBox key={box.clicked.name} name={box.clicked.name} at={box.clicked.at} onDismiss={box.dismiss} />
       )}
@@ -723,28 +844,87 @@ function AuthPane({ data, apply }: { readonly data: unknown; readonly apply: App
   );
 }
 
-/**
- * `auth.credentials` is an open record and every scheme names its keys differently, so the
- * pane edits the keys the file already has rather than pretending to know the shape of nine
- * auth schemes. Adding a key is the YAML tab's job.
- */
-function readCredentials(data: unknown): readonly Pair[] {
-  return readNestedRecord(data, ["auth", "credentials"]);
+/** One named credential: a `Field`, or a `Select` when the scheme's value is a fixed choice. */
+function CredentialRow({
+  field,
+  value,
+  onToken,
+  onCommit,
+}: {
+  readonly field: CredentialField;
+  readonly value: string;
+  readonly onToken: TokenReporter;
+  readonly onCommit: (value: string) => void;
+}) {
+  const id = `auth-credential-${field.key}`;
+  if (field.choices !== undefined) {
+    return (
+      <Labelled label={field.label} htmlFor={id} {...(field.hint === undefined ? {} : { hint: field.hint })}>
+        <div className="w-56">
+          <Select
+            id={id}
+            aria-label={field.label}
+            full
+            // An absent `in` is a header, because that is what core makes of anything that is
+            // not `query`. The control shows the effective value rather than an empty trigger.
+            value={value.trim().toLowerCase() === API_KEY_IN_QUERY ? API_KEY_IN_QUERY : API_KEY_IN_HEADER}
+            onValueChange={onCommit}
+          >
+            {field.choices.map((option) => (
+              <SelectOption key={option.value} value={option.value}>
+                {option.label}
+              </SelectOption>
+            ))}
+          </Select>
+        </div>
+      </Labelled>
+    );
+  }
+  return (
+    <Labelled label={field.label} htmlFor={id} {...(field.hint === undefined ? {} : { hint: field.hint })}>
+      <Field
+        id={id}
+        key={value}
+        mono
+        defaultValue={value}
+        onToken={onToken}
+        onBlur={(event) => {
+          if (event.currentTarget.value !== value) onCommit(event.currentTarget.value);
+        }}
+      />
+    </Labelled>
+  );
 }
 
-function readNestedRecord(data: unknown, path: readonly string[]): readonly Pair[] {
-  let cursor: unknown = data;
-  for (const step of path) {
-    if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) return [];
-    cursor = (cursor as Record<string, unknown>)[step];
-  }
-  if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) return [];
-  return Object.entries(cursor as Record<string, unknown>).map(([key, value]) => ({
-    key,
-    value: typeof value === "string" ? value : JSON.stringify(value),
-    disabled: false,
-    at: key,
-  }));
+/**
+ * What an inheriting document will actually send, and where it comes from.
+ *
+ * The old pane said "Empty means inherit from the folder. Core resolves the chain." and showed
+ * nothing else, so the one thing the user wanted - which folder, and which scheme - arrived as a
+ * Console warning after a send. The origin is a button because this is the moment someone wants
+ * that folder open.
+ */
+function InheritedAuth({ ancestors }: { readonly ancestors: readonly CatalogNode[] }) {
+  const origin = inheritedAuth(ancestors);
+  if (origin === null) return <p className="text-2xs text-ink-faint">{NO_INHERITED_AUTH}</p>;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-2xs text-ink-dim">
+        Inherited from{" "}
+        <Button
+          variant="quiet"
+          onClick={() => {
+            openNode(origin.nodeId);
+          }}
+        >
+          {origin.kind} {origin.name}
+        </Button>
+      </p>
+      <p className="text-sm text-ink">{schemeLabel(origin.type)}</p>
+      {origin.type === NO_AUTH_TYPE && <p className="text-2xs text-ink-faint">{PARENT_OPTED_OUT}</p>}
+    </div>
+  );
 }
 
 /**
@@ -1395,72 +1575,5 @@ function SchemaFields({ data, apply }: { readonly data: unknown; readonly apply:
 function SectionLabel({ children }: { readonly children: React.ReactNode }) {
   return (
     <p className="shrink-0 border-y border-line bg-panel px-gutter py-1 font-mono text-2xs text-ink-dim">{children}</p>
-  );
-}
-
-/**
- * `orphaned` removes `Take theirs`, because on a file that is gone there is no theirs to take: the
- * button would discard the edits and then fail the re-read, so the one press that cannot be undone
- * would also be the one that achieves nothing. `Keep mine` stays, and the orphan banner below this
- * one says what saving would then do.
- */
-function ConflictBanner({ nodeId, orphaned }: { readonly nodeId: string; readonly orphaned: boolean }) {
-  return (
-    // Its own bar rather than a `Banner`, because it offers two answers to a question rather than
-    // the one action a `Banner` takes, and they sit centred against a single line instead of top-
-    // aligned against a stack. It arrives the same way, or the two bars stacked here would
-    // disagree about what a notice is.
-    <m.div
-      {...BANNER_MOTION}
-      className="flex shrink-0 items-center gap-2 border-b border-warn/40 bg-warn/10 px-gutter py-1.5"
-    >
-      <WarningIcon className="shrink-0 text-warn" />
-      <span className="text-xs text-ink">
-        {orphaned
-          ? "This file was deleted while you were editing it."
-          : "This file changed on disk while you were editing it."}
-      </span>
-      <div className="ml-auto flex gap-1.5">
-        {orphaned ? null : (
-          <Button
-            onClick={() => {
-              // Discard first, so the re-read is not itself treated as a conflict.
-              useTabsStore.getState().discard(nodeId);
-              void loadTab(nodeId);
-            }}
-          >
-            Take theirs
-          </Button>
-        )}
-        <Button
-          onClick={() => {
-            useTabsStore.getState().keepMine(nodeId);
-          }}
-        >
-          Keep mine
-        </Button>
-      </div>
-    </m.div>
-  );
-}
-
-function Notice({ message }: { readonly message: string }) {
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-gutter">
-      <p className="text-xs text-ink-faint">{message}</p>
-    </div>
-  );
-}
-
-function Failure({ title, details }: { readonly title: string; readonly details: readonly string[] }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-gutter">
-      <p className="text-xs text-danger">{title}</p>
-      {details.map((line) => (
-        <p key={line} className="font-mono text-2xs text-ink-dim">
-          {line}
-        </p>
-      ))}
-    </div>
   );
 }

@@ -13,6 +13,7 @@
 import { readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
 import type {
@@ -70,7 +71,15 @@ import {
   migrateFromPostman,
   useSessionStore,
 } from "@preman/desktop/renderer/stores/session.js";
-import { DEFAULT_BODY_VIEW, isDirty, useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
+import {
+  DEFAULT_BODY_VIEW,
+  DEFAULT_SUB_TAB,
+  isDirty,
+  resolveSubTab,
+  useTabsStore,
+  type SubTabEntry,
+} from "@preman/desktop/renderer/stores/tabs.js";
+import { INHERIT, editAuthChoice, readAuth } from "@preman/desktop/renderer/model/auth.js";
 
 import { cloneFixtureHttpWorkspace, cloneFixtureWorkspace, type ClonedWorkspace } from "../helpers.js";
 
@@ -1719,5 +1728,97 @@ describe("the overlay over the editor", () => {
 
     overlay.dismiss();
     expect(useOverlayStore.getState().overlay).toBeNull();
+  });
+});
+
+/**
+ * A group is a document you can open, so it goes through the same tab, the same `read-node` and
+ * the same `write-node` a request does. What is different is its sub-tab list - two entries, and
+ * neither of them the one `DEFAULT_SUB_TAB` names.
+ */
+describe("a group as an open document", () => {
+  let workspace: ClonedWorkspace;
+  let host: EngineHost;
+
+  const GROUP_SUB_TABS: readonly SubTabEntry[] = [
+    { id: "auth", label: "Auth" },
+    { id: "yaml", label: "YAML" },
+  ];
+  const HTTP_SUB_TABS: readonly SubTabEntry[] = [
+    { id: "params", label: "Params" },
+    { id: "auth", label: "Auth" },
+    { id: "body", label: "Body" },
+  ];
+
+  beforeEach(async () => {
+    resetStores();
+    workspace = cloneFixtureWorkspace();
+    host = createEngineHost({ root: workspace.root, post: () => undefined, log: () => undefined });
+    const client = hostClient(host, workspace.root);
+    useSessionStore.getState().setClient(client, workspace.root);
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+  });
+
+  afterEach(() => {
+    host.dispose();
+    resetStores();
+    workspace.cleanup();
+  });
+
+  /** The bug this replaced: `body` is not on a group's list, so the fallback drew a dead pane. */
+  it("givenAGroupTabRememberingBody_whenResolved_thenAuthIsDrawnRatherThanBody", () => {
+    expect(resolveSubTab(GROUP_SUB_TABS, DEFAULT_SUB_TAB)).toBe("auth");
+  });
+
+  it("givenASubTabTheListHas_whenResolved_thenItIsKept", () => {
+    expect(resolveSubTab(GROUP_SUB_TABS, "yaml")).toBe("yaml");
+    expect(resolveSubTab(HTTP_SUB_TABS, "auth")).toBe("auth");
+  });
+
+  it("givenASubTabFromAnotherProtocol_whenResolved_thenTheFirstOfThisListIsDrawn", () => {
+    expect(resolveSubTab(HTTP_SUB_TABS, "settings")).toBe("params");
+  });
+
+  it("givenACollection_whenOpened_thenItsDefinitionLoadsAsATab", async () => {
+    const node = useCatalogStore.getState().byId.get(PAYMENT_ID);
+    expect(node?.kind).toBe("collection");
+    useTabsStore.getState().open(node!);
+    const document = await useSessionStore.getState().client!.send("read-node", { nodeId: PAYMENT_ID });
+    useTabsStore.getState().loaded(PAYMENT_ID, document);
+
+    const tab = useTabsStore.getState().tabs.get(PAYMENT_ID);
+    expect(tab?.kind).toBe("collection");
+    expect(tab?.saved?.file).toContain(join(".resources", "definition.yaml"));
+    expect(readAuth(tab?.saved?.data).choice).toStrictEqual(INHERIT);
+  });
+
+  /**
+   * The case that would otherwise make the editor unreachable for exactly the groups an import
+   * produces: no definition file at all. It opens empty, and the first save creates it.
+   */
+  it("givenAGroupWithNoDefinition_whenOpenedAndSaved_thenTheFileIsCreatedWithTheAuthBlock", async () => {
+    rmSync(join(workspace.root, NESTED_ID, ".resources"), { recursive: true, force: true });
+    const client = useSessionStore.getState().client!;
+    useCatalogStore.getState().replace(await client.send("catalog", {}));
+    const node = useCatalogStore.getState().byId.get(NESTED_ID);
+    expect(node?.kind).toBe("folder");
+
+    useTabsStore.getState().open(node!);
+    useTabsStore.getState().loaded(NESTED_ID, await client.send("read-node", { nodeId: NESTED_ID }));
+    const opened = useTabsStore.getState().tabs.get(NESTED_ID);
+    expect(opened?.saved?.text).toBe("");
+    expect(opened?.error).toBeNull();
+
+    for (const change of editAuthChoice({ kind: "scheme", scheme: "bearer" })) {
+      useTabsStore.getState().setField(NESTED_ID, change.path, change.value);
+    }
+    useTabsStore.getState().setField(NESTED_ID, ["auth", "credentials", "token"], "{{token}}");
+    const failed = await saveTab(useTabsStore.getState().tabs.get(NESTED_ID)!);
+
+    expect(failed).toBeNull();
+    const written: unknown = parse(
+      readFileSync(join(workspace.root, NESTED_ID, ".resources", "definition.yaml"), "utf8"),
+    );
+    expect(written).toMatchObject({ auth: { type: "bearer", credentials: { token: "{{token}}" } } });
   });
 });

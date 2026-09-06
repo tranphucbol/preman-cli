@@ -2,12 +2,13 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  authTypeOf,
   compareOrderThenName,
   readRequestHeader,
   type Ordered,
   type RequestHeader,
 } from "@preman/core/workspace/collections.js";
-import { readGroupDefinition } from "@preman/core/workspace/definitions.js";
+import { readGroupDefinition, type GroupDefinition } from "@preman/core/workspace/definitions.js";
 import { requireWorkspace, type Workspace } from "@preman/core/workspace/discover.js";
 import { listEnvironments } from "@preman/core/workspace/environments.js";
 import { nodeIdFor } from "@preman/core/workspace/paths.js";
@@ -66,6 +67,17 @@ export interface CatalogNode {
   protocol?: CatalogProtocol;
   /** "GET", or the method tail for gRPC. */
   label?: string;
+  /**
+   * The `auth.type` this node declares, trimmed and lowercased. Absent when it declares no
+   * `auth:` block at all — which is the state `resolveAuth` inherits through, so the two must
+   * stay distinguishable here.
+   *
+   * The type only, never the credentials: the catalog is pushed to every renderer on every
+   * refresh, and broadcasting every token in the workspace to answer "which scheme" is a bad
+   * trade. What a front end does with this is show the origin of an inherited block without
+   * asking the engine to walk the chain again.
+   */
+  auth?: string;
 }
 
 export interface Catalog {
@@ -105,6 +117,7 @@ function requestNode(
     order: orderOf(header.order),
     protocol: PROTOCOL_BY_KIND[header.kind] ?? "unsupported",
     label: header.label,
+    ...(header.auth === undefined ? {} : { auth: header.auth }),
   };
 }
 
@@ -153,14 +166,26 @@ async function readChildren(root: string, dir: string, parentPath: string): Prom
 async function emitGroup(
   root: string,
   dir: string,
-  definition: { name: string; order: number | undefined; path: string },
+  definition: GroupDefinition,
   kind: "collection" | "folder",
   parentId: string | null,
   depth: number,
   out: CatalogNode[],
 ): Promise<void> {
   const id = nodeIdFor(root, dir);
-  out.push({ id, kind, name: definition.name, file: dir, parentId, depth, order: orderOf(definition.order) });
+  // `readGroupDefinition` already parsed and validated the block, so this is a property read
+  // rather than a second reader of the same file.
+  const auth = authTypeOf(definition.auth);
+  out.push({
+    id,
+    kind,
+    name: definition.name,
+    file: dir,
+    parentId,
+    depth,
+    order: orderOf(definition.order),
+    ...(auth === undefined ? {} : { auth }),
+  });
 
   for (const child of await readChildren(root, dir, definition.path)) {
     await child.emit(id, depth + 1, out);

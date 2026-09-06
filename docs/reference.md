@@ -589,8 +589,20 @@ Supported authentication types are:
 - `basic`
 - `apikey`, in a header or query parameter
 
-An explicit `authorization` header takes precedence over the `auth` block and produces a warning.
-Unsupported authentication types are errors.
+Each type reads its own credential keys: `bearer` reads `token`, `basic` reads `username` and
+`password`, and `apikey` reads `key`, `value` and `in` — where `in: query` puts it in the query
+string and anything else puts it in a header named by `key`. `credentials` is accepted as a map or
+as a list of `{key, value}` entries, because a workspace migrated from Postman's cloud is written
+in the second shape; the desktop app writes back whichever shape it found.
+
+The `auth` block takes precedence over an authored header, following Postman, whose authorizers
+remove the header before adding their own. An enabled `Authorization` header — or, for `apikey`, a
+header named by the block's own `key` — is replaced in place under the name the block renders, any
+further enabled entry of that name is removed so the wire never carries two, and a warning names
+what was replaced. Disabled entries are left alone. `noauth`, an absent block, and a block whose
+token renders empty change nothing, so the authored header is sent exactly as written. gRPC does
+the same to its metadata, except that a replaced entry moves to the end of the map and takes a
+disabled entry of the same name with it. Unsupported authentication types are errors.
 
 Authentication is inherited, following Postman v2.1. A request with no `auth` key inherits from the
 nearest ancestor that declares one; a request that must be unauthenticated writes

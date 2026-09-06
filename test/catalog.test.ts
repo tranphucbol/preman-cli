@@ -82,6 +82,59 @@ describe("buildCatalog", () => {
     expect(catalog.specs).toEqual([]);
     expect(catalog.workspaceId).toBeNull();
   });
+
+  it("givenACollectionWithAuth_whenBuildCatalog_thenTheNodeCarriesItsType", async () => {
+    const catalog = await buildCatalog(FIXTURE_HTTP_WS);
+
+    expect(byName(catalog, "admin").auth).toBe("bearer");
+  });
+
+  it("givenARequestWithAuth_whenBuildCatalog_thenTheNodeCarriesItsType", async () => {
+    const catalog = await buildCatalog(FIXTURE_HTTP_WS);
+
+    expect(byName(catalog, "Profile").auth).toBe("bearer");
+    expect(byName(catalog, "Login").auth).toBe("noauth");
+  });
+
+  /**
+   * An absent field and a `noauth` one are different answers: absent is what the inheritance
+   * walk continues through, and `noauth` is what stops it. A reader that reported both as
+   * `undefined` would make an explicit opt-out look like no opt-out at all.
+   */
+  it("givenANodeWithNoAuth_whenBuildCatalog_thenTheFieldIsAbsent", async () => {
+    const catalog = await buildCatalog(FIXTURE_WS);
+
+    expect(byName(catalog, "payment").auth).toBeUndefined();
+    expect(byName(catalog, "Echo").auth).toBeUndefined();
+  });
+
+  it("givenAnUppercaseAuthType_whenBuildCatalog_thenItIsLowercased", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const file = collectionPath(clone.root, "payment", "Echo.request.yaml");
+      writeFileSync(file, `${readFileSync(file, "utf8")}\nauth:\n  type: BEARER\n`);
+
+      const catalog = await buildCatalog(clone.root);
+
+      expect(byName(catalog, "Echo").auth).toBe("bearer");
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  it("givenAnEmptyAuthType_whenBuildCatalog_thenItReadsAsNoauthRatherThanAbsent", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const file = definitionPath(clone.root, "payment", "nested");
+      writeFileSync(file, `${readFileSync(file, "utf8")}\nauth:\n  type: ""\n`);
+
+      const catalog = await buildCatalog(clone.root);
+
+      expect(byName(catalog, "nested").auth).toBe("noauth");
+    } finally {
+      clone.cleanup();
+    }
+  });
 });
 
 describe("refreshCatalog", () => {

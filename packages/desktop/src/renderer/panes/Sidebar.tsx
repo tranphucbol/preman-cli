@@ -691,6 +691,21 @@ function SidebarContextMenu({ targetId, ...props }: { readonly targetId: string 
       {group && (
         <>
           {/*
+            First, where Send is for a request: opening the thing you are pointing at is the
+            primary act in both. It is here rather than on the row's click because a click on a
+            group already means collapse, and a tree you cannot fold without opening a tab would
+            be a worse trade than one extra menu item.
+
+            No ellipsis - it opens a tab and asks nothing, exactly like Copy as cURL above.
+          */}
+          <ContextItem
+            icon={node.kind === "collection" ? <CollectionIcon /> : <FolderIcon />}
+            onSelect={() => props.onOpen(node)}
+          >
+            Edit {node.kind === "collection" ? "collection" : "folder"}
+          </ContextItem>
+          <ContextSeparator />
+          {/*
             Opens the runner rather than starting a run. A collection run takes an iteration count,
             a data file and a bail flag, and firing one off from a context menu with all three
             defaulted is how you find out you needed them afterwards.

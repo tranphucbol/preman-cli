@@ -2074,7 +2074,7 @@ describe("group-level auth (gRPC)", () => {
     }
   });
 
-  it("givenGrpcExplicitAuthorizationMetadata_whenAuthBlockPresent_thenMetadataWinsWithWarning", async () => {
+  it("givenGrpcExplicitAuthorizationMetadata_whenAuthBlockPresent_thenTheBlockReachesTheWire", async () => {
     const clone = cloneFixtureWorkspace();
     try {
       writeDefinition(
@@ -2091,9 +2091,12 @@ describe("group-level auth (gRPC)", () => {
       const { code, stdout } = await runCli(deepEcho(clone.root));
 
       expect(code).toBe(EXIT.OK);
-      expect(received[0]?.metadata.authorization).toBe("Bearer explicit");
+      // The block wins, and there is one entry rather than two: `remove` before `add`.
+      expect(received[0]?.metadata.authorization).toBe("Bearer folder-token");
       const report = JSON.parse(stdout) as RunReport;
-      expect(report.warnings).toContain('request metadata "authorization" overrides the bearer auth block');
+      expect(report.warnings).toContain(
+        'bearer auth replaced request metadata "authorization"; delete the auth block to send the metadata instead',
+      );
     } finally {
       clone.cleanup();
     }

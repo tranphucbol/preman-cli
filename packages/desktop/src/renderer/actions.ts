@@ -81,6 +81,21 @@ export async function saveTab(tab: Tab): Promise<Failure | null> {
 }
 
 /**
+ * Open a node's tab and read it, selecting its row on the way.
+ *
+ * Here rather than in a component because two places open a tab from an id alone: the sidebar,
+ * and the Auth pane's inherited-from button. A pane that opened a tab without reading it would
+ * leave `loading: true` forever, which is the kind of thing that only happens once.
+ */
+export function openNode(nodeId: string): void {
+  const node = useCatalogStore.getState().byId.get(nodeId);
+  if (node === undefined) return;
+  useCatalogStore.getState().select(nodeId);
+  useTabsStore.getState().open({ id: node.id, name: node.name, kind: node.kind });
+  void loadTab(nodeId);
+}
+
+/**
  * Send one request.
  *
  * Saving first is deliberate and is the one place this app departs from Postman, which sends

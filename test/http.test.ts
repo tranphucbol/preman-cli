@@ -8,6 +8,7 @@ import {
   dropEmptyValues,
   findHeader,
   normalizeKeyValues,
+  replaceHeader,
   setHeaderIfAbsent,
   toOutgoingHeaders,
   type KeyValue,
@@ -93,6 +94,31 @@ describe("header helpers", () => {
       { key: "accept", value: "*/*" },
     ];
     expect(toOutgoingHeaders(list)).toEqual({ "x-tag": ["a", "b"], accept: "*/*" });
+  });
+
+  it("givenNoMatch_whenReplaceHeader_thenNothingChanges", () => {
+    const list: KeyValue[] = [{ key: "accept", value: "*/*" }];
+    expect(replaceHeader(list, "Authorization", "Bearer x")).toEqual([]);
+    expect(list).toEqual([{ key: "accept", value: "*/*" }]);
+  });
+
+  it("givenTwoEnabledMatches_whenReplaceHeader_thenOneRemainsInTheFirstPosition", () => {
+    const list: KeyValue[] = [
+      { key: "authorization", value: "one" },
+      { key: "accept", value: "*/*" },
+      { key: "Authorization", value: "two" },
+    ];
+    expect(replaceHeader(list, "Authorization", "Bearer x")).toEqual(["one", "two"]);
+    expect(list).toEqual([
+      { key: "Authorization", value: "Bearer x" },
+      { key: "accept", value: "*/*" },
+    ]);
+  });
+
+  it("givenADisabledMatch_whenReplaceHeader_thenItSurvivesUntouched", () => {
+    const list: KeyValue[] = [{ key: "Authorization", value: "parked", disabled: true }];
+    expect(replaceHeader(list, "Authorization", "Bearer x")).toEqual([]);
+    expect(list).toEqual([{ key: "Authorization", value: "parked", disabled: true }]);
   });
 });
 
@@ -214,7 +240,22 @@ describe("applyAuth", () => {
     expect(url.search).toBe("?api_key=tok-1");
   });
 
-  it("givenAnExplicitAuthorizationHeader_whenAuthBlockPresent_thenTheHeaderWinsWithAWarning", () => {
+  it("givenApiKeyInQueryClashingWithAnAuthoredParam_whenApplied_thenTheBlockWins", () => {
+    // `searchParams.set` has always replaced, so the query path matched Postman before the
+    // header path did. Asserted so the two halves cannot drift apart again.
+    const url = new URL("http://host/x?api_key=stale");
+    applyAuth({
+      auth: { type: "apikey", credentials: { key: "api_key", value: "{{jwt_token}}", in: "query" } },
+      headers: [],
+      url,
+      store: store(),
+    });
+    expect(url.search).toBe("?api_key=tok-1");
+  });
+
+  it("givenAnAuthorizationHeaderAndABearerBlock_whenApplied_thenTheBlockReplacesTheHeader", () => {
+    // The configuration a curl paste plus a filled-in Auth tab leaves behind. Postman's signers
+    // removeHeader() first, so the block is what goes on the wire and the paste is discarded.
     const headers: KeyValue[] = [{ key: "authorization", value: "Bearer mine" }];
     const warnings = applyAuth({
       auth: { type: "bearer", credentials: { token: "{{jwt_token}}" } },
@@ -222,8 +263,85 @@ describe("applyAuth", () => {
       url: new URL("http://host/x"),
       store: store(),
     });
-    expect(pairs(headers)).toEqual({ authorization: "Bearer mine" });
-    expect(warnings.join(" ")).toContain("overrides the bearer auth block");
+    expect(pairs(headers)).toEqual({ Authorization: "Bearer tok-1" });
+    expect(warnings.join(" ")).toContain('bearer auth replaced request header "Authorization"');
+  });
+
+  it("givenALowercaseAuthorizationHeader_whenApplied_thenTheCanonicalNameIsSent", () => {
+    const headers: KeyValue[] = [{ key: "authorization", value: "Bearer mine" }];
+    applyAuth({
+      auth: { type: "bearer", credentials: { token: "{{jwt_token}}" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(headers).toEqual([{ key: "Authorization", value: "Bearer tok-1" }]);
+  });
+
+  it("givenTwoEnabledAuthorizationHeaders_whenApplied_thenOnlyTheBlockRemains", () => {
+    const headers: KeyValue[] = [
+      { key: "X-Trace", value: "keep" },
+      { key: "authorization", value: "Bearer one" },
+      { key: "Authorization", value: "Bearer two" },
+    ];
+    applyAuth({
+      auth: { type: "bearer", credentials: { token: "{{jwt_token}}" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    // The first match keeps its position; the duplicate goes, so the wire carries one.
+    expect(headers).toEqual([
+      { key: "X-Trace", value: "keep" },
+      { key: "Authorization", value: "Bearer tok-1" },
+    ]);
+  });
+
+  it("givenADisabledAuthorizationHeader_whenApplied_thenItSurvivesAndNothingWarns", () => {
+    const headers: KeyValue[] = [{ key: "Authorization", value: "Bearer parked", disabled: true }];
+    const warnings = applyAuth({
+      auth: { type: "bearer", credentials: { token: "{{jwt_token}}" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(headers).toEqual([
+      { key: "Authorization", value: "Bearer parked", disabled: true },
+      { key: "Authorization", value: "Bearer tok-1" },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("givenAnApikeyHeaderThatClashes_whenApplied_thenTheBlockReplacesItAndTheWarningNamesApikey", () => {
+    const headers: KeyValue[] = [{ key: "X-Api-Key", value: "stale" }];
+    const warnings = applyAuth({
+      auth: { type: "apikey", credentials: { key: "X-Api-Key", value: "{{jwt_token}}" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(headers).toEqual([{ key: "X-Api-Key", value: "tok-1" }]);
+    expect(warnings.join(" ")).toContain('apikey auth replaced request header "X-Api-Key"');
+  });
+
+  it("givenNoauthAndAnAuthorizationHeader_whenApplied_thenTheHeaderSurvives", () => {
+    // Opting out of auth is not the same as deleting a header the file states literally.
+    const headers: KeyValue[] = [{ key: "authorization", value: "Bearer mine" }];
+    const warnings = applyAuth({ auth: { type: "noauth" }, headers, url: new URL("http://host/x"), store: store() });
+    expect(headers).toEqual([{ key: "authorization", value: "Bearer mine" }]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("givenAnEmptyBearerTokenAndAnAuthorizationHeader_whenApplied_thenTheHeaderSurvives", () => {
+    const headers: KeyValue[] = [{ key: "authorization", value: "Bearer mine" }];
+    const warnings = applyAuth({
+      auth: { type: "bearer", credentials: { token: "" } },
+      headers,
+      url: new URL("http://host/x"),
+      store: store(),
+    });
+    expect(headers).toEqual([{ key: "authorization", value: "Bearer mine" }]);
+    expect(warnings.join(" ")).toContain("bearer token is empty");
   });
 
   it("givenNoauthOrNothing_whenApplied_thenNoHeaderIsAdded", () => {

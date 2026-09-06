@@ -66,11 +66,36 @@ export function setHeaderIfAbsent(headers: KeyValue[], name: string, value: stri
 }
 
 /**
+ * Overwrite every enabled `name` header with one `name: value`, and answer with
+ * the values that were displaced.
+ *
+ * The first match keeps its position, so a verbose dump still reads in authored
+ * order, and any further enabled match is dropped rather than left to reach the
+ * wire as a duplicate. Disabled rows are not matched, removed or counted: they
+ * never reach the wire, and the author parked them deliberately. Postman's
+ * `removeHeader` would take them too, but Postman has no disabled header in the
+ * list it signs.
+ */
+export function replaceHeader(headers: KeyValue[], name: string, value: string): string[] {
+  const wanted = name.toLowerCase();
+  const hits: number[] = [];
+  headers.forEach((header, index) => {
+    if (header.disabled !== true && header.key.toLowerCase() === wanted) hits.push(index);
+  });
+  if (hits.length === 0) return [];
+
+  const displaced = hits.map((index) => headers[index]!.value);
+  headers[hits[0]!] = { key: name, value };
+  for (let hit = hits.length - 1; hit >= 1; hit -= 1) headers.splice(hits[hit]!, 1);
+  return displaced;
+}
+
+/**
  * Drop headers with no value.
  *
- * Postman would send them blank, but a blank `authorization` in a request that
- * also carries an `auth` block (which exists in the wild) would silently defeat
- * the token and return 401. Treating blank as unset is the useful reading.
+ * Postman sends them blank. preman reads blank as unfinished, because a header
+ * someone started and did not fill in is far more often a mistake than a
+ * deliberate empty value, and a server that cares about the difference is rare.
  */
 export function dropEmptyValues(headers: readonly KeyValue[]): KeyValue[] {
   return headers.filter((header) => header.disabled === true || header.value.length > 0);

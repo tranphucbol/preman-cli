@@ -55,6 +55,7 @@ import { ConsoleDrawer } from "@preman/desktop/renderer/panes/ConsoleDrawer.js";
 import { CommandPane } from "@preman/desktop/renderer/panes/CommandPane.js";
 import { ImportPane } from "@preman/desktop/renderer/panes/ImportPane.js";
 import { MigratePane } from "@preman/desktop/renderer/panes/MigratePane.js";
+import { GroupEditor } from "@preman/desktop/renderer/panes/GroupEditor.js";
 import { RequestEditor } from "@preman/desktop/renderer/panes/RequestEditor.js";
 import { ResponsePane } from "@preman/desktop/renderer/panes/ResponsePane.js";
 import { RunnerPane } from "@preman/desktop/renderer/panes/RunnerPane.js";
@@ -83,6 +84,7 @@ import {
   discardAndClose,
   duplicateNode,
   mutate,
+  openNode,
   saveTab,
   sendNode,
   type Failure,
@@ -583,9 +585,15 @@ async function saveActiveTab(): Promise<Failure | null> {
   return tab === undefined ? null : saveTab(tab);
 }
 
+/**
+ * Cmd+Enter, and the palette's Send. Silent on a group tab rather than failing: since a group can
+ * be open, the shortcut now fires with a collection active, and `sendNode` would answer that with
+ * a transport error about a node that is not a request. Running a collection is `Run…`.
+ */
 async function sendActiveTab(): Promise<Failure | null> {
-  const { activeId } = useTabsStore.getState();
-  return activeId === null ? null : sendNode(activeId);
+  const { activeId, tabs } = useTabsStore.getState();
+  if (activeId === null) return null;
+  return tabs.get(activeId)?.kind === "request" ? sendNode(activeId) : null;
 }
 
 /**
@@ -928,8 +936,7 @@ function WorkspaceTree({
   }
 
   function open(node: CatalogNode): void {
-    useTabsStore.getState().open({ id: node.id, name: node.name, kind: node.kind });
-    void loadTab(node.id);
+    openNode(node.id);
   }
 
   return (
@@ -1216,6 +1223,19 @@ function EditorPane({
       <TabBar onClose={closeTabOrAsk(onAsk)} onAsk={onAsk} onFail={onFail} />
       {tab === undefined ? (
         <VacantEditor />
+      ) : tab.kind !== "request" ? (
+        /*
+         * A group is a document, not an exchange. It gets the editor area alone: no response
+         * panel, because nothing here is sent, and no command aside, because `api/command.ts`
+         * plans a command from a request.
+         */
+        <GroupEditor
+          tab={tab}
+          onSave={() => {
+            void saveTab(tab).then(onFail);
+          }}
+          onAsk={onAsk}
+        />
       ) : (
         /*
          * The exchange, and the command beside it.

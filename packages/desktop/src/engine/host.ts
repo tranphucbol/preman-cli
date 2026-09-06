@@ -7,7 +7,7 @@
  * Nothing here imports `electron`. The Electron wiring is the last twenty lines, and
  * `createEngineHost` is driven directly by the tests.
  */
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { BodyStore } from "@preman/core/api/bodies.js";
@@ -454,16 +454,29 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
     return kind === "collection" || kind === "folder" ? definitionPathFor(path) : path;
   }
 
+  /**
+   * A node's bytes, or none when the node is a group that has no definition file yet.
+   *
+   * `existsSync` rather than catching the read: a group without a `.resources/definition.yaml`
+   * is a normal workspace - `workspace/definitions.ts` reads the absence as an unnamed group, and
+   * an imported tree is full of them - but a definition that exists and cannot be read is a
+   * fault, and treating the two alike would open the second one silently empty.
+   */
+  function readEditableText(nodeId: string, file: string, kind: DocumentKind): string {
+    const group = kind === "collection" || kind === "folder";
+    if (group && !existsSync(file)) return "";
+    try {
+      return readFileSync(file, ENCODING);
+    } catch (cause) {
+      throw usage(`cannot read ${nodeId}`, [String(cause)]);
+    }
+  }
+
   async function readNode(nodeId: string): Promise<NodeDocument> {
     const path = resolveWithinRoot(root, nodeId);
     const kind = await documentKindFor(nodeId, path);
     const file = fileFor(path, kind);
-    let text: string;
-    try {
-      text = readFileSync(file, ENCODING);
-    } catch (cause) {
-      throw usage(`cannot read ${nodeId}`, [String(cause)]);
-    }
+    const text = readEditableText(nodeId, file, kind);
     return { nodeId, file, kind, text, data: parse(text) as unknown };
   }
 

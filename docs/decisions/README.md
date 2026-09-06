@@ -56,6 +56,9 @@ The CLI's own design predates the practice.
 | [045](045-preman-ships-the-google-common-protos.md)                 | preman ships the google common protos                                  |
 | [046](046-a-request-is-named-by-its-file.md)                        | A request is named by its file, and a run that never opened reports    |
 | [047](047-a-parsed-body-may-carry-comments.md)                      | A body preman parses may carry comments                                |
+| [048](048-the-comment-shortcut-is-offered-wherever-a-token-is.md)   | The comment shortcut is offered wherever a `{{token}}` is              |
+| [049](049-a-group-is-a-document-you-can-open.md)                    | A group is a document you can open, and auth is one editor             |
+| [050](050-the-auth-block-wins-over-an-authored-header.md)           | The auth block wins over an authored header                            |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -307,5 +310,28 @@ the painting and not the shortcut. Its smaller consequence is that `test/` can n
 `@codemirror` at all, aliased for the same reason `electron` was: `toggleComment` is a
 `StateCommand` and wants a state, not a window, so the assertion can be the document that comes
 back instead of the constant that went in.
+
+049 is two decisions because one of them could not be taken alone. The Auth tab could not author
+auth — it declined to name the credentials of the four schemes core supports, and it rejected the
+array shape that ADR 033's migration writes, so a migrated request authenticated on the wire and
+showed an empty tab — and its hint said the empty type inherits from the folder without ever
+naming the folder. Telling the truth about the second required somewhere to send the reader, and a
+group was the one document this app could read and not open. So a collection became a tab, its
+Auth pane is the request's pane imported rather than reimplemented, and the inherit arm names the
+ancestor as a button. Its costs are named in the file: choosing `Inherit from parent` deletes the
+block, because the absence of the key is the only spelling of inheritance the format has; and gRPC
+still has no Auth tab, which was a defensible trade when the credentials editor did not exist and
+is now merely a thing that was not asked for.
+
+050 came out of 049 immediately, and from a real workspace rather than from reading. Once the Auth
+tab showed the block it was holding, one request showed a correct bearer token beside a header
+reading `Authorization: Bearer $KEY` — shell syntax preman sends literally — and the header was
+winning. Reading `postman-runtime` settled it: every authorizer removes the authored header before
+adding its own, so Postman has no precedence rule here at all, and preman's opposite direction had
+a warning but no ADR and no comment, four lines above a reference sentence claiming Postman
+alignment for inheritance. So the block wins, replacing in place under core's spelling of the name,
+and the Headers pane says so before the send — which is where Postman shows it too. It is a
+behaviour change for any workspace that declares both, with the warning as its only notice, and it
+flipped the two tests that had asserted the old direction.
 
 `TEMPLATE.md` is the shape of a new one.

@@ -134,9 +134,28 @@ export function editRequestFile(file: string, edits: readonly FieldEdit[]): Prom
   return Promise.resolve();
 }
 
-/** Apply field edits to a collection's or folder's `.resources/definition.yaml`. */
+/**
+ * The document an edit to a group with no definition file starts from.
+ *
+ * `$kind` is seeded rather than left out because every definition file on disk carries it -
+ * `writeDefinition` puts it on folders too - and a file created by editing a group's auth should
+ * be indistinguishable from one created by making the group. The edits supply the rest.
+ */
+function seedDefinition(): Document.Parsed {
+  return parseDocument(stringify({ $kind: COLLECTION_KIND }));
+}
+
+/**
+ * Apply field edits to a collection's or folder's `.resources/definition.yaml`, creating the
+ * file when the group has none.
+ *
+ * A group directory is not required to have one: `workspace/definitions.ts` reads its absence as
+ * a group that has not been named or ordered, and an imported tree is full of them. Refusing the
+ * edit would make the group editor unreachable for exactly those groups, so the first edit is a
+ * create. `writeFileAtomic` already makes the `.resources` directory.
+ */
 export function editDefinitionFile(file: string, edits: readonly FieldEdit[]): Promise<void> {
-  const doc = readDocument(file);
+  const doc = existsSync(file) ? readDocument(file) : seedDefinition();
   applyEdits(doc, edits);
   validateDefinition(file, doc);
   writeFileAtomic(file, doc.toString());
