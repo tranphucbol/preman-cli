@@ -314,6 +314,12 @@ function countsLine(outcome: GroupRunOutcome): string {
 const BAIL_FLAG_LINE = "stopped early: --bail";
 const ABORT_FALLBACK = "an inherited script failed";
 const TIMEOUT_BAIL_LINE = "stopped early: run budget exhausted";
+/**
+ * Reachable from the CLI even though only a window has a Cancel button: `main` is
+ * exported and a host embedding it can pass a signal, and a reason with no line to
+ * print is how a report goes quiet about the thing the reader most needs to know.
+ */
+const CANCELLED_BAIL_LINE = "stopped early: cancelled";
 
 /**
  * Explains why a group run stopped short. `--bail` is the user's own doing; an
@@ -322,6 +328,7 @@ const TIMEOUT_BAIL_LINE = "stopped early: run budget exhausted";
 function stoppedLine(outcome: GroupRunOutcome): string | undefined {
   if (outcome.bailReason === "bail-flag") return pc.yellow(BAIL_FLAG_LINE);
   if (outcome.bailReason === "timeout") return pc.red(TIMEOUT_BAIL_LINE);
+  if (outcome.bailReason === "cancelled") return pc.yellow(CANCELLED_BAIL_LINE);
   if (outcome.bailReason !== "inherited-script") return undefined;
   const cause = outcome.items[outcome.items.length - 1]?.error?.message ?? ABORT_FALLBACK;
   return pc.red(`aborted: ${cause}`);

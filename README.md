@@ -120,6 +120,7 @@ Run `preman --help` for every option.
 
 - Unary gRPC using the request's `.proto` file or embedded descriptor
 - HTTP requests, including multipart form-data uploads, structured `urlencoded`, binary, and GraphQL bodies
+- Server-sent event streams, shown event by event as they arrive in the app and buffered by the CLI
 - Collections and folders in Postman order
 - Repeated collection runs with JSON or CSV iteration data
 - Postman environments, globals, collection variables, and the [dynamic variable set](docs/reference.md#variables)
@@ -408,6 +409,20 @@ twenty-digit id all survive byte for byte — a body is bytes that go on the wir
 reserialises them sends a different request. `Cmd+Z` reverts it, and a body it cannot read says so
 rather than being quietly changed. The response pane's pretty-print toggle is the same gesture on the
 other half of the app; that one does reserialise, because a response has already been sent.
+
+The response header counts up from the moment **Send** is clicked, so the wait is visible rather
+than inferred, and settles on the transport duration once the exchange finishes — the number the
+Timeline tab, the console and `--report` all agree on. The Timeline shows the wall-clock wait beside
+it, which is where the difference between the two goes.
+
+A `text/event-stream` response is read as it arrives. The Body tab becomes a list of events, newest
+first, each with the time it landed and expandable to its full data; the header states how many have
+arrived and how many bytes, and says whether the stream is still open. Nothing about it waits for the
+stream to close, which is the point — a completion stream is worth watching, not worth waiting for.
+**Cancel** closes the socket and keeps every event that had already arrived; a stream the server or
+the network cut short instead says so above the list.
+`preman run` does not stream: it buffers, so `--timeout-request` stays a hard ceiling in CI
+([ADR 052](docs/decisions/052-a-stream-is-a-response-in-parts.md)).
 
 ```sh
 bun run desktop          # build the app and launch it

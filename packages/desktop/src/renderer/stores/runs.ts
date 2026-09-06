@@ -12,10 +12,12 @@ import { create } from "zustand";
 
 import type { EngineError, ExitCode, RunEvent } from "@preman/desktop/engine/protocol.js";
 import { addTest, NO_TESTS } from "@preman/desktop/renderer/model/response.js";
+import { DURATION_KEY } from "@preman/desktop/renderer/model/response.js";
 import type {
   ConsoleLine,
   ResponseBody,
   ResponseFailure,
+  ResponseFrame,
   ResponseHead,
   SentRequest,
   SideRequestSummary,
@@ -25,11 +27,36 @@ import type {
 
 /** A script in a loop must not be able to exhaust the heap. */
 export const CONSOLE_MAX_LINES = 5000;
+/**
+ * How many frames of a stream are kept to be shown.
+ *
+ * The same rule as the body above it: a stream that runs for an hour must not cost an
+ * hour of heap. What is dropped is dropped from the front, because a reader watching a
+ * stream is watching its end, and every byte of it is still in the engine and still
+ * reachable through the body handle. `StreamState.total` is what says how many there
+ * were, so the pane can be honest about what it is not showing.
+ */
+export const STREAM_MAX_FRAMES = 1000;
 const NO_ACTIVE_RUN = null;
 /** Iterations are zero-based on the wire; a run has entered one iteration the moment it starts. */
 const SINGLE_ITERATION = 1;
+const NO_FRAMES = 0;
 
 export type RequestStatus = "running" | "done";
+
+/** A `text/event-stream` response, as much of it as is worth keeping. */
+export interface StreamState {
+  /** The most recent frames, oldest first. At most `STREAM_MAX_FRAMES` of them. */
+  readonly frames: readonly ResponseFrame[];
+  /** Every frame the stream dispatched, including those no longer in `frames`. */
+  readonly total: number;
+  /** Raw bytes read off the wire so far. */
+  readonly byteLength: number;
+  /** False once the stream closed, which happens before the request ends. */
+  readonly open: boolean;
+  /** Why it stopped early, when it did. Null for a stream the server closed itself. */
+  readonly cutShort: string | null;
+}
 
 /** One request inside a run. In a collection run there is one of these per item per iteration. */
 export interface RequestRun {
@@ -42,11 +69,29 @@ export interface RequestRun {
   readonly sent: SentRequest | null;
   readonly head: ResponseHead | null;
   readonly body: ResponseBody | null;
+  /**
+   * Set alongside `head` and before `body` when the response arrived as a stream, and
+   * null for every response that did not. The pane reads this to decide whether the
+   * Body tab is showing one document or a list of events.
+   */
+  readonly stream: StreamState | null;
   /** Set instead of `body` when the transport produced nothing to inspect. */
   readonly failure: ResponseFailure | null;
   readonly tests: readonly TestResult[];
   readonly exitCode: ExitCode | null;
   readonly returnCode: string | null;
+  /**
+   * When the reader asked for this, in epoch ms — the Send click where there was one, and the
+   * arrival of `request-start` otherwise.
+   *
+   * Not the same clock as `head.timings.durationMs`, and deliberately so. That one measures the
+   * exchange; this one measures the wait, which also contains the save, the trip to the engine
+   * and every pre-request script. The header counts up in this clock because it is the only one
+   * that exists yet, then settles onto the transport's.
+   */
+  readonly startedAt: number;
+  /** Set by `request-end`, in the same clock as `startedAt`. Null while the request is running. */
+  readonly finishedAt: number | null;
 }
 
 /** A whole run: one request, or a collection. */
@@ -145,10 +190,29 @@ export interface RunsState {
   /** The item within `activeRunId` the response pane is showing. */
   activeItemKey: string | null;
   nextSeq: number;
+  /**
+   * `nodeId` to the epoch ms of a Send click that has not reached `request-start` yet.
+   *
+   * Keyed by node rather than by run because the run does not exist yet: the click happens
+   * before the engine has been asked, which is the whole point of recording it. Entries are
+   * removed by whoever proves them spent or void — never by age, because "the request is taking
+   * a long time" and "the click was lost" are indistinguishable from a timestamp alone.
+   */
+  pendingSends: Map<string, number>;
 
   // Function properties rather than method signatures: these are read off the state object and
   // handed to event handlers, and none of them uses `this`.
   apply: (event: RunEvent) => void;
+  /** The Send click, before anything has been asked of the engine. */
+  markSend: (nodeId: string, at: number) => void;
+  /** The click came to nothing — the save failed, or the engine refused the run. */
+  dropSend: (nodeId: string) => void;
+  /**
+   * A collection run is starting, so no click is owed to any of the requests it is about to
+   * enter. Without this a Send whose run died before its first event would leave a timestamp
+   * behind, and the collection run that next reached that node would date its clock from it.
+   */
+  dropAllSends: () => void;
   /**
    * The engine's terminal signal, and the only one that carries the run's own error. `run-end`
    * is not a substitute: it is core's, so it says nothing about a run core never opened.
@@ -189,6 +253,7 @@ export const useRunsStore = create<RunsState>((set) => ({
   activeRunId: NO_ACTIVE_RUN,
   activeItemKey: null,
   nextSeq: 0,
+  pendingSends: new Map(),
 
   apply(event) {
     set((state) => {
@@ -213,6 +278,12 @@ export const useRunsStore = create<RunsState>((set) => ({
         case "request-start": {
           const key = itemKeyFor(event.runId, event.nodeId, event.iteration);
           const requests = new Map(state.requests);
+          // The click if there was one, and now otherwise. A collection run and a second
+          // iteration both land here with nothing pending, and both are right to: their wait
+          // began when they were reached, not when anybody pressed anything.
+          const pendingSends = new Map(state.pendingSends);
+          const clicked = pendingSends.get(event.nodeId);
+          pendingSends.delete(event.nodeId);
           requests.set(key, {
             runId: event.runId,
             nodeId: event.nodeId,
@@ -224,9 +295,12 @@ export const useRunsStore = create<RunsState>((set) => ({
             head: null,
             failure: null,
             body: null,
+            stream: null,
             tests: [],
             exitCode: null,
             returnCode: null,
+            startedAt: clicked ?? Date.now(),
+            finishedAt: null,
           });
           const runs = new Map(state.runs);
           const run = runs.get(event.runId);
@@ -241,7 +315,7 @@ export const useRunsStore = create<RunsState>((set) => ({
           openItems.set(openKey(event.runId, event.nodeId), key);
           // A single-request run focuses itself, so sending shows the response without a click.
           const focus = state.activeItemKey === null ? key : state.activeItemKey;
-          return { requests, runs, openItems, activeItemKey: focus };
+          return { requests, runs, openItems, activeItemKey: focus, pendingSends };
         }
 
         case "console": {
@@ -289,13 +363,40 @@ export const useRunsStore = create<RunsState>((set) => ({
         error: outcome.error ?? null,
       });
       // A run that failed before its first request still has to stop looking like it is running.
+      // Its clock has to stop with it, or a cancelled run counts up forever.
       const requests = new Map(state.requests);
+      const at = Date.now();
       for (const key of run.items) {
         const item = requests.get(key);
-        if (item?.status === "running") requests.set(key, { ...item, status: "done" });
+        if (item?.status !== "running") continue;
+        // A cancelled stream never gets its `stream-end`, because cancelling is exactly
+        // what stops those events being delivered. Closing it here is what turns the
+        // list from one that is still waiting for frames into one that is finished.
+        const stream = item.stream === null || !item.stream.open ? item.stream : { ...item.stream, open: false };
+        requests.set(key, { ...item, status: "done", finishedAt: at, stream });
       }
       return { runs, requests };
     });
+  },
+
+  markSend(nodeId, at) {
+    set((state) => {
+      const pendingSends = new Map(state.pendingSends);
+      pendingSends.set(nodeId, at);
+      return { pendingSends };
+    });
+  },
+
+  dropSend(nodeId) {
+    set((state) => {
+      const pendingSends = new Map(state.pendingSends);
+      pendingSends.delete(nodeId);
+      return { pendingSends };
+    });
+  },
+
+  dropAllSends() {
+    set({ pendingSends: new Map() });
   },
 
   focus(runId, key) {
@@ -329,6 +430,7 @@ export const useRunsStore = create<RunsState>((set) => ({
       activeRunId: NO_ACTIVE_RUN,
       activeItemKey: null,
       nextSeq: 0,
+      pendingSends: new Map(),
     });
   },
 }));
@@ -339,8 +441,23 @@ export const useRunsStore = create<RunsState>((set) => ({
  */
 type ItemEvent = Extract<
   RunEvent,
-  { type: "request-sent" | "response-head" | "response-body" | "response-failure" | "test" | "request-end" }
+  {
+    type:
+      | "request-sent"
+      | "response-head"
+      | "response-frames"
+      | "stream-end"
+      | "response-body"
+      | "response-failure"
+      | "test"
+      | "request-end";
+  }
 >;
+
+/** What a stream looks like before its first frame: known to exist, known to be empty. */
+function emptyStream(): StreamState {
+  return { frames: [], total: NO_FRAMES, byteLength: NO_FRAMES, open: true, cutShort: null };
+}
 
 function applyToItem(state: RunsState, event: ItemEvent): Partial<RunsState> {
   const key = state.openItems.get(openKey(event.runId, event.nodeId));
@@ -361,8 +478,49 @@ function applyToItem(state: RunsState, event: ItemEvent): Partial<RunsState> {
       return { requests, calls: calls.slice(-CONSOLE_MAX_LINES), nextSeq: state.nextSeq + 1 };
     }
     case "response-head":
-      requests.set(key, { ...item, head: { status: event.status, headers: event.headers, timings: event.timings } });
+      requests.set(key, {
+        ...item,
+        head: { status: event.status, headers: event.headers, timings: event.timings },
+        // The stream is opened here rather than by its first frame, because the gap between
+        // the two is exactly the wait the pane exists to narrate: a model can take seconds to
+        // produce its first token, and "connected, nothing yet" is a different thing to say
+        // than "still sending".
+        stream: event.streaming ? (item.stream ?? emptyStream()) : item.stream,
+      });
       break;
+    case "response-frames": {
+      const stream = item.stream ?? emptyStream();
+      // Concatenate then trim, rather than trimming the incoming batch first: a single
+      // batch can be longer than the window, and the window is over the stream, not the
+      // batch. `dropped` is added to the total because those frames existed.
+      const frames = [...stream.frames, ...event.frames];
+      requests.set(key, {
+        ...item,
+        stream: {
+          ...stream,
+          frames: frames.slice(-STREAM_MAX_FRAMES),
+          total: stream.total + event.frames.length + event.dropped,
+          byteLength: event.byteLength,
+        },
+      });
+      break;
+    }
+    case "stream-end": {
+      const stream = item.stream ?? emptyStream();
+      // `total` is taken rather than accumulated: core counted every frame it dispatched,
+      // including any a batcher discarded on the way here, so it is the honest number.
+      requests.set(key, {
+        ...item,
+        stream: { ...stream, total: event.total, open: false, cutShort: event.cutShort ?? null },
+        // The head went out before the exchange had a duration. This is that duration,
+        // arriving late, which is the whole reason this event exists.
+        head:
+          item.head === null
+            ? null
+            : { ...item.head, timings: { ...item.head.timings, [DURATION_KEY]: event.durationMs } },
+      });
+      break;
+    }
     case "response-body":
       requests.set(key, {
         ...item,
@@ -402,6 +560,7 @@ function applyToItem(state: RunsState, event: ItemEvent): Partial<RunsState> {
         status: "done",
         exitCode: event.exitCode,
         returnCode: event.returnCode ?? null,
+        finishedAt: Date.now(),
       });
       // The request is over, so nothing else can belong to it. Releasing the key here means a
       // late event from a run the engine already abandoned lands nowhere instead of on this item.

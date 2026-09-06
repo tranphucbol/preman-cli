@@ -4,6 +4,7 @@ import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from "n
 import { httpsRequestOptions, tlsFailureHints, type TlsCertOptions } from "@preman/core/tls/certs.js";
 import type { CookieJar } from "./cookies.js";
 import { findHeader, toOutgoingHeaders, type KeyValue } from "./headers.js";
+import { isEventStream, SseParser, type SseFrame } from "./sse.js";
 
 export interface HttpInvokeOptions {
   url: URL;
@@ -17,6 +18,47 @@ export interface HttpInvokeOptions {
   maxRedirects?: number;
   /** Resolved certificate material; inert on an `http:` hop. */
   tlsCerts: TlsCertOptions;
+  /**
+   * Stops the exchange on demand. Destroys the socket rather than merely stopping the
+   * reading of it, and is checked between redirect hops so an aborted chain does not
+   * dial the next one. Decision 051.
+   */
+  signal?: AbortSignal | undefined;
+  /**
+   * Reads a `text/event-stream` response as it arrives instead of waiting for the end of it.
+   *
+   * Optional, and the whole feature turns on that: a caller that passes nothing gets the
+   * buffered exchange this function has always performed, `timeoutMs` and all. The window
+   * passes a sink because a chat completion that takes eight seconds should not be eight
+   * seconds of blank pane. The CLI passes nothing, so `--timeout` stays the ceiling it is
+   * relied on to be in CI, where a subscription that never ends would otherwise never end.
+   */
+  stream?: HttpStreamSink | undefined;
+}
+
+/** The head of a response whose body has no end in sight. */
+export interface HttpStreamOpen {
+  statusCode: number;
+  statusMessage: string;
+  headers: Record<string, string | string[]>;
+  setCookies: string[];
+  /** Time to the head. For a stream this is the only timing there is until it closes. */
+  headersMs: number;
+}
+
+export interface HttpStreamSink {
+  /** The stream has started. Called once, before any frame, and only for a stream. */
+  open(open: HttpStreamOpen): void;
+  /** The frames one chunk completed, and how many bytes of body have arrived in total. */
+  frames(frames: readonly SseFrame[], byteLength: number): void;
+}
+
+/** What {@link send} knows at the head; {@link invokeHttp} owns the clock and adds the rest. */
+type RawStreamOpen = Omit<HttpStreamOpen, "headersMs">;
+
+interface RawStreamSink {
+  open(open: RawStreamOpen): void;
+  frames(frames: readonly SseFrame[], byteLength: number): void;
 }
 
 export interface RedirectHop {
@@ -46,6 +88,13 @@ export interface HttpInvokeResult {
   setCookies: string[];
   redirects: RedirectHop[];
   durationMs: number;
+  /**
+   * Why a stream stopped before the server closed it; undefined when it closed
+   * cleanly, and always undefined for a buffered response, which has no such state.
+   * It is also in `warnings`, but a caller narrating the end of a stream needs the
+   * reason itself rather than a sentence that contains it.
+   */
+  cutShort: string | undefined;
   warnings: string[];
 }
 
@@ -56,9 +105,20 @@ interface RawResponse {
   setCookies: string[];
   location: string | undefined;
   buffer: Buffer;
+  /** Why a stream stopped before the server closed it; undefined when it closed cleanly. */
+  cutShort: string | undefined;
 }
 
 export const NO_RESPONSE_STATUS = 0;
+
+/**
+ * What an aborted exchange reports as its transport message.
+ *
+ * Phrased as a sentence rather than a code because it is printed verbatim - by the
+ * CLI in red, and by the window's failure pane - and "cancelled" on its own reads
+ * like a status the server sent.
+ */
+export const CANCELLED_MESSAGE = "the request was cancelled";
 
 const HTTPS_PROTOCOL = "https:";
 const DEFAULT_MAX_REDIRECTS = 5;
@@ -77,9 +137,26 @@ const COOKIE = "Cookie";
 const CROSS_ORIGIN_STRIPPED = new Set(["authorization", "cookie"]);
 const DEFAULT_CHARSET: BufferEncoding = "utf8";
 const IDENTITY_ENCODINGS = new Set(["", "identity"]);
+const NO_BYTES = 0;
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+/**
+ * What Node says when the peer destroys the socket while the body is still coming.
+ *
+ * The word on its own is the whole message, and it is the same word a reader who
+ * pressed Cancel would expect to see, so shown unchanged it blames them for the
+ * server hanging up. Every other way a stream stops already reports a sentence.
+ */
+const PEER_RESET_MESSAGE = "aborted";
+const PEER_RESET_REASON = "the server closed the connection";
+
+/** Why a stream stopped before the server said it was finished. */
+function cutShortReason(cause: unknown): string {
+  const message = messageOf(cause);
+  return message === PEER_RESET_MESSAGE ? PEER_RESET_REASON : message;
 }
 
 function firstValue(headers: Record<string, string | string[]>, name: string): string | undefined {
@@ -124,6 +201,20 @@ function rewriteForRedirect(status: number, method: string): { method: string; d
   return { method: GET, dropBody: true };
 }
 
+/**
+ * Whether a response arriving under this head is one to read live.
+ *
+ * A redirect is excluded because nobody reads the body of one, and following it is the
+ * next thing that happens anyway. A compressed one is excluded because the decompressors
+ * here take a whole buffer and there is no whole buffer yet; servers that stream normally
+ * turn compression off, and one that does not is read the old way rather than wrongly.
+ */
+function streamable(status: number, headers: Record<string, string | string[]>): boolean {
+  if (REDIRECT_STATUSES.has(status)) return false;
+  if (!isEventStream(firstValue(headers, CONTENT_TYPE))) return false;
+  return IDENTITY_ENCODINGS.has((firstValue(headers, CONTENT_ENCODING) ?? "").trim().toLowerCase());
+}
+
 function send(
   url: URL,
   method: string,
@@ -131,6 +222,8 @@ function send(
   body: string | Buffer | undefined,
   timeoutMs: number,
   tlsCerts: TlsCertOptions,
+  signal: AbortSignal | undefined,
+  stream: RawStreamSink | undefined,
 ): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
     const secure = url.protocol === HTTPS_PROTOCOL;
@@ -140,30 +233,105 @@ function send(
     const tlsOptions = secure ? httpsRequestOptions(tlsCerts) : {};
     const finish = (settle: () => void): void => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       settle();
     };
+    /**
+     * Set once a stream is open, and the whole reason it lives out here.
+     *
+     * Cancel destroys the request, and a destroyed request reports through the request's
+     * own error listener rather than the response's. Without this, the one case the
+     * feature exists to serve - the reader stopping a stream they are done with - would
+     * throw away every frame it had just shown them.
+     */
+    let interrupt: ((cause: unknown) => RawResponse) | undefined;
 
     const req = driver(url, { ...tlsOptions, method, headers }, (res) => {
       const chunks: Buffer[] = [];
-      res.on("data", (chunk: Buffer) => chunks.push(chunk));
-      res.on("error", (cause) => finish(() => reject(cause)));
+      const status = res.statusCode ?? NO_RESPONSE_STATUS;
+      const responseHeaders = { ...res.headers } as Record<string, string | string[]>;
+      const setCookies = res.headers["set-cookie"] ?? [];
+      const settle = (cutShort: string | undefined): RawResponse => ({
+        status,
+        statusMessage: res.statusMessage ?? "",
+        headers: responseHeaders,
+        setCookies,
+        location: res.headers.location,
+        buffer: Buffer.concat(chunks),
+        cutShort,
+      });
+
+      const live =
+        stream !== undefined && streamable(status, responseHeaders)
+          ? { parser: new SseParser(), sink: stream }
+          : undefined;
+      let received = NO_BYTES;
+      let flushed = false;
+      /** Dispatch whatever the last bytes left in the parser. Once, however the stream ends. */
+      const flush = (): void => {
+        if (live === undefined || flushed) return;
+        flushed = true;
+        live.sink.frames(live.parser.end(Date.now()), received);
+      };
+
+      if (live !== undefined) {
+        // The exchange budget covered a body that was going to end. This one is not, so
+        // holding it to a deadline would just be a countdown to killing a working stream.
+        // What stops it now is the server, the peer dying, or Cancel - see Decision 052.
+        clearTimeout(timer);
+        live.sink.open({
+          statusCode: status,
+          statusMessage: res.statusMessage ?? "",
+          headers: responseHeaders,
+          setCookies,
+        });
+        // A stream cut short settles with what arrived rather than rejecting: the request
+        // did succeed, the response did start, and the reader who pressed Cancel wants the
+        // frames they already have, not an error page where they used to be.
+        interrupt = (cause) => {
+          flush();
+          return settle(cutShortReason(cause));
+        };
+      }
+
+      res.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        if (live === undefined) return;
+        received += chunk.length;
+        live.sink.frames(live.parser.push(chunk, Date.now()), received);
+      });
+      res.on("error", (cause) => {
+        const partial = interrupt;
+        if (partial === undefined) {
+          finish(() => reject(cause));
+          return;
+        }
+        finish(() => resolve(partial(cause)));
+      });
       res.on("end", () => {
-        finish(() =>
-          resolve({
-            status: res.statusCode ?? NO_RESPONSE_STATUS,
-            statusMessage: res.statusMessage ?? "",
-            headers: { ...res.headers } as Record<string, string | string[]>,
-            setCookies: res.headers["set-cookie"] ?? [],
-            location: res.headers.location,
-            buffer: Buffer.concat(chunks),
-          }),
-        );
+        flush();
+        finish(() => resolve(settle(undefined)));
       });
     });
 
-    req.on("error", (cause) => finish(() => reject(cause)));
+    req.on("error", (cause) => {
+      const partial = interrupt;
+      if (partial === undefined) {
+        finish(() => reject(cause));
+        return;
+      }
+      finish(() => resolve(partial(cause)));
+    });
     // Covers a slow drip as well as a dead peer, which req.setTimeout alone does not.
     const timer = setTimeout(() => req.destroy(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+    // Destroying the request, not just stopping the reading of it: a response that is
+    // still arriving holds the socket open until the server decides otherwise, which for
+    // a stream is never. The destroy surfaces through the `error` listener above, so the
+    // message reaches the caller by the same path a timeout does.
+    const abort = (): void => {
+      req.destroy(new Error(CANCELLED_MESSAGE));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
     if (body !== undefined) req.write(body);
     req.end();
   });
@@ -198,6 +366,21 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
   let headers = [...options.headers];
   let body = options.body;
 
+  // The clock belongs to the whole exchange, redirects included, so the head timing is
+  // stamped here rather than inside the hop that happens to have opened the stream.
+  const outer = options.stream;
+  const hopStream: RawStreamSink | undefined =
+    outer === undefined
+      ? undefined
+      : {
+          open: (open) => {
+            outer.open({ ...open, headersMs: elapsedMs() });
+          },
+          frames: (frames, byteLength) => {
+            outer.frames(frames, byteLength);
+          },
+        };
+
   for (;;) {
     const hopHeaders = [...headers];
     if (findHeader(hopHeaders, COOKIE) === undefined) {
@@ -215,8 +398,11 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
     const remaining = deadline - Date.now();
     let raw: RawResponse;
     try {
+      // Checked before the hop as well as during it: an abort that lands between two
+      // redirects would otherwise be answered by dialling the next one.
+      if (options.signal?.aborted === true) throw new Error(CANCELLED_MESSAGE);
       if (remaining <= 0) throw new Error(`timed out after ${options.timeoutMs}ms`);
-      raw = await send(url, method, outgoing, body, remaining, options.tlsCerts);
+      raw = await send(url, method, outgoing, body, remaining, options.tlsCerts, options.signal, hopStream);
     } catch (cause) {
       warnings.push(...tlsFailureHints(cause));
       return {
@@ -234,6 +420,7 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
         setCookies: [],
         redirects,
         durationMs: elapsedMs(),
+        cutShort: undefined,
         warnings,
       };
     }
@@ -258,6 +445,7 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
       continue;
     }
     if (location !== undefined) warnings.push(`stopped after ${maxRedirects} redirects`);
+    if (raw.cutShort !== undefined) warnings.push(`the stream ended early: ${raw.cutShort}`);
 
     const decoded = decode(raw.buffer, firstValue(raw.headers, CONTENT_ENCODING), warnings);
     return {
@@ -275,6 +463,7 @@ export async function invokeHttp(options: HttpInvokeOptions): Promise<HttpInvoke
       setCookies: raw.setCookies,
       redirects,
       durationMs: elapsedMs(),
+      cutShort: raw.cutShort,
       warnings,
     };
   }

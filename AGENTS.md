@@ -47,6 +47,8 @@ packages/core/                   @preman/core - the engine, private, bundled fro
                                  which bodies those are and 023 why the mask preserves length
   src/grpc/                      schema resolution, target/TLS, unary invoke
   src/http/                      target/URL, bodies, cookies, redirects, auth, compression, invoke
+    sse.ts                       the text/event-stream reader; 052 says why a sink turns off the
+                                 exchange timeout and 051 what then closes the socket instead
   src/tls/certs.ts               --ssl-* layering, secure context, gRPC credentials, handshake hints
   src/report/json.ts             machine-readable reports
   src/errors.ts                  PremanError, EXIT codes
@@ -64,6 +66,8 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
   src/preload/                   contextBridge surface; relays the engine port into the page
   src/engine/                    the utility process: Catalog, BodyStore, watcher, proto cache
     protocol.ts                  the typed contract; the only module engine and renderer share
+    frames.ts                    the rate limiter between a stream and the window reading it;
+                                 it may change when a frame arrives, never which or in what order
   src/renderer/                  the pure view: React 19, Zustand, Tailwind v4, CodeMirror 6
     app.css                      the tokens and their why; docs/design-system.md picks between them
     appearance/                  what the tokens resolve to: theme.ts, density.ts, fonts.ts,
@@ -75,7 +79,8 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
                                  editorTheme (the editor's chrome, reaching nothing so it is
                                  testable), template (the {{token}}-aware JSON language)
     panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid, ResponsePane,
-                                 BodyViewer, ResponseFailure, ConsoleDrawer, SettingsPane, ProtosPane
+                                 BodyViewer, StreamViewer (the Body tab when the response is a
+                                 stream), ResponseFailure, ConsoleDrawer, SettingsPane, ProtosPane
   scripts/                       run by hand, never at build time
     audit.ts                     the contrast arithmetic; also asserted by test/renderer/themes
     generate-themes.ts           palettes/*.json -> src/renderer/appearance/themes/

@@ -107,6 +107,13 @@ export async function sendNode(nodeId: string): Promise<Failure | null> {
   const engine = client();
   if (engine === null) return null;
 
+  // The clock starts here, at the click, and not at `request-start`. Everything below this line
+  // is time the reader is waiting: the flush, the save, the trip to the engine and then every
+  // pre-request script. A clock that started when the engine got around to saying so would
+  // report a fast request while the window sat still, which is the opposite of what it is for.
+  const { markSend, dropSend } = useRunsStore.getState();
+  markSend(nodeId, Date.now());
+
   // Flushed before the dirty check, not just before the write inside `saveTab`: a focused editor
   // that has not blurred can hold text the store does not know about yet, and skipping this would
   // read that tab as clean and send the file as it was before the last keystroke.
@@ -114,13 +121,17 @@ export async function sendNode(nodeId: string): Promise<Failure | null> {
   const tab = useTabsStore.getState().tabs.get(nodeId);
   if (tab !== undefined && isDirty(tab)) {
     const saveFailure = await saveTab(tab);
-    if (saveFailure !== null) return saveFailure;
+    if (saveFailure !== null) {
+      dropSend(nodeId);
+      return saveFailure;
+    }
   }
 
   try {
     await engine.send("run", { args: { nodeId, ...chosenEnvironment() } });
     return null;
   } catch (cause) {
+    dropSend(nodeId);
     return failure(cause);
   }
 }
@@ -687,6 +698,10 @@ export interface RunnerOptions {
 export async function startRun(nodeId: string, options: RunnerOptions): Promise<Result<string>> {
   const engine = client();
   if (engine === null) return { ok: false, failure: DISCONNECTED };
+  // Nobody clicked Send on any of the requests this is about to enter, so no click is owed to
+  // them. Clearing here rather than expiring by age is what keeps a Send whose run never started
+  // from lending its timestamp to whichever collection run reaches that request next.
+  useRunsStore.getState().dropAllSends();
   try {
     const acknowledgement = await engine.send("run", {
       args: {

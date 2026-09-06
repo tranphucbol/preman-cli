@@ -19,10 +19,19 @@ export type TestStatus = TestResult["status"];
 export type SideRequestSummary = Extract<RunEvent, { type: "side-request" }>["summary"];
 /** What the runner actually put on the wire, discriminated by protocol. */
 export type SentRequest = Extract<RunEvent, { type: "request-sent" }>["sent"];
-export type ResponseHead = Omit<Extract<RunEvent, { type: "response-head" }>, "type" | "runId" | "nodeId">;
+/**
+ * `streaming` is dropped along with the addressing: the store answers it by holding a
+ * `stream`, and keeping the flag as well would be two places to ask one question.
+ */
+export type ResponseHead = Omit<
+  Extract<RunEvent, { type: "response-head" }>,
+  "type" | "runId" | "nodeId" | "streaming"
+>;
 export type ResponseBody = Omit<Extract<RunEvent, { type: "response-body" }>, "type" | "runId" | "nodeId">;
 export type ResponseFailure = Omit<Extract<RunEvent, { type: "response-failure" }>, "type" | "runId" | "nodeId">;
 export type HeaderPairs = ResponseHead["headers"];
+/** One dispatched `text/event-stream` event, as the parser in core read it off the wire. */
+export type ResponseFrame = Extract<RunEvent, { type: "response-frames" }>["frames"][number];
 
 /**
  * The four ways anything in the pane can read. Named rather than passing colours around,
@@ -516,12 +525,72 @@ export function formatDuration(ms: number): string {
   return `${(seconds / SECONDS_IN_MINUTE).toFixed(MINUTE_PRECISION)}m`;
 }
 
-/** The one timing key the runner emits. Named so a second one is a deliberate change. */
+/**
+ * The whole exchange. Present on every head except a stream's, which arrives before
+ * there is an exchange to measure and is given this key by `stream-end` instead.
+ */
 export const DURATION_KEY = "durationMs";
+
+/**
+ * First byte sent to status line read. Emitted only for a stream, where it is the one
+ * timing that is already true while the response is still arriving.
+ */
+export const HEADERS_KEY = "headersMs";
 
 export function durationOf(head: ResponseHead | null): number | null {
   const ms = head?.timings[DURATION_KEY];
   return ms ?? null;
+}
+
+export function headersMsOf(head: ResponseHead | null): number | null {
+  const ms = head?.timings[HEADERS_KEY];
+  return ms ?? null;
+}
+
+/**
+ * How often the in-flight clock repaints.
+ *
+ * `formatDuration` would resolve a faster tick — it prints whole milliseconds below a second — so
+ * this is a reading rate rather than a precision. A tenth of a second is fast enough to read as
+ * running and slow enough that the clock is never what a perf trace of a request finds. The
+ * number it lands on is not this one: when the response arrives the header takes the transport's
+ * own duration, so the tick decides how the wait looks and nothing about what is finally reported.
+ */
+export const ELAPSED_TICK_MS = 100;
+
+/** A clock that has not started, for a request that has not been sent. */
+const NOT_STARTED = 0;
+
+/**
+ * The wall time a request took, from the reader's point of view, or null while it is still running.
+ *
+ * Clamped at zero rather than trusted: `startedAt` is `Date.now()` in the renderer and the two
+ * readings can straddle a clock adjustment, and a response that arrived -3ms ago helps nobody.
+ */
+export function waitedMs(startedAt: number, finishedAt: number | null): number | null {
+  if (finishedAt === null) return null;
+  return Math.max(finishedAt - startedAt, NOT_STARTED);
+}
+
+/** The same measurement while it is still running, which is all there is until the head lands. */
+export function elapsedMs(startedAt: number, now: number): number {
+  return Math.max(now - startedAt, NOT_STARTED);
+}
+
+/**
+ * What the response header's clock reads once the request is over.
+ *
+ * The transport's own duration wherever there is one, so the header agrees with the Timeline, the
+ * console, `--report` and the CLI. It is the smaller number — it excludes the save, the trip to
+ * the engine and every pre-request script — so the clock visibly snaps back when the response
+ * lands. That is the correct direction to be wrong in: one number appears everywhere, and the
+ * difference between the two is on the Timeline for anyone who wants it.
+ *
+ * Wall time only when nothing was measured. A request that spent four seconds failing to resolve
+ * DNS has no head, and saying nothing about those four seconds is worse than approximating them.
+ */
+export function settledMs(head: ResponseHead | null, waited: number | null): number | null {
+  return durationOf(head) ?? waited;
 }
 
 /** Lines of a body a console row will show before it defers to the response pane. */

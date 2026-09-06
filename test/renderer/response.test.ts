@@ -10,6 +10,10 @@
  * splice test pass while the splice was misaligned by two bytes, which is exactly the bug
  * nobody would ever suspect.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import { BodyStore, FORMAT_LIMIT_BYTES } from "@preman/core/api/bodies.js";
@@ -37,15 +41,18 @@ import {
   CONSOLE_BODY_LINES,
   callStatus,
   clampBody,
+  elapsedMs,
   exitLabel,
   exitTone,
   failureCopy,
   isCleanExit,
   mergeConsole,
+  settledMs,
   showAllLabel,
   parseSetCookie,
   statusTone,
   testTotals,
+  waitedMs,
   type ConsoleRow,
 } from "@preman/desktop/renderer/model/response.js";
 import { itemKeyFor, useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
@@ -68,6 +75,20 @@ const PING_ID = "postman/collections/payment/Ping.request.yaml";
 const FIRST_ITERATION = 1;
 const ASSERTION_COUNT = 30;
 const ONE_REQUEST = 1;
+
+/** A fixed epoch so a click can be asserted exactly rather than within a window. */
+const CLICKED_AT = 1_700_000_000_000;
+/** The reader's wait: the exchange plus the save, the trip to the engine and the scripts. */
+const WAITED_MS = 420;
+/** The engine's own measurement of the exchange alone, and therefore the smaller number. */
+const EXCHANGE_MS = 55;
+const NO_TIME = 0;
+
+const RENDERER_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../packages/desktop/src/renderer");
+const CLOCK_COMPONENT = "function Elapsed(";
+const NEXT_COMPONENT = "\nfunction Headers(";
+const TICKER = "setInterval(";
+const ONE_TICKER = 1;
 
 /** A body of a given size, filled with repeating multi-byte JSON-ish text. */
 function bodyOf(bytes: number, contentType: string) {
@@ -387,6 +408,7 @@ describe("what the response pane reads off a run", () => {
       status: "NOT_FOUND",
       headers: [],
       timings: { durationMs: 55 },
+      streaming: false,
     });
     store.apply({
       type: "response-failure",
@@ -512,6 +534,150 @@ describe("what the response pane reads off a run", () => {
     }
     expect(exitTone(EXIT_CODES.BUSINESS)).toBe("warn");
     expect(exitTone(EXIT_CODES.TRANSPORT)).toBe("danger");
+  });
+});
+
+/**
+ * The clock the header counts up while a request is in flight.
+ *
+ * Two clocks are in play and the suite is mostly about keeping them apart. `startedAt` is the
+ * renderer's, running from the click; `head.timings.durationMs` is the engine's, covering the
+ * exchange alone. The header shows the first while it waits and the second once it knows it.
+ */
+describe("the clock in the response header", () => {
+  it("givenAClickBeforeTheRunExists_whenTheRequestStarts_thenTheClockRunsFromTheClick", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    // The click is the whole point: between it and `request-start` sit a flush, a save, the trip
+    // to the engine and every pre-request script, and the reader is waiting through all of them.
+    store.markSend(PING_ID, CLICKED_AT);
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+
+    expect(onlyRequest().startedAt).toBe(CLICKED_AT);
+    expect(onlyRequest().finishedAt).toBeNull();
+    // Spent, so a second run through the same node cannot claim it again.
+    expect(useRunsStore.getState().pendingSends.has(PING_ID)).toBe(false);
+    store.clear();
+  });
+
+  it("givenNoClickToAdopt_whenTheRequestStarts_thenTheClockStartsWhereTheEventDid", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    const before = Date.now();
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    const after = Date.now();
+
+    // A request reached from the collection runner or a rerun was never clicked. It still gets a
+    // clock, it just starts later than the reader's own wait did.
+    expect(onlyRequest().startedAt).toBeGreaterThanOrEqual(before);
+    expect(onlyRequest().startedAt).toBeLessThanOrEqual(after);
+    store.clear();
+  });
+
+  it("givenAStaleClick_whenACollectionRunStarts_thenItIsNotLentToTheRun", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    store.markSend(PING_ID, CLICKED_AT);
+    // A Send whose run never opened leaves its stamp behind. Without this the next collection
+    // run to reach that node would report the wait as however long the app had been open.
+    store.dropAllSends();
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+
+    expect(onlyRequest().startedAt).toBeGreaterThan(CLICKED_AT);
+    store.clear();
+  });
+
+  it("givenAFailedSend_whenTheClickIsDropped_thenNothingIsLeftToAdopt", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    store.markSend(PING_ID, CLICKED_AT);
+    store.dropSend(PING_ID);
+
+    expect(useRunsStore.getState().pendingSends.has(PING_ID)).toBe(false);
+    store.clear();
+  });
+
+  it("givenARequestThatEnded_whenTheWaitIsRead_thenItSpansTheClickToTheEnd", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    const clickedAt = Date.now() - WAITED_MS;
+    store.markSend(PING_ID, clickedAt);
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    store.apply({
+      type: "response-head",
+      runId: RUN_ID,
+      nodeId: PING_ID,
+      status: 200,
+      headers: [],
+      timings: { durationMs: EXCHANGE_MS },
+      streaming: false,
+    });
+    store.apply({ type: "request-end", runId: RUN_ID, nodeId: PING_ID, exitCode: EXIT_CODES.OK });
+
+    const item = onlyRequest();
+    expect(item.status).toBe("done");
+    // The wait covers the exchange and everything either side of it, so it can only be longer.
+    const waited = waitedMs(item.startedAt, item.finishedAt);
+    expect(waited).not.toBeNull();
+    expect(waited).toBeGreaterThanOrEqual(WAITED_MS);
+    expect(waited).toBeGreaterThan(EXCHANGE_MS);
+    store.clear();
+  });
+
+  it("givenARunCancelledInFlight_whenFinished_thenEveryClockStops", () => {
+    const store = useRunsStore.getState();
+    store.clear();
+    store.apply({ type: "run-start", runId: RUN_ID, total: ONE_REQUEST });
+    store.apply({ type: "request-start", runId: RUN_ID, nodeId: PING_ID, name: "Ping", iteration: FIRST_ITERATION });
+    expect(onlyRequest().finishedAt).toBeNull();
+
+    store.finish(RUN_ID, { warnings: [], cancelled: true });
+
+    // A request that never reported an end still stops counting, or a cancelled run leaves a
+    // clock running in the header for as long as the tab stays open.
+    expect(onlyRequest().finishedAt).not.toBeNull();
+    expect(onlyRequest().status).toBe("done");
+    store.clear();
+  });
+
+  it("givenATransportDuration_whenSettled_thenTheHeaderShowsItRatherThanTheWait", () => {
+    const head = { status: 200, headers: [], timings: { durationMs: EXCHANGE_MS } };
+
+    // The one number the Timeline, the console, the CLI and `--report` all print. The header
+    // disagreeing with every one of them would be worse than the visible snap back.
+    expect(settledMs(head, WAITED_MS)).toBe(EXCHANGE_MS);
+    expect(settledMs(head, null)).toBe(EXCHANGE_MS);
+  });
+
+  it("givenNoHeadAtAll_whenSettled_thenTheWaitIsShownRatherThanNothing", () => {
+    // Four seconds failing to resolve DNS produces no head. Showing nothing would say the
+    // request was instant.
+    expect(settledMs(null, WAITED_MS)).toBe(WAITED_MS);
+    expect(settledMs(null, null)).toBeNull();
+  });
+
+  it("givenAClockThatWentBackwards_whenMeasured_thenNoReadingIsNegative", () => {
+    // Both readings are the renderer's `Date.now()` and can straddle a clock adjustment.
+    expect(waitedMs(CLICKED_AT, CLICKED_AT - WAITED_MS)).toBe(NO_TIME);
+    expect(elapsedMs(CLICKED_AT, CLICKED_AT - WAITED_MS)).toBe(NO_TIME);
+    expect(waitedMs(CLICKED_AT, null)).toBeNull();
+    expect(elapsedMs(CLICKED_AT, CLICKED_AT + WAITED_MS)).toBe(WAITED_MS);
+  });
+
+  it("givenTheResponsePane_whenScanned_thenOnlyTheClockItselfTicks", () => {
+    const pane = readFileSync(join(RENDERER_DIR, "panes/ResponsePane.tsx"), "utf8");
+    const clock = pane.slice(pane.indexOf(CLOCK_COMPONENT));
+
+    // The claim the component exists for. An interval anywhere above it re-renders the body
+    // viewer ten times a second for as long as a request runs, which is the one thing this
+    // pane must not do while it is waiting for a 50MB response.
+    expect(pane.split(TICKER).length - 1).toBe(ONE_TICKER);
+    expect(clock).toContain(TICKER);
+    expect(clock.indexOf(TICKER)).toBeLessThan(clock.indexOf(NEXT_COMPONENT));
   });
 });
 

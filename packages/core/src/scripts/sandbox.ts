@@ -111,6 +111,12 @@ export interface RunScriptOptions {
   iterationCount?: number;
   /** Certificate material for `pm.sendRequest`; Node's defaults when omitted. */
   tlsCerts?: TlsCertOptions;
+  /**
+   * Cancels a `pm.sendRequest` that is on the wire. A script's call is the one place a
+   * cancelled run can still be holding a socket, so it travels the same route as
+   * `tlsCerts` rather than being left to the request timeout. Decision 051.
+   */
+  signal?: AbortSignal | undefined;
   /** Watches logs, tests and side requests as they happen. Omitted by the CLI. */
   observer?: ScriptObserver;
   /**
@@ -351,6 +357,7 @@ export async function runScript(options: RunScriptOptions): Promise<ScriptRunRes
       jar: cookies,
       timeoutMs: options.requestTimeoutMs ?? timeoutMs,
       tlsCerts: options.tlsCerts ?? emptyTlsCerts(),
+      signal: options.signal,
     });
     addSideRequest({
       method: result.method,

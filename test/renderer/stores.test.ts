@@ -1666,13 +1666,29 @@ describe("what the console reads off a run", () => {
     const secondRun = "run-2";
     started(PING_ID);
     apply(sent(PING_ID));
-    apply({ type: "response-head", runId: RUN_ID, nodeId: PING_ID, status: 200, headers: [], timings: {} });
+    apply({
+      type: "response-head",
+      runId: RUN_ID,
+      nodeId: PING_ID,
+      status: 200,
+      headers: [],
+      timings: {},
+      streaming: false,
+    });
     apply({ type: "request-end", runId: RUN_ID, nodeId: PING_ID, exitCode: EXIT_CODES.OK });
 
     apply({ type: "run-start", runId: secondRun, total: ITERATED_TOTAL });
     apply({ type: "request-start", runId: secondRun, nodeId: PING_ID, name: PING_ID, iteration: FIRST_ITERATION });
     apply({ ...sent(PING_ID), runId: secondRun });
-    apply({ type: "response-head", runId: secondRun, nodeId: PING_ID, status: 500, headers: [], timings: {} });
+    apply({
+      type: "response-head",
+      runId: secondRun,
+      nodeId: PING_ID,
+      status: 500,
+      headers: [],
+      timings: {},
+      streaming: false,
+    });
 
     const requests = useRunsStore.getState().requests;
     expect(requests.get(itemKeyFor(RUN_ID, PING_ID, FIRST_ITERATION))?.head?.status).toBe(200);

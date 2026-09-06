@@ -24,8 +24,37 @@ import type { Variant } from "@preman/desktop/renderer/appearance/theme.js";
 const FONT_SIZE = "var(--editor-font-size)";
 const PANEL_FONT_SIZE = "var(--text-xs)";
 const PANEL_LABEL_SIZE = "var(--text-2xs)";
-const LINE_HEIGHT = "1.55";
 const GUTTER_MIN_WIDTH = "2.25rem";
+
+/**
+ * The line box, as a number rather than a string, because two callers need it.
+ *
+ * The theme below sets it on `.cm-scroller`, and `editorBoxHeight` multiplies by it. A caller that
+ * has to give the editor a definite height - one inside a virtualized row, where `flex-1` has
+ * nothing to fill - is doing the same arithmetic the theme does, so it reads the same two numbers
+ * instead of restating them and drifting.
+ */
+export const EDITOR_LINE_HEIGHT = 1.55;
+
+/** `.cm-content`'s vertical padding, one end of it. Counted twice by `editorBoxHeight`. */
+export const EDITOR_CONTENT_PADDING_PX = 6;
+
+const LINE_HEIGHT = String(EDITOR_LINE_HEIGHT);
+const CONTENT_PADDING = `${String(EDITOR_CONTENT_PADDING_PX)}px 0`;
+const BOTH_ENDS = 2;
+
+/**
+ * The height an editor showing exactly `lines` lines needs.
+ *
+ * A `calc` over the font-size variable rather than a measured pixel count, so a box sized this way
+ * still follows the reader's editor font size the moment they change it - the same property the
+ * theme sizes the text with. Measuring instead would need a layout pass the caller does not have:
+ * a virtualized row must report its height when it mounts, not one frame later.
+ */
+export function editorBoxHeight(lines: number): string {
+  const padding = EDITOR_CONTENT_PADDING_PX * BOTH_ENDS;
+  return `calc(${FONT_SIZE} * ${LINE_HEIGHT} * ${String(lines)} + ${String(padding)}px)`;
+}
 
 /**
  * The selection band, and why it is not `--color-selected`.
@@ -91,7 +120,7 @@ export const THEME_SPEC = {
     lineHeight: LINE_HEIGHT,
     overflow: "auto",
   },
-  ".cm-content": { padding: "6px 0", caretColor: "var(--color-accent)" },
+  ".cm-content": { padding: CONTENT_PADDING, caretColor: "var(--color-accent)" },
   ".cm-line": { padding: "0 10px" },
   "&.cm-focused": { outline: "none" },
   ".cm-gutters": {

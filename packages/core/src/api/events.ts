@@ -1,4 +1,5 @@
 import type { ExitCode } from "@preman/core/errors.js";
+import type { SseFrame } from "@preman/core/http/sse.js";
 import type { ConsoleLine, SideRequestRecord, TestResult } from "@preman/core/scripts/sandbox.js";
 
 /**
@@ -65,6 +66,13 @@ export type SentRequest =
  * Every variant carries `runId` so two concurrent runs cannot be interleaved by
  * mistake, and every per-request variant carries `nodeId`, which is the same string
  * as the corresponding `CatalogNode.id`.
+ *
+ * A streamed response tells the story differently, and it is the one place where
+ * `response-head` is not the last word on the exchange. It arrives as soon as the
+ * status line does, carrying `headersMs` and no `durationMs`, because the exchange
+ * has not finished and inventing a number for it would be a lie. `response-frames`
+ * then arrives repeatedly, and `stream-end` closes the story with the duration the
+ * head could not carry. See `docs/decisions/052-a-stream-is-a-response-in-parts.md`.
  */
 export type RunEvent =
   | { type: "run-start"; runId: string; total: number }
@@ -77,7 +85,56 @@ export type RunEvent =
       /** An HTTP status code, or a symbolic gRPC status such as `OK`. */
       status: number | string;
       headers: HeaderPairs;
+      /**
+       * `durationMs` for a completed exchange; `headersMs` alone while a stream is
+       * still open, with `durationMs` following in `stream-end`.
+       */
       timings: Record<string, number>;
+      /**
+       * True when this head opens a stream, so `response-frames` and `stream-end`
+       * are still to come.
+       *
+       * A consumer cannot work this out from the content type. Core declines to read
+       * a compressed or redirected `text/event-stream` live and buffers it instead,
+       * and a reader sniffing the header alone would show a frame list that never
+       * fills. This is core stating what it actually did.
+       */
+      streaming: boolean;
+    }
+  | {
+      type: "response-frames";
+      runId: string;
+      nodeId: string;
+      /**
+       * Frames in dispatch order, from one chunk or from several coalesced together.
+       * Batched rather than one event per frame because a model streaming tokens
+       * dispatches faster than any window can paint, and a frame is small enough that
+       * the array costs less than the messages it replaces.
+       */
+      frames: SseFrame[];
+      /**
+       * Frames discarded ahead of these to keep a flush bounded. Almost always zero.
+       * Reported rather than hidden so a reader counting rows against `stream-end`'s
+       * `total` is told why the numbers differ, and can still read every byte through
+       * the body handle.
+       */
+      dropped: number;
+      /** Bytes of the raw stream received so far, these frames included. */
+      byteLength: number;
+    }
+  | {
+      type: "stream-end";
+      runId: string;
+      nodeId: string;
+      /** Frames the stream dispatched in total, including any `dropped` on the way. */
+      total: number;
+      /** The whole exchange, first byte sent to last byte read. */
+      durationMs: number;
+      /**
+       * Why the stream stopped before the server closed it — cancelled, or the peer
+       * dying mid-flight. Absent when the server ended it, which is the ordinary case.
+       */
+      cutShort?: string;
     }
   | {
       type: "response-body";
