@@ -713,13 +713,20 @@ origin changes. Reaching the limit produces a warning. `--verbose` prints the re
 
 `gzip`, `deflate`, and Brotli responses are decoded before scripts receive them.
 
+A response that stops before it is complete is a transport failure, not a short body. Whether the
+peer hung up mid-message or the per-request deadline fired while bytes were still arriving, preman
+reports no response and exits `2`. A half-read body is never handed to a script to assert against,
+and never printed as though it were the whole thing.
+
 ### Streaming responses
 
 A `text/event-stream` response is read as it arrives **in the desktop app**, which shows each
 server-sent event as its own row while the stream is still open. `preman run` does not: the CLI
 buffers the whole response like any other, so `--timeout-request` stays a hard ceiling and a run
-that never ends cannot wedge a pipeline. The same request therefore behaves differently in the two
-front ends, deliberately; see [Decision 052](decisions/052-a-stream-is-a-response-in-parts.md).
+that never ends cannot wedge a pipeline. A stream that outlives that deadline is reported as a
+timed-out request, not as the part of it that arrived. The same request therefore behaves
+differently in the two front ends, deliberately; see
+[Decision 052](decisions/052-a-stream-is-a-response-in-parts.md).
 
 Where the app does stream, the per-request deadline stops applying once the response head arrives.
 What ends the request is the server closing it, the connection dying, or Cancel. A stream that ends

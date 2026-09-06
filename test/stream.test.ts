@@ -29,6 +29,8 @@ const PAST_THE_DEADLINE_MS = 600;
 const POLL_MS = 10;
 const POLL_LIMIT_MS = 5_000;
 const NO_FRAMES = 0;
+/** What a failed exchange carries instead of the bytes it did manage to read. */
+const NO_BODY = "";
 const ONE_FRAME = 1;
 const TWO_FRAMES = 2;
 const ONE_OPEN = 1;
@@ -339,6 +341,30 @@ describe("invoking a text/event-stream without a sink", () => {
     // This is the CLI's contract: --timeout is a ceiling, whatever the content type is.
     expect(result.statusCode).toBe(NO_RESPONSE_STATUS);
     expect(result.message).toContain("timed out");
+  });
+
+  it("givenTheServerHangsUpMidBody_whenBuffering_thenTheHalfResponseIsNotReportedAsWhole", async () => {
+    const before = stream.opened();
+    const pending = invokeHttp({
+      url: new URL(`${stream.origin}/stream`),
+      method: "GET",
+      headers: [],
+      timeoutMs: GENEROUS_TIMEOUT_MS,
+      tlsCerts: emptyTlsCerts(),
+    });
+    await stream.awaitOpened(before + ONE_READER);
+    stream.emit(`data: one\n\n`);
+    stream.kill();
+
+    const result = await pending;
+
+    // Locks in the contract rather than reproducing the bug that prompted it: a local
+    // server hanging up surfaces an error, and this passed before the fix too. The case
+    // that did not - a socket destroyed while a remote was mid-write, which ends the
+    // readable stream instead of erroring - takes a real network to provoke, so it is
+    // covered by `res.complete` in `invoke.ts` and by evidence on the pull request.
+    expect(result.statusCode).toBe(NO_RESPONSE_STATUS);
+    expect(result.body).toBe(NO_BODY);
   });
 });
 

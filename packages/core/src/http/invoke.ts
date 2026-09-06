@@ -153,6 +153,15 @@ function messageOf(cause: unknown): string {
 const PEER_RESET_MESSAGE = "aborted";
 const PEER_RESET_REASON = "the server closed the connection";
 
+/**
+ * A response that stopped before it was finished, when nothing on this side stopped it.
+ *
+ * `res.complete` is Node's own answer to "was that the whole message", and it is the only
+ * one there is: a truncated chunked body still ends its readable stream, so an `end`
+ * listener that does not ask reports half a response as a whole one.
+ */
+const TRUNCATED_MESSAGE = "the response ended before it was complete";
+
 /** Why a stream stopped before the server said it was finished. */
 function cutShortReason(cause: unknown): string {
   const message = messageOf(cause);
@@ -245,6 +254,15 @@ function send(
      * throw away every frame it had just shown them.
      */
     let interrupt: ((cause: unknown) => RawResponse) | undefined;
+    /**
+     * Why this side destroyed the socket, kept so the `end` that follows can say it.
+     *
+     * Destroying races the readable stream: whatever the body had already buffered still
+     * drains and still emits `end`, so whether the caller hears "timed out" or hears
+     * nothing at all comes down to which listener runs first. Recording the reason is what
+     * makes the two agree.
+     */
+    let destroyed: Error | undefined;
 
     const req = driver(url, { ...tlsOptions, method, headers }, (res) => {
       const chunks: Buffer[] = [];
@@ -308,9 +326,36 @@ function send(
         }
         finish(() => resolve(partial(cause)));
       });
+      /** End an exchange that stopped early, as a failure or as the frames so far. */
+      const stop = (cause: Error): void => {
+        flush();
+        const partial = interrupt;
+        if (partial === undefined) {
+          finish(() => reject(cause));
+          return;
+        }
+        finish(() => resolve(partial(cause)));
+      };
+
       res.on("end", () => {
         flush();
+        // A truncated body ends exactly like a whole one, so this is the only place the
+        // difference can be caught. Reported rather than resolved quietly, because a half
+        // response that still says 200 OK is a green assertion over a body the server
+        // never finished sending.
+        if (!res.complete) {
+          stop(destroyed ?? new Error(TRUNCATED_MESSAGE));
+          return;
+        }
         finish(() => resolve(settle(undefined)));
+      });
+      // The backstop, and not a redundant one: a destroyed response can emit `close`
+      // without ever emitting `end` or `error`, and nothing else here would then settle
+      // the promise at all. That is a caller hanging for as long as the process lives.
+      // Whichever of the two arrives first wins; a promise ignores the second.
+      res.on("close", () => {
+        if (res.complete) return;
+        stop(destroyed ?? new Error(TRUNCATED_MESSAGE));
       });
     });
 
@@ -323,13 +368,17 @@ function send(
       finish(() => resolve(partial(cause)));
     });
     // Covers a slow drip as well as a dead peer, which req.setTimeout alone does not.
-    const timer = setTimeout(() => req.destroy(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+    const timer = setTimeout(() => {
+      destroyed = new Error(`timed out after ${timeoutMs}ms`);
+      req.destroy(destroyed);
+    }, timeoutMs);
     // Destroying the request, not just stopping the reading of it: a response that is
     // still arriving holds the socket open until the server decides otherwise, which for
     // a stream is never. The destroy surfaces through the `error` listener above, so the
     // message reaches the caller by the same path a timeout does.
     const abort = (): void => {
-      req.destroy(new Error(CANCELLED_MESSAGE));
+      destroyed = new Error(CANCELLED_MESSAGE);
+      req.destroy(destroyed);
     };
     signal?.addEventListener("abort", abort, { once: true });
     if (body !== undefined) req.write(body);
