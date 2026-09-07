@@ -107,7 +107,7 @@ function requestNode(
   parentId: string | null,
   depth: number,
 ): CatalogNode {
-  return {
+  const node: CatalogNode = {
     id: nodeIdFor(root, file),
     kind: "request",
     name: header.name,
@@ -117,8 +117,9 @@ function requestNode(
     order: orderOf(header.order),
     protocol: PROTOCOL_BY_KIND[header.kind] ?? "unsupported",
     label: header.label,
-    ...(header.auth === undefined ? {} : { auth: header.auth }),
   };
+  if (header.auth !== undefined) node.auth = header.auth;
+  return node;
 }
 
 /**
@@ -176,7 +177,7 @@ async function emitGroup(
   // `readGroupDefinition` already parsed and validated the block, so this is a property read
   // rather than a second reader of the same file.
   const auth = authTypeOf(definition.auth);
-  out.push({
+  const node: CatalogNode = {
     id,
     kind,
     name: definition.name,
@@ -184,8 +185,9 @@ async function emitGroup(
     parentId,
     depth,
     order: orderOf(definition.order),
-    ...(auth === undefined ? {} : { auth }),
-  });
+  };
+  if (auth !== undefined) node.auth = auth;
+  out.push(node);
 
   for (const child of await readChildren(root, dir, definition.path)) {
     await child.emit(id, depth + 1, out);
