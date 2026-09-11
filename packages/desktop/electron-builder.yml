@@ -23,6 +23,14 @@ mac:
   category: public.app-category.developer-tools
   icon: resources/icon.png
   target:
+    # The DMG is the first install: it is what a browser downloads and what the release page
+    # offers. The ZIP is the update payload, because the app's own updater extracts a bundle with
+    # `ditto` and swaps it into place - a disk image would have to be mounted, and mounting one
+    # unattended is a whole extra failure surface. Neither is Squirrel's format; preman does not
+    # speak Squirrel, for the reason `docs/decisions/054` gives at length.
     - dmg
+    - zip
   # Ad-hoc signing. A real identity belongs to whoever ships the build, not to the repository.
+  # This is also what rules out Squirrel.Mac: it validates a downloaded bundle against the
+  # designated requirement of the installed one, and two ad-hoc builds never share one.
   identity: null

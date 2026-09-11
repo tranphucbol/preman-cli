@@ -307,8 +307,14 @@ Three things, and they are not interchangeable.
 | the pane's content   | `panes/ResponseFailure.tsx` | there is nothing to show, and why there is nothing is the information     |
 | one faint line       | a local `Hint`              | there is nothing to show and that is unremarkable: no cookies, no tests   |
 
-`Banner` is `border-{tone}/40 bg-{tone}/10` with a `WarningIcon`, chrome tier, `px-gutter py-1.5`,
-and only two tones: `danger` and `warn`. `ok` and `neutral` do not warrant a bar. It takes either a
+`Banner` is `border-{tone}/40 bg-{tone}/10`, chrome tier, `px-gutter py-1.5`, and three tones:
+`danger` and `warn` wear the `WarningIcon`, and `info` wears the `InfoIcon`. `ok` and `neutral`
+still do not warrant a bar. `info` is narrow on purpose — a fact the reader has to be told and can
+act on, where nothing is wrong — and today it is used by exactly one thing, the updater's "a new
+version is available" and "it is ready to install" (ADR 054). It is tinted with the accent rather
+than a colour of its own because no palette declares a `--color-info` and adding one would be
+forty-three generated files changed to tint one strip; that is the one place the accent appears
+without being the thing you came to press. It takes either a
 `detail` beside the message — monospace and truncated, so an id or a path — or `details` below it,
 one prose line each, which is what a `PremanError` carries. It exists because four panes wanted it
 and three had already written their own with three different class strings.
@@ -318,8 +324,8 @@ once there is more than the box shows. It is the box that is bounded and never t
 come the whole way from core's `PremanError`, the CLI prints all of them, and a window that drops
 the last fourteen is worse than the terminal. `danger` carries a copy button before its action for
 the same reason — being able to paste every line is what makes capping the visible ones honest — and
-`warn` does not, because nothing it says is a bug report. The height and the count are two spellings
-of one number, so `test/renderer/banner.test.ts` holds them to agreeing.
+`warn` and `info` do not, because nothing either says is a bug report. The height and the count are
+two spellings of one number, so `test/renderer/banner.test.ts` holds them to agreeing.
 
 A banner takes one optional action as `children`, to the right of the copy button. `App.tsx` used to
 own a second banner for exactly that and it is gone; `RequestEditor`'s `ConflictBanner` is the one

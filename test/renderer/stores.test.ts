@@ -209,6 +209,13 @@ function fakeBridge(): FakeBridge {
     onMigrateProgress: () => () => undefined,
     onResourceSample: () => () => undefined,
     watchResources: () => undefined,
+    // The updater's five, inert: no store here subscribes to a phase, and a fake that answered
+    // one would be asserting something this file does not test.
+    onUpdateState: () => () => undefined,
+    checkForUpdate: () => Promise.resolve(),
+    downloadUpdate: () => Promise.resolve(),
+    installUpdate: () => Promise.resolve(),
+    skipUpdate: () => Promise.resolve(),
     listWorkspaces: () => {
       listCalls += 1;
       return Promise.resolve([]);

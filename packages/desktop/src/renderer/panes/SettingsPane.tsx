@@ -35,16 +35,18 @@ import {
 import type { Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
 import { formatCpu, formatMemory, loadClass, totalOf } from "@preman/desktop/renderer/model/resources.js";
+import { LOCAL_NETWORK_CAVEAT, updateHeadline } from "@preman/desktop/renderer/model/update.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
 import { selectHistory, selectSample, useResourcesStore } from "@preman/desktop/renderer/stores/resources.js";
 import { switchWorkspace, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import { selectStatus, useUpdateStore } from "@preman/desktop/renderer/stores/update.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Button, Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
 import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { Sparkline } from "@preman/desktop/renderer/ui/Sparkline.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import { SHARED_PROTO_ROOT } from "@preman/desktop/engine/protocol.js";
-import type { Density, DiagnosticsInfo, ProcessReading } from "@preman/desktop/preload/bridge.js";
+import type { Density, DiagnosticsInfo, ProcessReading, UpdateStatus } from "@preman/desktop/preload/bridge.js";
 
 /** The nine colours a card shows: the three surfaces you look at, then the six verbs you read. */
 const SWATCHES = [
@@ -82,6 +84,14 @@ const NO_FONT = null;
 const EMPTY = "";
 
 const MISSING_FONT_HINT = "Not installed on this machine — the shipped stack is being used instead.";
+
+const UPDATES_HINT = "Whether there is a newer preman, and the two clicks that install one.";
+/**
+ * The preference's name says what it does and not what it enables. It gates the *check* only —
+ * nothing is ever downloaded or installed without a press — and a label reading "update
+ * automatically" would promise exactly the thing decision 16 refuses to build.
+ */
+const AUTO_CHECK_LABEL = "Check for updates automatically";
 
 const SHARED_ROOT_FIELD_ID = "settings-shared-proto-root";
 const SHARED_ROOT_HINT = "Where a declared proto path is resolved to a checkout on this machine.";
@@ -168,7 +178,11 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
         <ProtosSection />
       </Pane>
 
+      {/* Updates sits above Diagnostics rather than in a tab of its own: both answer "which build
+          is this and is it the right one", and a fifth tab holding three rows would be a tab
+          nobody opens. */}
       <Pane value="diagnostics">
+        <UpdatesSection />
         <DiagnosticsSection />
       </Pane>
 
@@ -443,6 +457,128 @@ function ProtosSection(): React.JSX.Element {
         </div>
       </Labelled>
     </Section>
+  );
+}
+
+/**
+ * Whether there is a newer preman, and the two clicks that get to it.
+ *
+ * Two clicks and not one, and never zero. The check is automatic and can be turned off here; the
+ * download and the restart are separate deliberate presses, because a swap that fails takes the
+ * app with it and nobody should meet that on a machine they walked away from. Decision 16.
+ *
+ * The running version is read here as well as in the section below it. That is one extra IPC round
+ * trip on opening this tab, and it buys a section that says a whole sentence — "preman 1.3.0, up to
+ * date" — rather than half of one with the other half four rows down.
+ */
+function UpdatesSection(): React.JSX.Element {
+  const status = useUpdateStore(selectStatus);
+  const preferences = useAppearanceStore((state) => state.preferences);
+  const setPreferences = useAppearanceStore((state) => state.setPreferences);
+  const [running, setRunning] = useState<string | null>(null);
+
+  // Once, on mount, and it never changes while the app runs — the same read and the same reasoning
+  // as `DiagnosticsSection` below. A failed read leaves the placeholder, which is honest.
+  useEffect(() => {
+    let live = true;
+    void window.preman
+      .diagnostics()
+      .then((read) => {
+        if (live) setRunning(read.appVersion);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  return (
+    <Section title="Updates" hint={UPDATES_HINT}>
+      <dl className="flex flex-col gap-2">
+        <DiagnosticsRow term="Running">
+          <span className="font-mono text-2xs text-ink-dim">preman {running ?? UNKNOWN_VALUE}</span>
+        </DiagnosticsRow>
+        <DiagnosticsRow term="Status">
+          {/* `min-w-0` so a long headline shrinks rather than overflowing, but deliberately not
+              `flex-1`: that would hand the span every leftover pixel of the column and strand the
+              button at the far edge, which is not what the Log row below does with Reveal. */}
+          <span className={cn("min-w-0 text-2xs", status.phase === "failed" ? "text-danger" : "text-ink-dim")}>
+            {updateHeadline(status)}
+          </span>
+          <UpdateActions status={status} />
+        </DiagnosticsRow>
+      </dl>
+      {/* A `hint`, not a `Banner`: this is a standing caveat about how ad-hoc-signed code and TCC
+          interact, true of every update this app will ever install, and a bar that said it would
+          be a bar that said it forever. */}
+      {status.phase === "ready" && <p className="text-2xs text-ink-faint">{LOCAL_NETWORK_CAVEAT}</p>}
+      <label className="flex items-center gap-1.5 text-2xs text-ink-dim">
+        <input
+          type="checkbox"
+          checked={preferences.autoCheckUpdates}
+          className="size-3 accent-accent"
+          onChange={(changed) => {
+            setPreferences({ ...preferences, autoCheckUpdates: changed.currentTarget.checked });
+          }}
+        />
+        {AUTO_CHECK_LABEL}
+      </label>
+    </Section>
+  );
+}
+
+/**
+ * The one action for the phase, and never two.
+ *
+ * Skip sits beside Download on `available` only, because that is the one state where "not this
+ * one" is a coherent answer: before a check there is nothing to skip, and after a download there
+ * is 317MB already staged that skipping would silently throw away.
+ */
+function UpdateActions({ status }: { readonly status: UpdateStatus }): React.JSX.Element | null {
+  if (status.phase === "available") {
+    return (
+      <span className="flex shrink-0 items-center gap-1">
+        <Button
+          variant="neutral"
+          onClick={() => {
+            void window.preman.skipUpdate(status.version);
+          }}
+        >
+          Skip
+        </Button>
+        <Button
+          onClick={() => {
+            void window.preman.downloadUpdate();
+          }}
+        >
+          Download
+        </Button>
+      </span>
+    );
+  }
+  if (status.phase === "ready") {
+    return (
+      <Button
+        onClick={() => {
+          void window.preman.installUpdate();
+        }}
+      >
+        Restart and install
+      </Button>
+    );
+  }
+  // Absent rather than disabled while a check or a download is in flight: a greyed button that
+  // will come back in four seconds is a button the reader has to keep watching.
+  if (status.phase === "checking" || status.phase === "downloading") return null;
+  return (
+    <Button
+      variant="neutral"
+      onClick={() => {
+        void window.preman.checkForUpdate();
+      }}
+    >
+      Check now
+    </Button>
   );
 }
 

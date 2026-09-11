@@ -87,6 +87,21 @@ export const CHANNELS = {
    * shut costs exactly what it did before `docs/decisions/040`.
    */
   watchResources: "preman:watch-resources",
+  /**
+   * Main to renderer, whenever the updater's phase changes.
+   *
+   * One channel carrying one discriminated union, rather than a channel per phase or a record of
+   * booleans: a window that derived "downloading" from two fields could be told about the second
+   * one first and paint a state that never existed. See `docs/decisions/054`.
+   */
+  updateState: "preman:update-state",
+  /** Renderer to main, from the Settings pane's button or the app menu's item. */
+  checkForUpdate: "preman:check-for-update",
+  downloadUpdate: "preman:download-update",
+  /** Quits and hands over to the swap script. Nothing comes back, because nothing is left to. */
+  installUpdate: "preman:install-update",
+  /** Stop offering this version. The next one is offered again; this is not "never update". */
+  skipUpdate: "preman:skip-update",
 } as const;
 
 export type WindowControl = "minimise" | "maximise" | "close";
@@ -152,6 +167,15 @@ export interface Preferences {
    * links; it does not need its colleagues' workspaces to know that.
    */
   sharedProtoRoot: string | null;
+  /**
+   * Whether the app asks GitHub whether there is a newer one, on launch and once a day after.
+   *
+   * A preference because the check is a network request the user did not initiate, and it ships on
+   * because a user who never learns a release happened stays on the old build indefinitely. It
+   * gates the *check* only: nothing downloads and nothing installs without a click either way. See
+   * `docs/decisions/054`.
+   */
+  autoCheckUpdates: boolean;
 }
 
 /** The editor's size in `app.css` today, so a fresh install renders exactly as it does now. */
@@ -171,6 +195,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   canvas: DEFAULT_CANVAS,
   barHeightPx: TITLE_BAR_HEIGHT_PX,
   sharedProtoRoot: null,
+  autoCheckUpdates: true,
 };
 
 /** The two things about the window itself that a preference change moves. */
@@ -379,6 +404,49 @@ export interface ResourceSample {
   readonly processes: readonly ProcessReading[];
 }
 
+/**
+ * Why this copy of preman cannot replace itself, when it cannot.
+ *
+ * Declared here rather than in `main/update/eligibility.ts` for the reason `Preferences` is: the
+ * renderer names the reason in a sentence, main computes it, and a type that crossed from `main/`
+ * into the window would be the first thread of the engine following it. The pure module imports
+ * this, not the other way round.
+ */
+export type Ineligibility = "unpackaged" | "translocated" | "readOnlyVolume" | "notWritable" | "architecture";
+
+/**
+ * Where the updater is, as one value.
+ *
+ * A discriminated union on one channel rather than a handful of fields, because every pair of
+ * fields is a pair that can disagree: a `downloading` with no version, a `ready` that is also
+ * `checking`. The window renders a phase, and there is exactly one.
+ *
+ * `failed` carries `details[]` for the same reason `HostFailure` does — "the signature did not
+ * verify" is the failure and "this download was not published by preman; try again later" is the
+ * advice, and a pane that ran them together would have to re-split them.
+ */
+export type UpdateStatus =
+  | { readonly phase: "idle" | "checking" | "current" }
+  | { readonly phase: "unsupported"; readonly reason: Ineligibility }
+  | {
+      readonly phase: "available";
+      readonly version: string;
+      readonly notesUrl: string;
+      readonly sizeBytes: number;
+    }
+  | {
+      readonly phase: "downloading";
+      readonly version: string;
+      readonly receivedBytes: number;
+      /** `0` while the response carried no `content-length`, which is drawn as indeterminate. */
+      readonly totalBytes: number;
+    }
+  | { readonly phase: "ready"; readonly version: string }
+  | { readonly phase: "failed"; readonly message: string; readonly details: readonly string[] };
+
+/** What the window shows before main has said anything, so no reader has to handle `null`. */
+export const IDLE_UPDATE: UpdateStatus = { phase: "idle" };
+
 /** A host that will not come back. Carries `details[]` for the same reason `EngineError` does. */
 export interface HostFailure {
   root: string;
@@ -526,4 +594,24 @@ export interface PremanBridge {
    * opened. Decision 017 found 7-16ms of ambient blocking in the idle app already.
    */
   watchResources(watching: boolean): void;
+  /**
+   * Where the updater is. Returns an unsubscribe function, the same shape `onHostFailure` has.
+   *
+   * A push and not a read, because the interesting transitions happen while nobody is looking: the
+   * first check is ten seconds after the window loaded, and the next is a day later. The window
+   * subscribes once, at the top, and keeps the last phase in a store — so the Settings pane opened
+   * an hour later reads what was pushed rather than asking again.
+   */
+  onUpdateState(listener: (state: UpdateStatus) => void): () => void;
+  /**
+   * Ask now. Answers nothing: the result is a phase on the channel above, because a background
+   * check and a pressed button have to leave the app in the same state or the pane has two.
+   */
+  checkForUpdate(): Promise<void>;
+  /** Fetch the payload the last check found. Progress arrives as `downloading` frames. */
+  downloadUpdate(): Promise<void>;
+  /** Quit and let the swap script replace the bundle. There is no coming back from this call. */
+  installUpdate(): Promise<void>;
+  /** Stop offering `version`. A later one is offered again. */
+  skipUpdate(version: string): Promise<void>;
 }

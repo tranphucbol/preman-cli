@@ -73,6 +73,7 @@ import {
 import { paletteItems, type PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { skeletonWidths } from "@preman/desktop/renderer/model/opening.js";
 import { sectionFor } from "@preman/desktop/renderer/model/search.js";
+import { updateBanner } from "@preman/desktop/renderer/model/update.js";
 import { SkeletonBlock } from "@preman/desktop/renderer/ui/Skeleton.js";
 import {
   applyPlan,
@@ -105,6 +106,7 @@ import { useAsideStore } from "@preman/desktop/renderer/stores/aside.js";
 import { useOverlayStore, type Overlay } from "@preman/desktop/renderer/stores/overlay.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { useSearchStore } from "@preman/desktop/renderer/stores/search.js";
+import { selectStatus, useUpdateStore } from "@preman/desktop/renderer/stores/update.js";
 
 const SIDEBAR_ID = "sidebar";
 const EDITOR_ID = "editor";
@@ -240,6 +242,10 @@ export function App(): React.JSX.Element {
   // The app menu's own Settings item. It cannot open the pane itself — the menu lives in the main
   // process and the pane is a piece of renderer state — so it sends, and this is where it lands.
   useEffect(() => window.preman.onOpenSettings(useOverlayStore.getState().showSettings), []);
+  // Subscribed once, at the top, and never in the pane that draws it: the first check lands ten
+  // seconds after the window loads and the next a day later, so a listener that came and went with
+  // the Settings pane would miss every transition that matters.
+  useEffect(() => window.preman.onUpdateState(useUpdateStore.getState().apply), []);
 
   const [ask, setAsk] = useState<Ask | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -420,6 +426,7 @@ export function App(): React.JSX.Element {
           <div className="flex h-full flex-col">
             <TitleBar onCreateWorkspace={showCreateWorkspace} />
             <HostBanner />
+            <UpdateBanner />
             <DegradedBanner />
             <FailureBanner failure={failure} onDismiss={dismissFailure} />
             <Group
@@ -1430,6 +1437,38 @@ function HostBanner(): React.JSX.Element {
             }}
           >
             Retry
+          </Button>
+        </Banner>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/**
+ * The one interruption the updater is allowed.
+ *
+ * `available` and `ready` only, and `tone="info"` because neither is a problem: nothing is wrong
+ * with the app the user is looking at. A failed check gets no bar at all — a laptop that could not
+ * reach GitHub is not worth a strip across the window, and the Settings pane says so for whoever
+ * goes looking. Decision 054.
+ */
+function UpdateBanner(): React.JSX.Element {
+  const status = useUpdateStore(selectStatus);
+  const banner = updateBanner(status);
+  return (
+    <AnimatePresence>
+      {banner === null ? null : (
+        <Banner tone="info" message={banner.message} detail={banner.detail}>
+          <Button
+            onClick={() => {
+              // Two verbs behind one button, chosen by the phase rather than by two buttons that
+              // are never both meaningful. The pane is where Skip lives; a bar with three controls
+              // in it is a bar that has stopped being a notice.
+              if (banner.ready) void window.preman.installUpdate();
+              else void window.preman.downloadUpdate();
+            }}
+          >
+            {banner.ready ? "Restart and install" : "Download"}
           </Button>
         </Banner>
       )}

@@ -23,6 +23,21 @@ const NEWEST_FIRST = -1;
 const OLDEST_FIRST = 1;
 
 /**
+ * The two errno values that mean "this file exists and is not yours to read", as opposed to the
+ * ones that mean "there is nothing here" or "what is here is not JSON".
+ *
+ * The distinction is the whole of phase 0 of `docs/plans/031`. Under macOS 26's app-bound data
+ * protection an access is keyed to the running code's cdhash, and a build that replaced itself
+ * carries a new one — so `EACCES` on `state.json` is a plausible outcome of the app updating
+ * itself, and it looks from the inside exactly like a fresh install. Sparkle#2880 reports the same
+ * class of failure under `~/Library/Caches`. Defaults are the right recovery either way; being
+ * silent about it is not.
+ */
+const UNREADABLE_CODES = new Set(["EACCES", "EPERM"]);
+/** Node puts the errno on `code`. Anything without one is not a file system refusal. */
+const NO_CODE = null;
+
+/**
  * A registered workspace: the session the renderer restores, plus the two fields only this
  * process has an opinion about. `SessionSnapshot` is shared with the bridge so the shape that
  * crosses IPC and the shape on disk cannot drift.
@@ -49,6 +64,16 @@ export interface AppState {
   preferences: Preferences;
   activeRoot: string | null;
   workspaces: WorkspaceState[];
+  /**
+   * When the updater last completed a check, and which version the user asked not to be offered
+   * again.
+   *
+   * Both optional and both additive, so `STATE_VERSION` stays 1 — the same reasoning `preferences`
+   * gets above. Bumping the number to record a timestamp would trade every registered workspace
+   * for a clock.
+   */
+  lastUpdateCheckAt?: number;
+  skippedUpdateVersion?: string | null;
 }
 
 export interface AppStore {
@@ -101,24 +126,74 @@ function reconcile(raw: unknown): AppState {
     preferences: { ...base.preferences, ...(candidate.preferences ?? {}) },
     activeRoot: typeof candidate.activeRoot === "string" ? candidate.activeRoot : null,
     workspaces: Array.isArray(candidate.workspaces) ? candidate.workspaces : [],
+    // Spread rather than defaulted: both are optional, and JSON writes no key for an `undefined`,
+    // so a file from a build that predates the updater comes back without them and reads as
+    // "never checked, nothing skipped" — which is exactly true.
+    ...(typeof candidate.lastUpdateCheckAt === "number" ? { lastUpdateCheckAt: candidate.lastUpdateCheckAt } : {}),
+    ...(typeof candidate.skippedUpdateVersion === "string"
+      ? { skippedUpdateVersion: candidate.skippedUpdateVersion }
+      : {}),
   };
 }
 
-export function createAppStore(userDataDir: string): AppStore {
+export interface AppStoreOptions {
+  /**
+   * The state file exists and the operating system refused it. Called with the path and the errno.
+   *
+   * Passed in rather than imported, for the reason `DiagnosticsOptions.directory` is: `main.ts`
+   * keeps owning every path and every side effect, and this module keeps being a thing a test can
+   * point at a temporary directory.
+   */
+  readonly onUnreadable?: (file: string, code: string) => void;
+}
+
+/**
+ * The errno of a file system refusal, or `null` for any other failure.
+ *
+ * `unknown` in, because a `catch` binding is: `JSON.parse` throws a `SyntaxError` with no `code`,
+ * and `readFileSync` throws an `Error` with one.
+ */
+function refusalCode(cause: unknown): string | null {
+  if (typeof cause !== "object" || cause === null) return NO_CODE;
+  const code: unknown = (cause as { code?: unknown }).code;
+  return typeof code === "string" && UNREADABLE_CODES.has(code) ? code : NO_CODE;
+}
+
+export function createAppStore(userDataDir: string, options: AppStoreOptions = {}): AppStore {
   const file = join(userDataDir, STATE_FILE);
   let state = emptyState();
 
   if (existsSync(file)) {
     try {
       state = reconcile(JSON.parse(readFileSync(file, ENCODING)) as unknown);
-    } catch {
+    } catch (cause) {
       // A corrupt state file is not worth a dialog: the defaults are correct enough.
+      //
+      // A file that could not be *read* is a different event wearing the same recovery. The
+      // defaults are not correct there — they discard every registered workspace and look exactly
+      // like a fresh install — so the caller is told, and decides whether that is a log line or
+      // something louder. Still not a throw: an app that will not start is worse than one that
+      // starts empty and says why.
+      const code = refusalCode(cause);
+      if (code !== NO_CODE) options.onUnreadable?.(file, code);
       state = emptyState();
     }
   }
 
+  /**
+   * A failed write throws, unchanged, the way it always has: it reaches `ipcMain.handle`, which
+   * makes it visible. The one thing added is which of the two failures it was — a permission
+   * refusal and a full disk are both `writeFileAtomic` throwing, and only one of them is the
+   * update having changed this build's identity.
+   */
   function persist(): void {
-    writeFileAtomic(file, JSON.stringify(state, null, JSON_INDENT));
+    try {
+      writeFileAtomic(file, JSON.stringify(state, null, JSON_INDENT));
+    } catch (cause) {
+      const code = refusalCode(cause);
+      if (code !== NO_CODE) options.onUnreadable?.(file, code);
+      throw cause;
+    }
   }
 
   function findOrCreate(root: string): WorkspaceState {

@@ -7,7 +7,7 @@
  * intact — filling in a new field is not a migration, and treating it as one would trade someone's
  * whole workspace list for a colour they never chose.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -47,6 +47,7 @@ const CHOSEN: Preferences = {
   canvas: "#2e3440",
   barHeightPx: 36,
   sharedProtoRoot: null,
+  autoCheckUpdates: false,
 };
 
 afterEach(() => {
@@ -116,6 +117,71 @@ describe("app store preferences", () => {
     writeFileSync(join(dir, STATE_FILE), "{ not json", ENCODING);
 
     expect(createAppStore(dir).read().preferences).toEqual(DEFAULT_PREFERENCES);
+  });
+});
+
+/**
+ * The two failures that recover the same way and mean opposite things.
+ *
+ * A file that will not parse is corruption, and the defaults are correct enough for it. A file the
+ * operating system refuses is not corruption: everything the user registered is still on disk, and
+ * defaulting silently presents an install of two years' standing as a fresh one. Under macOS 26's
+ * app-bound data protection an access is keyed to the running code's hash, which for ad-hoc-signed
+ * preman changes on every build - so a self-updated app landing in exactly this state is a
+ * plausible Tuesday. See `docs/decisions/054`.
+ */
+const UNREADABLE_MODE = 0o000;
+
+/** Root reads anything, so the case cannot be staged there. Probed rather than assumed. */
+function refusalIsPossible(): boolean {
+  const dir = mkdtempSync(join(tmpdir(), "preman-store-probe-"));
+  const file = join(dir, STATE_FILE);
+  try {
+    writeFileSync(file, "{}", ENCODING);
+    chmodSync(file, UNREADABLE_MODE);
+    readFileSync(file, ENCODING);
+    return false;
+  } catch {
+    return true;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("why the state file was not read", () => {
+  it.skipIf(!refusalIsPossible())("givenAStateFileThatCannotBeRead_whenCreateAppStore_thenTheCallerIsToldWhy", () => {
+    const dir = userData();
+    const file = join(dir, STATE_FILE);
+    seed(dir, { version: CURRENT_VERSION, activeRoot: A_ROOT, workspaces: [{ root: A_ROOT }] });
+    chmodSync(file, UNREADABLE_MODE);
+    const refused: { file: string; code: string }[] = [];
+
+    const state = createAppStore(dir, {
+      onUnreadable: (which, code) => refused.push({ file: which, code }),
+    }).read();
+
+    // Still the defaults: an app that will not start is worse than one that starts empty.
+    expect(state.workspaces).toEqual([]);
+    // But loudly. This is the whole of the change.
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.file).toBe(file);
+    expect(["EACCES", "EPERM"]).toContain(refused[0]?.code);
+  });
+
+  it("givenAMalformedStateFile_whenCreateAppStore_thenItFallsBackSilently", () => {
+    const dir = userData();
+    writeFileSync(join(dir, STATE_FILE), "{ not json", ENCODING);
+    let told = false;
+
+    const state = createAppStore(dir, {
+      onUnreadable: () => {
+        told = true;
+      },
+    }).read();
+
+    expect(state.preferences).toEqual(DEFAULT_PREFERENCES);
+    // A `SyntaxError` carries no errno, and a hand-edited file is not a provenance problem.
+    expect(told).toBe(false);
   });
 });
 

@@ -31,6 +31,11 @@ rebuild is pure latency.
 
 Ad-hoc signing because a real Developer ID belongs to whoever ships this, not to the repository.
 
+[054](054-the-app-signs-its-own-updates.md) changed one line of the decision above and none of the
+reasoning: `target` is now `[dmg, zip]`, because the app's own updater downloads and extracts a
+ZIP. `identity: null` stands, and it is precisely what rules Squirrel.Mac out — which is why there
+is a hand-written updater at all.
+
 ## Consequences
 
 `bun run desktop:package` produces `release/preman-<version>-arm64.dmg` (~128MB) and

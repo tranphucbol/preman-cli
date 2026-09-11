@@ -22,6 +22,7 @@ import {
   type PremanBridge,
   type ResourceSample,
   type SessionSnapshot,
+  type UpdateStatus,
   type WindowChrome,
   type WindowControl,
   type WorkspaceHandle,
@@ -183,6 +184,21 @@ const bridge: PremanBridge = {
   watchResources: (watching: boolean) => {
     ipcRenderer.send(CHANNELS.watchResources, watching);
   },
+  // The same unsubscribe-safe shape `onHostFailure` has, and for the same reason: the phase is
+  // pushed, so a listener that could not be removed would stack across re-renders.
+  onUpdateState(listener) {
+    const handler = (_event: IpcRendererEvent, state: UpdateStatus): void => {
+      listener(state);
+    };
+    ipcRenderer.on(CHANNELS.updateState, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.updateState, handler);
+    };
+  },
+  checkForUpdate: () => ipcRenderer.invoke(CHANNELS.checkForUpdate) as Promise<void>,
+  downloadUpdate: () => ipcRenderer.invoke(CHANNELS.downloadUpdate) as Promise<void>,
+  installUpdate: () => ipcRenderer.invoke(CHANNELS.installUpdate) as Promise<void>,
+  skipUpdate: (version: string) => ipcRenderer.invoke(CHANNELS.skipUpdate, version) as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

@@ -63,6 +63,10 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
     hosts.ts                     one utilityProcess per open workspace; MessageChannelMain transfer
     store.ts                     app data: workspaces, tabs, drafts, window bounds
     diagnostics.ts               the one log file and the host output tail; 035 fences it, 036 levels it
+    update/                      the app replacing itself: a signed manifest, four eligibility
+                                 guards, and a detached shell script that swaps the bundle. Not
+                                 Squirrel - 054 says why ad-hoc signing makes it impossible, not
+                                 merely unconfigured - and only `updater.ts` touches electron
   src/preload/                   contextBridge surface; relays the engine port into the page
   src/engine/                    the utility process: Catalog, BodyStore, watcher, proto cache
     protocol.ts                  the typed contract; the only module engine and renderer share
@@ -73,7 +77,8 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
     appearance/                  what the tokens resolve to: theme.ts, density.ts, fonts.ts,
                                  themes/ (43, all but one generated), and apply.ts - the one
                                  module allowed to touch documentElement.style
-    stores/                      catalog, tabs, runs, session, appearance - one per subscription
+    stores/                      catalog, tabs, runs, session, appearance, update - one per
+                                 subscription
     model/                       pure, no React: request fields, drop plans, body windows, responses
     ui/                          cn, icons, Menu, Controls, Banner, Dialog, CodeEditor, highlight,
                                  editorTheme (the editor's chrome, reaching nothing so it is
