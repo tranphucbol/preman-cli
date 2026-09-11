@@ -13,22 +13,39 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 
-import { CheckIcon, CopyIcon, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { CheckIcon, CopyIcon, InfoIcon, WarningIcon, type Icon } from "@preman/desktop/renderer/ui/icons.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { m } from "@preman/desktop/renderer/ui/motion.js";
 
-/** Only the two tones that mean "read me". `ok` and `neutral` do not warrant a bar. */
-export type BannerTone = "danger" | "warn";
+/**
+ * The three tones that mean "read me". `ok` and `neutral` still do not warrant a bar.
+ *
+ * `info` is the late arrival and it is deliberately narrow: it exists for a fact the user has to be
+ * told and can act on, where nothing is wrong. Today that is exactly one thing — a newer preman is
+ * available, and then that it is ready to install. It wears the accent rather than a colour of its
+ * own because there is no `--color-info` in any of the forty-three palettes and adding one would be
+ * forty-three generated files changed to tint one strip. See `docs/design-system.md`.
+ */
+export type BannerTone = "danger" | "warn" | "info";
 
 const SURFACE_CLASS: Record<BannerTone, string> = {
   danger: "border-danger/40 bg-danger/10",
   warn: "border-warn/40 bg-warn/10",
+  info: "border-accent/40 bg-accent/10",
 };
 
 const ICON_CLASS: Record<BannerTone, string> = {
   danger: "text-danger",
   warn: "text-warn",
+  info: "text-accent",
+};
+
+/** A warning triangle over good news says the wrong thing, so the glyph moves with the tone. */
+const ICON_BY_TONE: Record<BannerTone, Icon> = {
+  danger: WarningIcon,
+  warn: WarningIcon,
+  info: InfoIcon,
 };
 
 const NO_DETAILS: readonly string[] = [];
@@ -95,6 +112,7 @@ export function Banner({
   /** The one thing to do about it - Retry, Dismiss - to the right of the copy button. */
   readonly children?: ReactNode;
 }): ReactElement {
+  const Glyph = ICON_BY_TONE[tone];
   return (
     /* `role="alert"` stays on the animated element. On a wrapper it would change what the screen
      * reader announces, and the height is deliberately not animated: the banner's own height is
@@ -105,7 +123,7 @@ export function Banner({
       {...BANNER_MOTION}
       className={cn("flex shrink-0 items-start gap-2 border-b px-gutter py-1.5", SURFACE_CLASS[tone])}
     >
-      <WarningIcon className={cn("mt-px shrink-0", ICON_CLASS[tone])} />
+      <Glyph className={cn("mt-px shrink-0", ICON_CLASS[tone])} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-xs text-ink">{message}</span>

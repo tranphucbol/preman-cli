@@ -47,6 +47,10 @@ export {
   Funnel as FilterIcon,
   GitBranch as BranchIcon,
   Globe as EnvironmentIcon,
+  // The banner's third face. A warning triangle over "version 1.4.0 is available" says the wrong
+  // thing twice - it is not a warning, and the app is not in trouble - so the one tone that is
+  // news rather than a problem gets the one glyph that means exactly that.
+  Info as InfoIcon,
   Key as AuthIcon,
   // A chain link, for the thing that is literally a symlink. The noun is the same on both sides
   // of the screen, which is what makes "the acquiring-core link is missing" a sentence about a

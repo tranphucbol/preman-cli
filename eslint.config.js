@@ -88,7 +88,11 @@ const RENDERER_SHADOW_RULE =
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "**/dist/**", "node_modules/**", "test/fixtures/**"],
+    // `.github/` is pipeline, not source: it holds one shell script and one Node script, both run
+    // by a workflow under a runtime no tsconfig in this repository describes. The type-checked
+    // rules below all need a project, and inventing one for two files that never ship would be a
+    // tsconfig maintained for the linter's benefit alone.
+    ignores: ["dist/**", "**/dist/**", "node_modules/**", "test/fixtures/**", ".github/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

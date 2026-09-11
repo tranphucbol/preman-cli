@@ -62,6 +62,7 @@ The CLI's own design predates the practice.
 | [051](051-cancel-reaches-the-socket.md)                             | Cancel reaches the socket                                              |
 | [052](052-a-stream-is-a-response-in-parts.md)                       | A stream is a response in parts                                        |
 | [053](053-a-json-body-arrives-pretty-printed.md)                    | A JSON body arrives pretty-printed                                     |
+| [054](054-the-app-signs-its-own-updates.md)                         | The app signs its own updates, because Squirrel cannot                 |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -374,5 +375,17 @@ cheaper and would have produced a state nobody could explain — a toggle offere
 It costs a repaint, because gating the first frame on a round trip would have been the worse trade,
 and it narrows 013 by name: the pane will still not hold a body, except this one, up to the cap the
 reader could always have reached by hand.
+
+054 is the first record whose decision was forced rather than chosen. 018 signs the app ad hoc, and
+an ad-hoc-signed bundle can never satisfy its own previous designated requirement, so Squirrel.Mac
+— which every Electron updater delegates to on macOS — is not misconfigured here, it is
+structurally unavailable. What is left is a signature preman owns, and that is the whole cost of the
+record: the project now operates a distribution root key with no Gatekeeper behind it and no
+revocation path, mitigated by custody rather than by code. 018 keeps its file and its number and
+gains one line saying which of its consequences stopped being true; 002 finally has the updater it
+assigned to main in the first week. Two risks are named and were deliberately not spiked — whether
+macOS 26's app-bound data protection lets a self-updated build read its own `state.json`, and
+whether TCC re-prompts — and the phase 0 change to `store.ts`, which is worth having on its own,
+is what will tell us if the first one bites.
 
 `TEMPLATE.md` is the shape of a new one.

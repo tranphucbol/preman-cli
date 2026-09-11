@@ -5,7 +5,7 @@
  * needs to know what a workspace contains it does not — it asks nobody, because the
  * renderer asks its own engine host over a port this file only hands over.
  */
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { cpus, homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -27,6 +27,8 @@ import { createDiagnostics, type Diagnostics } from "@preman/desktop/main/diagno
 import { createHostRegistry, SERVICE_NAME_PREFIX, type HostRegistry } from "@preman/desktop/main/hosts.js";
 import { createResourceSampler, type ResourceSampler } from "@preman/desktop/main/resources.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
+import { bundlePathFrom } from "@preman/desktop/main/update/eligibility.js";
+import { createUpdater, type Updater } from "@preman/desktop/main/update/updater.js";
 import { createWorkspace } from "@preman/desktop/main/workspaces.js";
 import { markPhase, PHASES, SHARED_PROTO_ROOT_ENV, type LogLevel } from "@preman/desktop/engine/protocol.js";
 import {
@@ -39,6 +41,7 @@ import {
   type MigrateResult,
   type Preferences,
   type SessionSnapshot,
+  type UpdateStatus,
   type WindowChrome,
   type WindowControl,
   type WorkspaceHandle,
@@ -92,6 +95,17 @@ const POSTMAN_APP_DATA_DIR = "Postman";
 const UNEXPECTED_MIGRATION_FAILURE = "The migration did not finish.";
 const FRAMELESS_PLATFORM = "darwin";
 const HALF = 2;
+/**
+ * Where a release publishes the document that says a newer preman exists.
+ *
+ * `releases/latest/download/…` rather than the REST API: the URL is stable, it skips prereleases
+ * by construction — decision 6 means one publishes no manifest at all — and it is asset delivery
+ * rather than the API, so it is not subject to the sixty-request unauthenticated rate limit.
+ */
+const UPDATE_MANIFEST_URL = "https://github.com/tranphucbol/preman-cli/releases/latest/download/update-manifest.json";
+/** What the state file is renamed to when the operating system refuses it, in a sentence. */
+const UNREADABLE_STATE = "the app data file could not be read";
+const NOTHING_SKIPPED = null;
 
 // At module scope, not in `start()`: `userData` is resolved the first time it is asked for, and
 // by `whenReady` that has already happened.
@@ -107,6 +121,12 @@ let diagnostics: Diagnostics | undefined;
  * an interval that outlives its only reader is the thing `docs/decisions/040` exists to avoid.
  */
 let sampler: ResourceSampler | undefined;
+/**
+ * The other thing in this process that holds a timer, and the reason `window.on("closed")` stops
+ * two things rather than one: on macOS the app survives a closed window, and an unstopped interval
+ * would go on asking GitHub about a window nobody can see the answer in.
+ */
+let updater: Updater | undefined;
 
 /**
  * Say something, and keep it if there is anywhere to keep it.
@@ -162,6 +182,28 @@ function requireStore(): AppStore {
 function requireHosts(): HostRegistry {
   if (hosts === undefined) throw new Error("the host registry is not ready");
   return hosts;
+}
+
+function requireUpdater(): Updater {
+  if (updater === undefined) throw new Error("the updater is not ready");
+  return updater;
+}
+
+/**
+ * The `.app` this process is running out of.
+ *
+ * `realpathSync` first, and never a hardcoded `/Applications/preman.app`: under Gatekeeper's app
+ * translocation the executable's path and its resolved path differ, and hardcoding would have the
+ * swap clobber a bundle we are not running. `bundlePathFrom` asserts the result ends in `.app`;
+ * anything else answers with the executable, which `updateEligibility` then refuses. Decision 8.
+ */
+function bundlePath(): string {
+  const executable = app.getPath("exe");
+  try {
+    return bundlePathFrom(realpathSync(executable)) ?? executable;
+  } catch {
+    return executable;
+  }
 }
 
 /**
@@ -238,6 +280,14 @@ function createWindow(): BrowserWindow {
     markPhase(PHASES.mainWindowShown);
   });
 
+  // Here rather than in `start()`, so a window closed and reopened through `activate` re-arms the
+  // check that `window.on("closed")` disarmed. Behind `did-finish-load` and the updater's own
+  // delay: the first check must stay off the first-paint path decision 022 keeps synchronous, and
+  // off the quarter second after it that the engine's fork is overlapping with Chromium's start.
+  created.webContents.once("did-finish-load", () => {
+    updater?.schedule(requireStore().read().preferences.autoCheckUpdates);
+  });
+
   // `ready-to-show` never fires if the document never paints, and a window that stays hidden is
   // indistinguishable from an app that did not start. Say what went wrong and show it anyway.
   created.webContents.on("did-fail-load", (_event, code, description, url) => {
@@ -276,6 +326,22 @@ const SETTINGS_ITEM: MenuItemConstructorOptions = {
   },
 };
 
+/**
+ * The one place macOS users look for this, which is why it is here and not in Help or in the
+ * Settings pane alone. No accelerator, for the reason `Create New Workspace…` has none: a
+ * once-in-a-while action does not earn a global key combination.
+ *
+ * It only asks. Everything the answer leads to — the download, the restart — is a separate click
+ * in the pane the phase is reported to. Decision 16.
+ */
+const CHECK_FOR_UPDATES_ITEM: MenuItemConstructorOptions = {
+  label: "Check for Updates…",
+  click: () => {
+    void updater?.check("manual");
+    window?.webContents.send(CHANNELS.openSettings);
+  },
+};
+
 function appMenu(): MenuItemConstructorOptions[] {
   if (process.platform !== "darwin") return [];
   return [
@@ -283,6 +349,8 @@ function appMenu(): MenuItemConstructorOptions[] {
       role: "appMenu",
       submenu: [
         { role: "about" },
+        { type: "separator" },
+        CHECK_FOR_UPDATES_ITEM,
         { type: "separator" },
         SETTINGS_ITEM,
         { type: "separator" },
@@ -654,6 +722,25 @@ function registerIpc(): void {
     };
   });
 
+  // Four verbs and no read. The phase arrives on `CHANNELS.updateState`, which is the only place
+  // it ever comes from, so a pane cannot end up rendering a phase that main does not hold.
+  handle(CHANNELS.checkForUpdate, () => requireUpdater().check("manual"));
+
+  handle(CHANNELS.downloadUpdate, () => requireUpdater().download());
+
+  handle(CHANNELS.installUpdate, () => {
+    // Quitting is this file's, not the updater's: the script waits for this process to be gone
+    // before it touches anything, so a hand-over with no quit behind it is a script that times out
+    // after thirty seconds and leaves the installed app alone.
+    if (requireUpdater().install()) app.quit();
+  });
+
+  // The store write is the updater's `writeSkipped`, not this handler's: one writer, so the value
+  // the updater compares against and the value on disk cannot come apart.
+  handle(CHANNELS.skipUpdate, (_event: IpcMainInvokeEvent, version: string) => {
+    requireUpdater().skip(version);
+  });
+
   handle(CHANNELS.pickDataFile, () => pickDataFileDialog());
 
   handle(CHANNELS.pickProtoFiles, () => pickProtoFilesDialog());
@@ -686,9 +773,13 @@ function registerIpc(): void {
   handle(CHANNELS.savePreferences, (_event: IpcMainInvokeEvent, next: Preferences) => {
     const store = requireStore();
     const moved = store.read().preferences.sharedProtoRoot !== next.sharedProtoRoot;
+    const checking = store.read().preferences.autoCheckUpdates !== next.autoCheckUpdates;
     store.update((state) => {
       state.preferences = next;
     });
+    // Turning the check off has to reach the timer, not only the file: a preference that takes
+    // effect at the next launch is a preference the user will assume did not work.
+    if (checking) updater?.schedule(next.autoCheckUpdates);
     if (!moved) return;
     // A host reads the shared root from its environment, which is fixed at fork. Reaping the
     // live ones is what makes the new value take effect; the renderer re-opens its workspace
@@ -728,7 +819,16 @@ function start(): void {
   const dockIcon = appIcon();
   if (app.dock !== undefined && dockIcon !== undefined) app.dock.setIcon(dockIcon);
 
-  store = createAppStore(app.getPath("userData"));
+  // `onUnreadable` rather than the silent defaults a corrupt file gets: under macOS 26's app-bound
+  // data protection a build that replaced itself carries a new cdhash, and an `EACCES` here is
+  // indistinguishable from a fresh install unless somebody says so. `diagnostics` does not exist
+  // yet, so the line goes to stderr — `note` handles that — and this is one of the few places
+  // where the earliest lines are the ones worth having. See `docs/decisions/054`.
+  store = createAppStore(app.getPath("userData"), {
+    onUnreadable: (file, code) => {
+      note("error", `${UNREADABLE_STATE} (${code}): ${file}`);
+    },
+  });
   // Before the registry, because a host inherits this process's environment at fork and the
   // shared proto root reaches core no other way.
   applySharedProtoRoot(store.read().preferences.sharedProtoRoot);
@@ -762,6 +862,37 @@ function start(): void {
     // same count when it computed the percentage this converts back. See `resources.ts`.
     cores: cpus().length,
   });
+  // After `diagnostics`, because it writes through it. Every path and every stored value is an
+  // argument, the way they are for the registry and the sampler above: `update/` owns the
+  // sequence, this file owns where things are.
+  updater = createUpdater({
+    currentVersion: app.getVersion(),
+    manifestUrl: UPDATE_MANIFEST_URL,
+    tempDir: app.getPath("temp"),
+    packaged: app.isPackaged,
+    bundlePath: bundlePath(),
+    arch: process.arch,
+    platform: process.platform,
+    pid: process.pid,
+    write: note,
+    // Guarded like the sampler's `send` and unlike `migrateProgress`: a phase can change while no
+    // window exists, because on macOS the app outlives its window.
+    onState: (state: UpdateStatus) => {
+      if (window === undefined || window.webContents.isDestroyed()) return;
+      window.webContents.send(CHANNELS.updateState, state);
+    },
+    readSkipped: () => requireStore().read().skippedUpdateVersion ?? NOTHING_SKIPPED,
+    writeSkipped: (version) => {
+      requireStore().update((state) => {
+        state.skippedUpdateVersion = version;
+      });
+    },
+    markChecked: () => {
+      requireStore().update((state) => {
+        state.lastUpdateCheckAt = Date.now();
+      });
+    },
+  });
 
   registerIpc();
   buildMenu();
@@ -791,6 +922,9 @@ function start(): void {
     // Nobody sent a `watchResources(false)`, because the renderer that would have sent it is gone.
     // On macOS the app survives this, so an unstopped timer would sample a closed app until quit.
     sampler?.stop();
+    // Same reason, one timer along: a check nobody can be shown the answer to is a request nobody
+    // asked for, and a staged 317MB bundle nobody chose to install is not worth keeping either.
+    updater?.stop();
   });
 }
 

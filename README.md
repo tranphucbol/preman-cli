@@ -362,6 +362,14 @@ Nothing inside the app changes; only that attribute is removed. There is no Inte
 build, so an Intel Mac has nothing to run yet
 ([ADR 030](docs/decisions/030-ci-asserts-everything-but-the-clock.md)).
 
+That is the first install only. From then on the app checks for new versions itself — the app menu's
+**Check for Updates**, or Settings → Diagnostics → Updates, which also carries the switch that turns
+the automatic check off. What it downloads is verified against an Ed25519 signature the app ships the
+public half of, rather than by Squirrel.Mac, which cannot update an ad-hoc-signed app at all
+([ADR 054](docs/decisions/054-the-app-signs-its-own-updates.md)). Nothing installs itself: the check
+is automatic, the download and the restart are two separate presses. macOS may ask for Local Network
+access again after an update, because the new build is a different signature to it.
+
 It can also create an empty workspace, named from the workspace dropdown, the File menu or the
 command palette, always under `~/.local/share/preman/workspace`; `Open workspace…` remains the way
 to a workspace that already exists anywhere else.

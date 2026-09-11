@@ -18,6 +18,13 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  INELIGIBILITY_REASON,
+  LOCAL_NETWORK_CAVEAT,
+  updateBanner,
+  updateHeadline,
+} from "@preman/desktop/renderer/model/update.js";
+
 const DESKTOP_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../packages/desktop/src");
 const SETTINGS = readFileSync(join(DESKTOP_DIR, "renderer/panes/SettingsPane.tsx"), "utf8");
 const BRIDGE = readFileSync(join(DESKTOP_DIR, "preload/bridge.ts"), "utf8");
@@ -28,6 +35,7 @@ const NOTHING = "";
 
 /** The section's body, from its `function` line to the first close at column zero. */
 const DIAGNOSTICS_SECTION = /function DiagnosticsSection\(\)[\s\S]*?\n\}\n/;
+const UPDATES_SECTION = /function UpdatesSection\(\)[\s\S]*?\n\}\n/;
 /** The tab list the pane is split by. */
 const SETTINGS_TABS = /const SETTINGS_TABS = \[([^\]]*)\] as const/;
 /** Every `"quoted"` string in a matched fragment. */
@@ -108,6 +116,67 @@ describe("the Settings pane's Diagnostics section", () => {
 
     expect(fields).toEqual([...DIAGNOSTICS_FIELDS]);
     expect(section()).not.toContain("lines");
+  });
+});
+
+/**
+ * The Updates section, read two ways.
+ *
+ * What the section *says* is not in the `.tsx` at all — it is `model/update.ts`, which is pure and
+ * importable, so those three cases are behaviour rather than text. What is left for the source
+ * reading is the two structural promises the model cannot make: that the caveat is drawn only when
+ * an update is staged, and that nothing here installs anything without a press.
+ */
+describe("the Settings pane's Updates section", () => {
+  it("givenAnAvailableUpdate_whenTheUpdatesSectionRenders_thenTheVersionAndActionAreShown", () => {
+    const headline = updateHeadline({
+      phase: "available",
+      version: "1.4.0",
+      notesUrl: "https://example.invalid",
+      sizeBytes: 134_217_728,
+    });
+
+    // The size, because the one thing a user weighs before pressing Download is how long it takes.
+    expect(headline).toContain("1.4.0");
+    expect(headline).toContain("128 MB");
+
+    const source = code(SETTINGS);
+    // Skip sits beside Download on `available` and nowhere else: before a check there is nothing
+    // to skip, and after a download there is a staged bundle skipping would silently discard.
+    expect(source).toContain("skipUpdate(status.version)");
+    expect(source).toContain("downloadUpdate()");
+  });
+
+  it("givenAnUnsupportedApp_whenTheUpdatesSectionRenders_thenTheReasonIsNamed", () => {
+    // Every refusal is a different sentence, and each names the fix where there is one. A pane
+    // that said "cannot update" five times would be a pane nobody could act on.
+    const sentences = Object.values(INELIGIBILITY_REASON);
+    expect(new Set(sentences).size).toBe(sentences.length);
+
+    expect(updateHeadline({ phase: "unsupported", reason: "translocated" })).toBe(INELIGIBILITY_REASON.translocated);
+    // Decision 10: no `osascript … with administrator privileges`, so the answer is the DMG.
+    expect(INELIGIBILITY_REASON.notWritable).toContain("DMG");
+  });
+
+  it("givenAReadyUpdate_whenTheUpdatesSectionRenders_thenTheLocalNetworkCaveatIsShown", () => {
+    const found = UPDATES_SECTION.exec(code(SETTINGS));
+    expect(found).not.toBeNull();
+    const body = found?.[0] ?? NOTHING;
+
+    // A hint and not a `Banner`: this is true of every update the app will ever install, and a bar
+    // that said it would be a bar that said it forever.
+    expect(body).toContain('status.phase === "ready" && ');
+    expect(body).toContain("LOCAL_NETWORK_CAVEAT");
+    expect(body).not.toContain("Banner");
+    expect(LOCAL_NETWORK_CAVEAT).toContain("Local Network");
+  });
+
+  it("givenAFailedCheck_whenTheWindowRenders_thenNoBannerInterrupts", () => {
+    // The bar is for news, not for a laptop that could not reach GitHub. The section above says so
+    // for whoever goes looking, which is the whole of the reporting a failed check deserves.
+    expect(updateBanner({ phase: "failed", message: "nope", details: [] })).toBeNull();
+    expect(updateBanner({ phase: "downloading", version: "1.4.0", receivedBytes: 1, totalBytes: 2 })).toBeNull();
+    expect(updateBanner({ phase: "ready", version: "1.4.0" })?.ready).toBe(true);
   });
 });
 

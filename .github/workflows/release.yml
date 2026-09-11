@@ -117,18 +117,28 @@ jobs:
       - run: bunx electron-builder --publish never
         working-directory: packages/desktop
 
-      # Only the DMG. electron-builder also writes `latest-mac.yml` and a `.blockmap`, which are
-      # auto-update metadata; the app has no updater, so shipping them advertises nothing real.
+      # The DMG is the first install and the ZIP is what the app's own updater downloads and swaps
+      # in. `latest-mac.yml` and the `.blockmap` are still dropped, but the reason has changed:
+      # they are *Squirrel's* metadata, and preman does not speak Squirrel — ad-hoc-signed code
+      # can never satisfy its own previous designated requirement, which is why `update/` exists
+      # at all. See `docs/decisions/054`.
       - uses: actions/upload-artifact@v4
         with:
-          name: dmg
-          path: packages/desktop/release/*.dmg
+          name: mac
+          path: |
+            packages/desktop/release/*.dmg
+            packages/desktop/release/*-mac.zip
           if-no-files-found: error
 
   # Before npm, so that everything up to the irreversible step can be undone by deleting a release.
   release:
     needs: [version, desktop]
     runs-on: ubuntu-latest
+    # The signing key lives here and nowhere else. An environment can require a reviewer, so
+    # editing a workflow is not by itself enough to sign something with preman's distribution root
+    # key — which has no Gatekeeper behind it and no revocation path. Decision 2 of
+    # `docs/decisions/054` accepts that custody, not code, is the whole mitigation.
+    environment: release
     permissions:
       contents: write
       # `release-notes.sh` asks which pull request contains each commit in the range.
@@ -140,8 +150,25 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: dmg
-          path: dmg
+          name: mac
+          path: mac
+
+      # The signed document the running app reads to learn this release happened. Skipped for a
+      # prerelease entirely, on the same reasoning as npm's dist-tag above: a release candidate
+      # must not become the thing existing installs upgrade to. `releases/latest/download/…` is
+      # the URL the app asks for, and GitHub only ever points it at a full release.
+      - name: Write and sign the update manifest
+        if: needs.version.outputs.prerelease != 'true'
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          OUTPUT: update-manifest.json
+          PREMAN_UPDATE_KEY: ${{ secrets.PREMAN_UPDATE_KEY }}
+        run: |
+          asset=$(ls mac/*-mac.zip)
+          ASSET="$asset" node .github/sign-manifest.mjs
+
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,9 +184,17 @@ jobs:
           # ad-hoc-signed app reports as damaged (ADR 018) and the fix belongs beside the file that
           # needs it instead of waiting to be asked for in an issue.
           bash .github/release-notes.sh "$TAG" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.md"
+          # The manifest and its signature only exist for a full release, so they are collected
+          # rather than named: a prerelease uploads the two macOS artifacts and nothing else, which
+          # is what keeps `releases/latest/download/update-manifest.json` pointing at a real
+          # release and never at a candidate.
+          assets="mac/*.dmg mac/*-mac.zip"
+          if [ -f update-manifest.json ]; then
+            assets="$assets update-manifest.json update-manifest.json.sig"
+          fi
           # shellcheck disable=SC2086 # deliberate: unset must vanish, not become an empty argument
           gh release create "$TAG" --title "$TAG" \
-            --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $PRERELEASE dmg/*.dmg
+            --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $PRERELEASE $assets
 
   # Last, because it is the only step here that cannot be taken back.
   npm:
