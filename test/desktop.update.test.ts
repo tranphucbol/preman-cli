@@ -478,4 +478,25 @@ describe("downloading the payload the manifest names", () => {
     expect(readdirSync(run.root).filter((entry) => entry.startsWith(STAGING_PREFIX))).toEqual([]);
     expect(readdirSync(run.tempDir)).toEqual([]);
   });
+
+  /*
+   * The case above asserted only the phase, which is how the wrong sentence survived review: a
+   * payload that arrived intact and matched the signed hash was reported as one that could not be
+   * fetched. Found by pointing a real build at a real GitHub asset that was not a zip, and worth
+   * the exactness here - "could not be fetched" sends the reader to debug a network that worked.
+   */
+  it("givenAnArchiveDittoRefuses_whenDownloading_thenItIsReportedAsUnpackableNotUnfetchable", async () => {
+    const payload = Buffer.from(NOT_A_ZIP, ENCODING);
+    publish(payload, createHash("sha256").update(payload).digest("hex"));
+    const run = attempt();
+
+    await run.updater.check("manual");
+    await run.updater.download();
+
+    expect(run.states.at(-1)).toEqual({
+      phase: "failed",
+      message: "This update could not be unpacked.",
+      details: ["ditto exited with 1"],
+    });
+  });
 });

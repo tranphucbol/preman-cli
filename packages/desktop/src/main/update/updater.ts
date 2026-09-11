@@ -340,8 +340,18 @@ export function createUpdater(options: UpdaterOptions): Updater {
       // renames are the whole reason the swap is atomic.
       discardStaging();
       stagingDir = join(dirname(options.bundlePath), STAGING_PREFIX + randomUUID());
-      await extract(assetPath, stagingDir);
-      rmSync(assetPath, { force: true });
+      try {
+        await extract(assetPath, stagingDir);
+      } catch (cause) {
+        // Not "could not be fetched": the bytes arrived and matched the hash the signed manifest
+        // names, so the network did its job and saying otherwise sends the reader to debug it.
+        // What is wrong is the archive, which is the publisher's mistake and not theirs.
+        options.write("error", `the update could not be unpacked: ${sentence(cause)}`);
+        fail(UNPACKABLE_UPDATE, [sentence(cause)]);
+        return;
+      } finally {
+        rmSync(assetPath, { force: true });
+      }
 
       const found = readdirSync(stagingDir).find((entry) => entry.endsWith(BUNDLE_SUFFIX));
       if (found === undefined) {
