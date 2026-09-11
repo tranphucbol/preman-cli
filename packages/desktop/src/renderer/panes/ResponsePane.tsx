@@ -234,12 +234,25 @@ function Elapsed({ run }: { readonly run: RequestRun }) {
   return <span className="text-ink-dim tabular-nums">{formatDuration(ms)}</span>;
 }
 
+/**
+ * The row is not clickable, but it still takes `hover:bg-hover`: a name and its value sit at
+ * opposite ends of a wide pane, and a value that wraps to three lines — `access-control-allow-*`
+ * usually does — leaves nothing tying the two columns together. The band is what the eye follows
+ * across the gap.
+ *
+ * `select-text` is a deliberate local exception to the app-wide `select-none` in `app.css`, for
+ * the same reason as `ResponseFailure`'s report: a header value is a string the reader wants in
+ * their clipboard, not one they only read.
+ */
 function Headers({ headers }: { readonly headers: HeaderPairs }) {
   if (headers.length === EMPTY_ROWS) return <Hint>{NO_HEADERS_HINT}</Hint>;
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       {headers.map(([name, value], index) => (
-        <div key={`${name}:${String(index)}`} className="flex items-start gap-3 border-b border-line px-2 py-1.5">
+        <div
+          key={`${name}:${String(index)}`}
+          className="flex items-start gap-3 border-b border-line px-2 py-1.5 select-text hover:bg-hover"
+        >
           <span className="w-52 shrink-0 font-mono text-2xs break-all text-ink-dim">{name}</span>
           <span className="min-w-0 font-mono text-2xs break-all text-ink">{value}</span>
         </div>

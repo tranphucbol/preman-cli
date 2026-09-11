@@ -61,6 +61,7 @@ The CLI's own design predates the practice.
 | [050](050-the-auth-block-wins-over-an-authored-header.md)           | The auth block wins over an authored header                            |
 | [051](051-cancel-reaches-the-socket.md)                             | Cancel reaches the socket                                              |
 | [052](052-a-stream-is-a-response-in-parts.md)                       | A stream is a response in parts                                        |
+| [053](053-a-json-body-arrives-pretty-printed.md)                    | A JSON body arrives pretty-printed                                     |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -364,5 +365,14 @@ which does not weaken just because the bytes arrived in pieces. Two costs are wo
 reading the code: a gzipped event-stream is read the buffered way and says nothing about it, and a
 cancelled stream ends as a success with a warning where a cancelled request ends as a transport
 failure — the same word, one function apart, meaning two defensible but different things.
+
+053 moves a default rather than adding a capability: the pretty-print toggle had been one click away
+on every response, and every API preman is pointed at returns minified JSON. What is worth reading is
+not that JSON is now formatted on arrival but that the automatic pass reuses the toggle's own
+predicate and its own two-megabyte limit, refusing a second, lower threshold that would have been
+cheaper and would have produced a state nobody could explain — a toggle offered, enabled, and silent.
+It costs a repaint, because gating the first frame on a round trip would have been the worse trade,
+and it narrows 013 by name: the pane will still not hold a body, except this one, up to the cap the
+reader could always have reached by hand.
 
 `TEMPLATE.md` is the shape of a new one.

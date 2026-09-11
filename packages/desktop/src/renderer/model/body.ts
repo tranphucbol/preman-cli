@@ -223,7 +223,12 @@ export interface FormatAvailability {
 const ALLOWED: FormatAvailability = { allowed: true, reason: "" };
 
 /**
- * Whether to offer the pretty-print toggle at all, and what to say when not.
+ * Whether preman pretty-prints this body at all, and what to say when it does not.
+ *
+ * One predicate, answering two questions: whether the viewer formats the body on arrival
+ * without being asked, and whether the toggle is offered. They are the same question on
+ * purpose — a second, lower threshold for the automatic case would produce the state nobody
+ * could explain, where the toggle is offered and lit only after a click.
  *
  * The engine would refuse a body above its own limit, but a disabled control that explains
  * itself beats a click that turns into an error banner. The JSON check is the renderer's
