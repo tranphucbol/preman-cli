@@ -417,7 +417,7 @@ interface Attempt {
   readonly tempDir: string;
 }
 
-function attempt(): Attempt {
+function attempt(overrides: { readonly packaged?: boolean } = {}): Attempt {
   const root = temporary("preman-updater-");
   const bundlePath = join(root, "preman.app");
   makeBundle(bundlePath);
@@ -427,7 +427,7 @@ function attempt(): Attempt {
     currentVersion: RUNNING_VERSION,
     manifestUrl: MANIFEST_URL,
     tempDir,
-    packaged: true,
+    packaged: overrides.packaged ?? true,
     bundlePath,
     arch: "arm64",
     platform: "darwin",
@@ -498,5 +498,32 @@ describe("downloading the payload the manifest names", () => {
       message: "This update could not be unpacked.",
       details: ["ditto exited with 1"],
     });
+  });
+
+  /*
+   * The guards are asked after the manifest, so that a copy which cannot update is not nagged
+   * about it while there is nothing to install anyway. That leaves one case where the order is
+   * wrong: when the fetch is what failed, there is no newer version to weigh the refusal against,
+   * and the certain local reason beats a guess about the network. Found running an unpackaged
+   * build, which reported "could not be fetched" at a 404 rather than saying it was a dev build.
+   */
+  it("givenAnIneligibleCopy_whenTheCheckCannotReachTheManifest_thenItSaysWhyItIsIneligible", async () => {
+    routes = new Map();
+    const run = attempt({ packaged: false });
+
+    await run.updater.check("manual");
+
+    expect(run.states.at(-1)).toEqual({ phase: "unsupported", reason: "unpackaged" });
+  });
+
+  it("givenAnEligibleCopy_whenTheCheckCannotReachTheManifest_thenAPressedButtonStillAnswers", async () => {
+    routes = new Map();
+    const run = attempt();
+
+    await run.updater.check("manual");
+
+    // The other half of the same branch: with nothing locally wrong, the network is the honest
+    // answer and the button must not look like it did nothing.
+    expect(run.states.at(-1)?.phase).toBe("failed");
   });
 });

@@ -248,6 +248,16 @@ export function createUpdater(options: UpdaterOptions): Updater {
     } catch (cause) {
       // `warn` and not `error`: a laptop on a train cannot reach GitHub, and that is not a defect.
       options.write("warn", `the update check did not complete: ${sentence(cause)}`);
+      // The guards are asked after the manifest normally, so that an install which cannot update
+      // is not nagged about it while there is nothing to install anyway. When the fetch itself
+      // failed there is no such thing to weigh, and the local fact is the better answer: it is
+      // certain, it is permanent, and it is the one the reader can act on. "Could not be fetched"
+      // sends someone running from a disk image to go and look at their network.
+      const refusal = ineligibility();
+      if (refusal !== null) {
+        report({ phase: "unsupported", reason: refusal });
+        return;
+      }
       // A background check that could not reach the network says nothing to the window. A pressed
       // button has to answer, because a control that does nothing reads as a broken control.
       report(
