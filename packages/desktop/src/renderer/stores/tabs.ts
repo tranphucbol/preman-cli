@@ -13,6 +13,8 @@ import { create } from "zustand";
 
 import type { DocumentKind, EngineError, FieldEdit, NodeDocument } from "@preman/desktop/engine/protocol.js";
 
+import { useOverlayStore } from "./overlay.js";
+
 const NO_ACTIVE = null;
 const NO_SCRIPT_PHASE = null;
 
@@ -159,6 +161,23 @@ export interface TabsState {
   clear: () => void;
 }
 
+/**
+ * Making a tab active is a request to *look* at it, so whatever is covering the editor stops.
+ *
+ * The overlays deliberately keep the tab strip drawn above them, on the promise that returning to
+ * what you were editing is one click and no closing. Without this, that click moved `activeId`
+ * under a pane still filling the editor area and nothing appeared to happen - the strip repainted
+ * its selection and the settings pane stayed up, which reads as a dead tab strip.
+ *
+ * Here rather than in `TabStrip`, because activation has four entrances - the strip, the sidebar,
+ * the command palette and the search results - and a rule stated at one of them is a rule the other
+ * three break. Called outside `set` and never inside a zustand updater: an updater that wrote to a
+ * second store would fire its subscribers from inside this one's.
+ */
+function revealEditor(): void {
+  useOverlayStore.getState().dismiss();
+}
+
 function patch(state: TabsState, nodeId: string, change: Partial<Tab>): Partial<TabsState> {
   const existing = state.tabs.get(nodeId);
   if (existing === undefined) return {};
@@ -193,6 +212,7 @@ export const useTabsStore = create<TabsState>((set) => ({
       });
       return { tabs, order: [...state.order, node.id], activeId: node.id };
     });
+    revealEditor();
   },
 
   close(nodeId) {
@@ -210,6 +230,7 @@ export const useTabsStore = create<TabsState>((set) => ({
 
   activate(nodeId) {
     set({ activeId: nodeId });
+    revealEditor();
   },
 
   setSubTab(nodeId, subTab) {
