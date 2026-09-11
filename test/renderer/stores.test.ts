@@ -1752,6 +1752,47 @@ describe("the overlay over the editor", () => {
     overlay.dismiss();
     expect(useOverlayStore.getState().overlay).toBeNull();
   });
+
+  /*
+   * The strip stays drawn above an overlay on the promise that going back to what you were editing
+   * is one click. These two are that promise: without them the click moves `activeId` under a pane
+   * still filling the editor area, and the strip looks dead.
+   */
+  it("givenSettingsUp_whenATabIsActivated_thenTheEditorIsUncovered", () => {
+    const tabs = useTabsStore.getState();
+    tabs.open({ id: PING_ID, name: "Ping", kind: "request" });
+    tabs.open({ id: ECHO_ID, name: "Echo", kind: "request" });
+    useOverlayStore.getState().showSettings();
+
+    useTabsStore.getState().activate(PING_ID);
+
+    expect(useOverlayStore.getState().overlay).toBeNull();
+    expect(useTabsStore.getState().activeId).toBe(PING_ID);
+  });
+
+  it("givenVariablesUp_whenARequestIsOpened_thenTheEditorIsUncovered", () => {
+    useOverlayStore.getState().showVariables();
+
+    useTabsStore.getState().open({ id: PING_ID, name: "Ping", kind: "request" });
+
+    expect(useOverlayStore.getState().overlay).toBeNull();
+  });
+
+  /*
+   * Closing is not opening. A tab closed from the strip over the settings pane hands the active id
+   * to a neighbour nobody asked to look at, so pulling the pane down there would take the reader
+   * off the thing they were actually doing.
+   */
+  it("givenSettingsUp_whenATabIsClosed_thenThePaneStaysUp", () => {
+    const tabs = useTabsStore.getState();
+    tabs.open({ id: PING_ID, name: "Ping", kind: "request" });
+    tabs.open({ id: ECHO_ID, name: "Echo", kind: "request" });
+    useOverlayStore.getState().showSettings();
+
+    useTabsStore.getState().close(ECHO_ID);
+
+    expect(useOverlayStore.getState().overlay).toStrictEqual({ kind: "settings" });
+  });
 });
 
 /**

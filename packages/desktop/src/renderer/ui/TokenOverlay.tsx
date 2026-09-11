@@ -19,7 +19,7 @@
  */
 import { useCallback, useState, type InputEvent, type MouseEvent, type UIEvent } from "react";
 
-import { couldHaveTokens, findTokens, tokenAt } from "@preman/desktop/renderer/model/tokens.js";
+import { couldHaveTokens, findTokens, tokenAt, type TokenSpan } from "@preman/desktop/renderer/model/tokens.js";
 
 import { cn } from "./cn.js";
 import { TOKEN_COLOR, type TokenReporter } from "./template.js";
@@ -38,6 +38,17 @@ const PILL_FILL = `color-mix(in oklab, ${TOKEN_COLOR} 22%, transparent)`;
 const PILL_CLASS = "rounded-sm";
 
 const PILL_STYLE = { backgroundColor: PILL_FILL };
+
+/**
+ * What ties a painted pill back to the offset it was painted for, so a click can be answered with
+ * the rectangle the reader is looking at rather than with the whole field.
+ *
+ * A data attribute and not a ref: the pills are rebuilt from `value` on every render that can
+ * change one, there are as many of them as the value has tokens, and the only reader is a mouse
+ * handler that runs long after the paint. A map of refs would be per-render bookkeeping for a
+ * lookup the DOM already indexes.
+ */
+const PILL_OFFSET_ATTR = "data-token-from";
 
 export interface TokenOverlayProps {
   readonly value: string;
@@ -62,7 +73,7 @@ export function TokenOverlay({ value, className }: TokenOverlayProps): React.JSX
   for (const span of spans) {
     if (span.from > cut) parts.push(value.slice(cut, span.from));
     parts.push(
-      <span key={span.from} className={PILL_CLASS} style={PILL_STYLE}>
+      <span key={span.from} {...{ [PILL_OFFSET_ATTR]: span.from }} className={PILL_CLASS} style={PILL_STYLE}>
         {value.slice(span.from, span.to)}
       </span>,
     );
@@ -103,6 +114,42 @@ function follow(input: HTMLInputElement): void {
 }
 
 /**
+ * Where to hang the box: horizontally the token, vertically the field.
+ *
+ * An `<input>` offers no per-character geometry, which is why this used to answer with the field's
+ * own rect and the box dropped from the field's left edge - on a URL bar wide enough to hold six
+ * `{{token}}`s, that is most of the window away from the one that was clicked, and the reader has
+ * to work out which name the value belongs to. The backdrop is the missing geometry: it is a real
+ * element, aligned character for character with the input by construction, and each pill is a
+ * `<span>` the browser has already measured. So the pill answers the horizontal question.
+ *
+ * Not the vertical one. The pill is a line box centred inside the field, so anchoring to its
+ * bottom would tuck the box under the text and over the field's own lower border. The field's top
+ * and height keep the box clear of the control it belongs to, which is where every other floating
+ * surface in the app sits.
+ *
+ * Clamped to the field because the backdrop is `overflow: hidden` and scrolled: a token scrolled
+ * out of sight still has a rect, just one somewhere off to the side of a control that is not
+ * showing it. Clamping collapses that to the near edge, which is the honest answer - the token is
+ * that way - and degrades to exactly the old behaviour when the token is scrolled fully out.
+ */
+function anchorRect(input: HTMLInputElement, token: TokenSpan): DOMRect {
+  const field = input.getBoundingClientRect();
+  const backdrop = input.previousElementSibling;
+  if (!(backdrop instanceof HTMLElement)) return field;
+  const pill = backdrop.querySelector(`[${PILL_OFFSET_ATTR}="${token.from}"]`);
+  if (!(pill instanceof HTMLElement)) return field;
+  const painted = pill.getBoundingClientRect();
+  const left = clamp(painted.left, field.left, field.right);
+  const right = clamp(painted.right, field.left, field.right);
+  return new DOMRect(left, field.top, right - left, field.height);
+}
+
+function clamp(value: number, low: number, high: number): number {
+  return Math.min(Math.max(value, low), high);
+}
+
+/**
  * The backdrop's copy of an uncontrolled input's text, and the three handlers that keep it honest.
  *
  * `initial` is read once, on mount, which is exactly what `defaultValue` does on the input in front
@@ -140,9 +187,7 @@ export function useTokenPills(initial: string, report: TokenReporter | undefined
       // The live value, not the state above: the state is a render behind by construction.
       const token = tokenAt(input.value, caret);
       if (token === null) return;
-      // The field's rect, not the token's: an input gives no per-character geometry, and a box that
-      // drops below the field it belongs to is where the user is already looking.
-      report(token.name, input.getBoundingClientRect());
+      report(token.name, anchorRect(input, token));
     },
     [report],
   );
