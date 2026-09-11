@@ -499,7 +499,10 @@ function UpdatesSection(): React.JSX.Element {
           <span className="font-mono text-2xs text-ink-dim">preman {running ?? UNKNOWN_VALUE}</span>
         </DiagnosticsRow>
         <DiagnosticsRow term="Status">
-          <span className={cn("min-w-0 flex-1 text-2xs", status.phase === "failed" ? "text-danger" : "text-ink-dim")}>
+          {/* `min-w-0` so a long headline shrinks rather than overflowing, but deliberately not
+              `flex-1`: that would hand the span every leftover pixel of the column and strand the
+              button at the far edge, which is not what the Log row below does with Reveal. */}
+          <span className={cn("min-w-0 text-2xs", status.phase === "failed" ? "text-danger" : "text-ink-dim")}>
             {updateHeadline(status)}
           </span>
           <UpdateActions status={status} />
