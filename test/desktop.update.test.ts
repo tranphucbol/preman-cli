@@ -493,10 +493,13 @@ describe("downloading the payload the manifest names", () => {
     await run.updater.check("manual");
     await run.updater.download();
 
-    expect(run.states.at(-1)).toEqual({
+    // `toMatchObject` rather than `toEqual`, because `details` carries whatever the extractor said
+    // and that is not the same sentence everywhere: macOS refuses the archive with a non-zero
+    // exit, and a Linux runner has no `ditto` at all, so the spawn fails outright. Both reject,
+    // both land in the same branch, and the message is the thing this case is about.
+    expect(run.states.at(-1)).toMatchObject({
       phase: "failed",
       message: "This update could not be unpacked.",
-      details: ["ditto exited with 1"],
     });
   });
 
