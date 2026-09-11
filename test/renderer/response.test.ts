@@ -60,7 +60,14 @@ import { itemKeyFor, useRunsStore } from "@preman/desktop/renderer/stores/runs.j
 const MEGABYTE = 1024 * 1024;
 const HUGE_BODY_BYTES = 50 * MEGABYTE;
 /** Multi-byte on purpose: a window that split a codepoint would decode to replacement characters. */
-const FILL = '{"id":1,"name":"café"},';
+const ITEM = '{"id":1,"name":"café"}';
+const FILL = `${ITEM},`;
+/**
+ * Enough items to land between the engine's 256KB preview and its 2MB format limit: large
+ * enough that the body arrives truncated, small enough that preman still pretty-prints it.
+ * `bodyOf` cannot serve this case - a buffer packed with `FILL` is not parseable JSON.
+ */
+const TRUNCATED_JSON_ITEMS = 20_000;
 const JSON_TYPE = "application/json";
 const TEXT_TYPE = "text/plain";
 const START = 0;
@@ -233,6 +240,23 @@ describe("the pretty-print toggle", () => {
     const { store, publication } = bodyFrom(SMALL_BODY, JSON_TYPE);
     const view = seedView(publication);
 
+    expect(formatAvailability(view, viewText(view)).allowed).toBe(true);
+    expect(store.format(publication.handle)).toContain("\n");
+  });
+
+  it("givenTruncatedJsonBody_whenSeeded_thenItIsFormattedOnArrivalWithoutWaitingForBytes", () => {
+    // The viewer formats on arrival off this same predicate, so it has to answer before a
+    // window lands: a seeded view of a truncated body holds no text at all, and sniffing an
+    // empty sample would say "text" and cost the reader a raw first paint for nothing. The
+    // content type is what carries the answer that early.
+    const json = `[${Array.from({ length: TRUNCATED_JSON_ITEMS }, () => ITEM).join(",")}]`;
+    const { store, publication } = bodyFrom(json, JSON_TYPE);
+    const view = seedView(publication);
+
+    expect(publication.truncated).toBe(true);
+    expect(publication.byteLength).toBeLessThan(FORMAT_LIMIT_BYTES);
+    expect(isEmpty(view)).toBe(true);
+    expect(viewText(view)).toBe("");
     expect(formatAvailability(view, viewText(view)).allowed).toBe(true);
     expect(store.format(publication.handle)).toContain("\n");
   });

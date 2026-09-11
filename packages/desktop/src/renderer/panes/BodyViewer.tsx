@@ -7,6 +7,12 @@
  * not searching. A 50MB response therefore costs the renderer what a 500KB one costs, and
  * the only visible difference is a range strip along the bottom.
  *
+ * JSON is the one body it does hold, and it holds it without being asked: a response whose
+ * content type says JSON arrives pretty-printed. The bound on that is the toggle's own -
+ * `BODY_FORMAT_LIMIT_BYTES`, two megabytes - and it is deliberately the same number, so the
+ * rule is "if preman can pretty-print it, it already has" rather than a second threshold
+ * nobody can predict. Above it the body arrives as it was sent and the toggle explains why.
+ *
  * `model/body.ts` owns every decision about which bytes to ask for and what to keep. This
  * file is the wiring: state, one guarded fetch, and the chrome around the editor.
  */
@@ -39,6 +45,9 @@ import { CloseIcon, FormatIcon, SearchIcon } from "@preman/desktop/renderer/ui/i
 const START_OF_BODY = 0;
 const NO_BODY_HINT = "This request returned no body.";
 const SEARCH_HINT = "Find in the whole body";
+const FORMAT_HINT = "Pretty-print";
+/* The toggle is lit before the reader has touched it, so it has to say what pressing it does. */
+const RAW_HINT = "Show the raw body";
 const ENTER = "Enter";
 const ESCAPE = "Escape";
 /** Every move the range strip offers, in the order they are shown. */
@@ -127,6 +136,22 @@ export function BodyViewer({ body }: { readonly body: ResponseBody }) {
   const pretty = formatted !== null;
   const availability = formatAvailability(view, text);
 
+  // Whether the automatic pretty-print has had its one chance at this body. A ref, and not
+  // state, because it settles a decision rather than describing one: flipping it must not
+  // paint, and the reader turning the toggle back off must not hand it a second chance.
+  const decided = useRef(false);
+  useEffect(() => {
+    if (decided.current || !availability.allowed) return;
+    decided.current = true;
+    void bodyFormat(handle).then((result) => {
+      // Deliberately silent where `togglePretty` reports. This body was never asked for, so a
+      // red line under the toolbar would be the app complaining about something the reader did
+      // not do - and the raw body behind it is still perfectly readable. The toggle is still
+      // there to ask again, and that click does report.
+      if (result.ok) setFormatted(result.value);
+    });
+  }, [availability.allowed, handle]);
+
   async function togglePretty(): Promise<void> {
     if (pretty) {
       setFormatted(null);
@@ -163,7 +188,7 @@ export function BodyViewer({ body }: { readonly body: ResponseBody }) {
         <span className="text-2xs text-ink-faint">{formatBytes(body.byteLength)}</span>
         <div className="flex-1" />
         <IconButton
-          label={availability.allowed ? "Pretty-print" : availability.reason}
+          label={pretty ? RAW_HINT : availability.allowed ? FORMAT_HINT : availability.reason}
           active={pretty}
           disabled={!availability.allowed}
           onClick={() => void togglePretty()}

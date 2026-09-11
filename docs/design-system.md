@@ -337,9 +337,9 @@ cross-axis-centred flex child in `overflow-auto` has a top that cannot be scroll
 failure with its trailers open would lose its own headline. Auto margins absorb free space when
 there is some and collapse to zero when there is not, which is the same composition without the
 trap. The block is `select-text`, which is one of
-two deliberate exceptions to the app-wide `select-none` in `app.css` — the other being
-`CommandPane`'s command — and both are exceptions for the same reason: a string the reader wants in
-their clipboard. Trailers go in a collapsed native `<details>` — most of what a server
+three deliberate exceptions to the app-wide `select-none` in `app.css` — the others being
+`CommandPane`'s command and the response Headers rows — and all three are exceptions for the same
+reason: a string the reader wants in their clipboard. Trailers go in a collapsed native `<details>` — most of what a server
 attaches to a rejection is `date` and `content-type`, and five rows of that bury the one line that
 matters. No illustration — at these sizes a drawing pushes the informative line below the fold, and
 it would be the same drawing for every failure.
