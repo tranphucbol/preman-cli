@@ -233,6 +233,22 @@ describe("the title bar's update chip", () => {
     expect(body).not.toContain("disabled");
   });
 
+  it("givenTheTitleBarsTrailingGroup_whenTheChipArrives_thenItGrowsBesideTheGearRatherThanMovingIt", () => {
+    const source = code(APP);
+    // A transient placed after the row's permanent controls widens the trailing group leftwards
+    // and shifts every one of them. Placed before, it grows into the empty run and shifts nothing.
+    expect(source.indexOf("<UpdateChip />")).toBeLessThan(source.indexOf('label="Settings"'));
+  });
+
+  it("givenTheChip_whenItRenders_thenItsGlyphIsNotTheSidebarsImportTray", () => {
+    const body = UPDATE_CHIP.exec(code(APP))?.[0] ?? NOTHING;
+
+    // `ImportIcon` is "Import from cURL", four rows below in the same window. One glyph cannot
+    // mean both "read this file" and "there is a new version".
+    expect(body).toContain("<UpdateIcon />");
+    expect(body).not.toContain("ImportIcon");
+  });
+
   it("givenTheUpdater_whenTheWindowRenders_thenItOwnsNoBannerAndNoToneOfItsOwn", () => {
     expect(code(APP)).not.toContain("UpdateBanner");
     // `info` had exactly one caller and this was it, so the tone went with it rather than being

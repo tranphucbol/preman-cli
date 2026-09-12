@@ -8,7 +8,7 @@ A newer preman is announced by a chip in the title bar, not by a banner across t
 
 `updateChip()` in `packages/desktop/src/renderer/model/update.ts` replaces `updateBanner()`. It
 answers for three phases and `null` for the other five. `App.tsx` draws the answer as one
-chrome-tier control at the trailing end of the title bar, after the Settings gear:
+chrome-tier control at the trailing end of the title bar, immediately before the Settings gear:
 
 | Phase         | Chip                      | Press              |
 | ------------- | ------------------------- | ------------------ |
@@ -62,9 +62,17 @@ emits no pointer events in Chromium, so its tooltip never opens — the rule `de
 already states for the gRPC field's lock, met here for the second time. Marking it up as a status
 also stops it being a tab stop that does nothing.
 
-**It sits after the gear, not before it.** `App.tsx` opens by promising the layout never moves, and
-the gear is the one control in that row people aim at without looking. Anything inserted to its left
-would move it twice per release. The trailing corner is also where a transient belongs.
+**It sits before the gear, not after it.** `App.tsx` opens by promising the layout never moves, and
+the gear is the one control in that row people aim at without looking. This is the order in which
+the chip's arrival costs nothing: the gear stays pinned against the right edge and the chip grows
+into the empty run beside it. Put the chip last and the trailing group widens leftwards instead,
+which moves the gear twice per release — the first draft did exactly that, and it took someone
+looking at a screenshot to notice the promise had been broken by the thing quoting it.
+
+**Its glyph is `ArrowCircleUp`, not the import tray.** `ui/icons.ts` already warns that reusing a
+glyph makes two controls read as one thing, and `ImportIcon` is the sidebar's "Import from cURL",
+four rows below. Up rather than down because what the chip announces is a version to move to; the
+download it starts is a step on the way, and the label says so in words.
 
 ## Consequences
 

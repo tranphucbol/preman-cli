@@ -325,6 +325,12 @@ accent in that row, and it is the thing you came to press, so it is not an excep
 below. The phase it cannot act in is a `<span>` and not a disabled button, for the reason a field's
 lead is: Chromium emits no pointer events from a disabled button, so its tooltip never opens.
 
+Two things about it generalise. It goes **before** the row's permanent controls, never after: a
+transient that arrives last widens the trailing group leftwards and shifts everything that was
+already there, while one that arrives first grows into the empty run and shifts nothing. And it
+carries its **own** glyph — `ui/icons.ts` is the audit precisely so that the second control to want
+a download arrow has to answer why it is not the first one.
+
 `details` is capped at eight lines and scrolls past that, with the count said beside the message
 once there is more than the box shows. It is the box that is bounded and never the list: those lines
 come the whole way from core's `PremanError`, the CLI prints all of them, and a window that drops

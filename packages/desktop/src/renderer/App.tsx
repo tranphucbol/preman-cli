@@ -49,6 +49,7 @@ import {
   SearchIcon,
   SettingsIcon,
   SidebarIcon,
+  UpdateIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { Banner, BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
@@ -695,6 +696,13 @@ function TitleBar({ onCreateWorkspace }: { readonly onCreateWorkspace: () => voi
       {/* `no-drag` is not decoration here: the whole header is a drag region, and a button inside
           one is a place the window moves from rather than a button. */}
       <div className="flex items-center gap-1 no-drag">
+        {/* Before the gear and not after it. The chip comes and goes on its own clock — once a
+            release, and again when the payload lands — and this is the order in which that costs
+            nothing: the gear stays against the right edge and the chip grows into the empty run
+            beside it. Put the chip last and the whole group widens leftwards instead, which moves
+            the one thing in this row people aim at without looking. The top of this file is a
+            promise that the layout does not move. Decision 055. */}
+        <UpdateChip />
         <IconButton
           label="Settings"
           onClick={() => {
@@ -703,11 +711,6 @@ function TitleBar({ onCreateWorkspace }: { readonly onCreateWorkspace: () => voi
         >
           <SettingsIcon />
         </IconButton>
-        {/* After the gear and not before it. The chip comes and goes on its own clock — once a
-            release, and again when the payload lands — and anything to its left would move twice
-            per release. The gear is the one thing in this row people aim at without looking, and
-            the top of this file is a promise that it does not move. Decision 055. */}
-        <UpdateChip />
       </div>
     </header>
   );
@@ -738,7 +741,7 @@ function UpdateChip(): React.JSX.Element {
         <m.div {...BANNER_MOTION}>
           {chip.action === null ? (
             <span className={cn(CHIP_CLASS, CHIP_WAITING_CLASS)}>
-              <ImportIcon />
+              <UpdateIcon />
               {chip.label}
               <span className="font-mono text-2xs">{chip.detail}</span>
             </span>
@@ -755,7 +758,7 @@ function UpdateChip(): React.JSX.Element {
                   else void window.preman.downloadUpdate();
                 }}
               >
-                {chip.action === "install" ? <RefreshIcon /> : <ImportIcon />}
+                {chip.action === "install" ? <RefreshIcon /> : <UpdateIcon />}
                 {chip.label}
                 <span className="font-mono text-2xs">{chip.detail}</span>
               </button>

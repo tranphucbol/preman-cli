@@ -11,6 +11,12 @@
  */
 export {
   ArrowClockwise as RefreshIcon,
+  // A newer preman, in the title bar's chip. Not `ImportIcon`: the tray below is already the
+  // sidebar's "Import from cURL", and one glyph in one window cannot mean both "read this file"
+  // and "there is a new version". Up rather than down because what the chip announces is a version
+  // to move to, which is the same arrow an app store draws; the download it starts is a step on the
+  // way and says so in words.
+  ArrowCircleUp as UpdateIcon,
   // Which way a frame went. Every event in a server-sent stream came down, so today this is the
   // only direction there is - it is here because the alternative, an unmarked row, reads as a log
   // line rather than as something that arrived, and because a stream that can also send (a
