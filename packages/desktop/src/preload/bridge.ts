@@ -3,7 +3,12 @@
  *
  * Imported by the main process, the preload script and the renderer, so it holds
  * declarations only: no `electron`, no `node:*`, nothing the renderer may not have.
+ *
+ * The one import is a type, and therefore erased: the levels a log line can carry are already
+ * spelled out in `engine/protocol.ts` for `main/diagnostics.ts`, and a second copy of that union
+ * here would be a second place for it to drift.
  */
+import type { LogLevel } from "@preman/desktop/engine/protocol.js";
 
 export const CHANNELS = {
   /** Main to renderer, carrying one end of a `MessageChannelMain`. */
@@ -87,6 +92,23 @@ export const CHANNELS = {
    * shut costs exactly what it did before `docs/decisions/040`.
    */
   watchResources: "preman:watch-resources",
+  /**
+   * Main to renderer, in batches, while the Diagnostics tab's stream is switched on.
+   *
+   * A {@link LogBatch} per message rather than a line per message: a failing start writes a dozen
+   * lines inside a millisecond, and one message each would be one renderer render each.
+   * `main/logstream.ts` holds them for a few milliseconds and sends what accumulated. The first
+   * batch after the switch is the tail read off the file, and says so.
+   */
+  logLines: "preman:log-lines",
+  /**
+   * Renderer to main, when the stream is switched on and again when it is switched off.
+   *
+   * Fire-and-forget, like `watchResources`, and the same whole gate: outside these two messages
+   * main forwards nothing and holds nothing. Unlike `watchResources` it is not paired with a
+   * mount — see `docs/decisions/056` for why the switch outlives the pane that flips it.
+   */
+  watchLog: "preman:watch-log",
   /**
    * Main to renderer, whenever the updater's phase changes.
    *
@@ -366,8 +388,9 @@ export interface EnginePort {
 /**
  * What a bug report needs and the renderer cannot work out for itself.
  *
- * Paths and version strings only — never a line of the log. The pane points at the file; opening
- * it is the file manager's job. See `docs/decisions/035`.
+ * Paths and version strings only. The lines themselves arrive on {@link CHANNELS.logLines} and
+ * only while somebody asked for them; this answer is the same before and after that, and stays a
+ * read of four facts that do not change while the app runs.
  */
 export interface DiagnosticsInfo {
   readonly logFile: string;
@@ -376,6 +399,49 @@ export interface DiagnosticsInfo {
   readonly electronVersion: string;
   readonly chromeVersion: string;
   readonly nodeVersion: string;
+}
+
+/**
+ * One line as it was written down, before the file stamped it.
+ *
+ * The level and the text are kept apart rather than pre-formatted, so the pane can colour a `warn`
+ * and the reader can copy the sentence without the timestamp glued to it. `at` is `Date.now()` in
+ * main, which is the same clock the file's ISO stamp comes off.
+ *
+ * There is nothing to redact here, and that is not luck: `docs/decisions/035` fixed what may be
+ * written at all — no URL, no header, no body, no variable name or value — so the window can show
+ * what the file holds without deciding anything the writer had not already decided.
+ */
+export interface LogLine {
+  /** Monotonic within a session, for a list key. Two identical lines are two entries. */
+  readonly seq: number;
+  readonly at: number;
+  readonly level: LogLevel;
+  readonly text: string;
+}
+
+/**
+ * How many lines the tail reads back when the stream is switched on.
+ *
+ * Enough to hold the whole of a failed start and the minute around it, and few enough that the
+ * one message carrying them is a few tens of kilobytes rather than the file. The tail stops at
+ * the current `preman.log` and never reaches into the rotated `preman.log.1`: just after a
+ * rotation it is simply short, which is the honest answer and not a bug to work around.
+ */
+export const LOG_TAIL_LINES = 500;
+
+/**
+ * A batch of lines, and whether it is the beginning of the list or a continuation of it.
+ *
+ * `replace` is what makes switching the stream on mean one thing every time: the batch that
+ * answers it carries the tail, and the tail overlaps whatever a previous session of the stream
+ * left on screen. Appending it would print a block the reader had already read; replacing says
+ * "here are the last {@link LOG_TAIL_LINES} lines" whether this is the first switch-on or the
+ * fourth. Every live batch after it appends.
+ */
+export interface LogBatch {
+  readonly replace: boolean;
+  readonly lines: readonly LogLine[];
 }
 
 /**
@@ -594,6 +660,25 @@ export interface PremanBridge {
    * opened. Decision 017 found 7-16ms of ambient blocking in the idle app already.
    */
   watchResources(watching: boolean): void;
+  /**
+   * What main is writing down, as it writes it. Returns an unsubscribe function.
+   *
+   * Batched, so a listener is handed an array and not a line — see {@link CHANNELS.logLines}.
+   * Only arrives between `watchLog(true)` and `watchLog(false)`, and nothing is buffered outside
+   * them. The first batch after switching on is the tail — the last {@link LOG_TAIL_LINES} lines
+   * of the file, carrying {@link LogBatch.replace} — because a log you opened to read starts with
+   * what already happened; every batch after it is what was written since.
+   */
+  onLogLines(listener: (batch: LogBatch) => void): () => void;
+  /**
+   * Start or stop forwarding the log.
+   *
+   * Unlike `watchResources` this is not paired with a mount. The subscription is the window's and
+   * the switch is the user's: the point of watching a log is to leave it running and go do the
+   * thing that fails, which a stream that stopped when the pane closed could not be used for. The
+   * cost it holds open is one branch per logged line, not a timer. See `docs/decisions/056`.
+   */
+  watchLog(watching: boolean): void;
   /**
    * Where the updater is. Returns an unsubscribe function, the same shape `onHostFailure` has.
    *

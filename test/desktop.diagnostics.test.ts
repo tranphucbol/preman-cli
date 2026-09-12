@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import {
   createDiagnostics,
   createOutputTail,
+  parseLog,
   HOST_OUTPUT_LINE_LIMIT,
   HOST_OUTPUT_LINES,
 } from "@preman/desktop/main/diagnostics.js";
@@ -31,6 +32,8 @@ const TWO_FILES = 2;
 const NO_LINES = 0;
 const ONE_LINE = 1;
 const OVERFLOW_LINES = 50;
+/** A tail limit small enough that the cases above it can count what came back. */
+const A_FEW = 3;
 const A_REPORT = '{"header":{"event":"Allocation failed"}}';
 const A_LINE = "the engine said something";
 const A_LEVEL = "info" as const;
@@ -236,6 +239,74 @@ describe("the log file", () => {
     }).not.toThrow();
     // And the line still reached the half a developer with a terminal was going to read.
     expect(seen.join("")).toContain(A_LINE);
+  });
+});
+
+/**
+ * Reading the file back, which is what the Diagnostics tab's stream is handed when it is switched
+ * on. The parser is the inverse of `write`, so most of these drive both halves and compare.
+ */
+describe("the tail the window is shown", () => {
+  it("givenLinesWereWritten_whenTheTailIsRead_thenItIsWhatWasWritten", () => {
+    const dir = directory();
+    silenceStderr();
+    const diagnostics = createDiagnostics({ directory: dir });
+    diagnostics.write("warn", A_LINE);
+
+    const [only] = diagnostics.readTail(A_FEW);
+
+    // Round trip: the stamp is put on by `write` and taken off here, and nothing in between knows
+    // what the format is.
+    expect(only?.level).toBe("warn");
+    expect(only?.text).toBe(A_LINE);
+    expect(Number.isNaN(only?.at ?? Number.NaN)).toBe(false);
+  });
+
+  it("givenMoreLinesThanAsked_whenTheTailIsRead_thenTheNewestAreTheOnesKept", () => {
+    const dir = directory();
+    silenceStderr();
+    const diagnostics = createDiagnostics({ directory: dir });
+    for (let index = 0; index < OVERFLOW_LINES; index += 1) diagnostics.write(A_LEVEL, `line ${String(index)}`);
+
+    const tail = diagnostics.readTail(A_FEW);
+
+    // A tail and not a head: what is interesting about a log is its end.
+    expect(tail).toHaveLength(A_FEW);
+    expect(tail.at(-1)?.text).toBe(`line ${String(OVERFLOW_LINES - ONE_LINE)}`);
+  });
+
+  it("givenNoFileYet_whenTheTailIsRead_thenItIsEmptyRatherThanAnError", () => {
+    // The common case on a first run, and a pressed button must not be able to throw.
+    expect(createDiagnostics({ directory: directory() }).readTail(A_FEW)).toEqual([]);
+  });
+
+  it("givenAStackTrace_whenItIsReadBack_thenItIsOneRecordAndNotADozen", () => {
+    const stack = "Error: it failed\n    at one (a.js:1:1)\n    at two (b.js:2:2)";
+    const dir = directory();
+    silenceStderr();
+    const diagnostics = createDiagnostics({ directory: dir });
+    diagnostics.write("error", stack);
+
+    const [only] = diagnostics.readTail(A_FEW);
+
+    // An uncaught exception reaches the file as one `write` with newlines in it. Counting its
+    // frames as lines would spend the whole tail on one failure and cut it in the middle.
+    expect(diagnostics.readTail(A_FEW)).toHaveLength(ONE_LINE);
+    expect(only?.text).toBe(stack);
+  });
+
+  it("givenAFileThatBeginsMidRecord_whenItIsParsed_thenTheDecapitatedPartIsDropped", () => {
+    const parsed = parseLog("    at two (b.js:2:2)\n2026-01-02T09:05:03.000Z INFO  after the cut\n", A_FEW);
+
+    // What a rotation leaves at the top of the new file. There is no level and no time to give it,
+    // and inventing either would be the parser making something up.
+    expect(parsed).toHaveLength(ONE_LINE);
+    expect(parsed[0]?.text).toBe("after the cut");
+  });
+
+  it("givenSomethingElseEntirely_whenItIsParsed_thenNothingIsInvented", () => {
+    // Not a file this module wrote. Every line is a continuation of a record that never started.
+    expect(parseLog("hello\nworld\n", A_FEW)).toEqual([]);
   });
 });
 

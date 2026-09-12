@@ -133,6 +133,18 @@
   --color-warn: #e0b355;
   --color-danger: #ff7a6b;
 
+  /* A search hit, and the one the reader is standing on. Two weights of the same idea, and the
+   * same two `ui/editorTheme.ts` already solved for the editor: a band behind four characters is
+   * the only indicator there is, so WCAG 1.4.11 asks 3:1 of it, and --color-selected is a row tint
+   * argued down to hover luminance that cannot give it.
+   *
+   * Derived from the accent rather than declared, because the accent is the one colour every
+   * palette is already audited readable on canvas and panel. That costs no new row in the audit,
+   * no regenerated theme and no forty-fourth token: a theme that changes --color-accent changes
+   * these on the same frame, since @theme leaves them on :root for var() to resolve at use. */
+  --color-match: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  --color-match-active: color-mix(in oklab, var(--color-accent) 30%, transparent);
+
   /* The whole z-index scale, and it is deliberately this short. Arbitrary `z-50` sprinkled at the
    * point of pain is how a tool ends up with a dropdown behind a drawer. Five systemic layers:
    * sticky pane chrome, the resize handles that sit above it, the drag preview, portalled menus,

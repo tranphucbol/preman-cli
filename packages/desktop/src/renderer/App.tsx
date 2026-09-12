@@ -110,6 +110,7 @@ import { useAsideStore } from "@preman/desktop/renderer/stores/aside.js";
 import { useOverlayStore, type Overlay } from "@preman/desktop/renderer/stores/overlay.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { useSearchStore } from "@preman/desktop/renderer/stores/search.js";
+import { useLogStore } from "@preman/desktop/renderer/stores/log.js";
 import { selectStatus, useUpdateStore } from "@preman/desktop/renderer/stores/update.js";
 
 const SIDEBAR_ID = "sidebar";
@@ -267,6 +268,11 @@ export function App(): React.JSX.Element {
   // seconds after the window loads and the next a day later, so a listener that came and went with
   // the Settings pane would miss every transition that matters.
   useEffect(() => window.preman.onUpdateState(useUpdateStore.getState().apply), []);
+  // Subscribed here for the same reason and a second one: the Settings pane is where the stream is
+  // switched on, and the whole point of switching it on is to go somewhere else and make something
+  // happen. A listener that came and went with the pane would miss precisely the lines it was
+  // turned on for. Nothing arrives until `watchLog(true)`, so this costs an unused listener.
+  useEffect(() => window.preman.onLogLines(useLogStore.getState().apply), []);
 
   const [ask, setAsk] = useState<Ask | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
