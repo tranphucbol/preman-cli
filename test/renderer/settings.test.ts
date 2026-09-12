@@ -21,13 +21,15 @@ import { describe, expect, it } from "vitest";
 import {
   INELIGIBILITY_REASON,
   LOCAL_NETWORK_CAVEAT,
-  updateBanner,
+  updateChip,
   updateHeadline,
 } from "@preman/desktop/renderer/model/update.js";
 
 const DESKTOP_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../packages/desktop/src");
 const SETTINGS = readFileSync(join(DESKTOP_DIR, "renderer/panes/SettingsPane.tsx"), "utf8");
 const BRIDGE = readFileSync(join(DESKTOP_DIR, "preload/bridge.ts"), "utf8");
+const APP = readFileSync(join(DESKTOP_DIR, "renderer/App.tsx"), "utf8");
+const BANNER = readFileSync(join(DESKTOP_DIR, "renderer/ui/Banner.tsx"), "utf8");
 
 const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
 const LINE_COMMENT = /\/\/.*$/gm;
@@ -36,6 +38,8 @@ const NOTHING = "";
 /** The section's body, from its `function` line to the first close at column zero. */
 const DIAGNOSTICS_SECTION = /function DiagnosticsSection\(\)[\s\S]*?\n\}\n/;
 const UPDATES_SECTION = /function UpdatesSection\(\)[\s\S]*?\n\}\n/;
+/** The title bar's chip, from its `function` line to the first close at column zero. */
+const UPDATE_CHIP = /function UpdateChip\(\)[\s\S]*?\n\}\n/;
 /** The tab list the pane is split by. */
 const SETTINGS_TABS = /const SETTINGS_TABS = \[([^\]]*)\] as const/;
 /** Every `"quoted"` string in a matched fragment. */
@@ -123,9 +127,9 @@ describe("the Settings pane's Diagnostics section", () => {
  * The Updates section, read two ways.
  *
  * What the section *says* is not in the `.tsx` at all — it is `model/update.ts`, which is pure and
- * importable, so those three cases are behaviour rather than text. What is left for the source
- * reading is the two structural promises the model cannot make: that the caveat is drawn only when
- * an update is staged, and that nothing here installs anything without a press.
+ * importable, so those cases are behaviour rather than text. What is left for the source reading is
+ * the two structural promises the model cannot make: that the caveat is drawn only when an update
+ * is staged, and that nothing here installs anything without a press.
  */
 describe("the Settings pane's Updates section", () => {
   it("givenAnAvailableUpdate_whenTheUpdatesSectionRenders_thenTheVersionAndActionAreShown", () => {
@@ -170,13 +174,86 @@ describe("the Settings pane's Updates section", () => {
     expect(body).not.toContain("Banner");
     expect(LOCAL_NETWORK_CAVEAT).toContain("Local Network");
   });
+});
 
-  it("givenAFailedCheck_whenTheWindowRenders_thenNoBannerInterrupts", () => {
-    // The bar is for news, not for a laptop that could not reach GitHub. The section above says so
-    // for whoever goes looking, which is the whole of the reporting a failed check deserves.
-    expect(updateBanner({ phase: "failed", message: "nope", details: [] })).toBeNull();
-    expect(updateBanner({ phase: "downloading", version: "1.4.0", receivedBytes: 1, totalBytes: 2 })).toBeNull();
-    expect(updateBanner({ phase: "ready", version: "1.4.0" })?.ready).toBe(true);
+/**
+ * The chip in the title bar, read the same two ways.
+ *
+ * What it says is `model/update.ts` and is behaviour. What is left for the source reading is the
+ * two structural promises the model cannot make: that the phase with nothing to press is not a
+ * disabled button, and that the updater no longer owns a bar across the window.
+ */
+describe("the title bar's update chip", () => {
+  it("givenAPhaseWithNothingToDo_whenTheTitleBarRenders_thenNoChipIsDrawn", () => {
+    // Chrome is permanent, which is exactly why `failed` is not in it: a laptop that could not
+    // reach GitHub gives the user nothing to do, and a standing mark saying so is worse than the
+    // bar it replaced, because the bar at least went away. The Settings section still says it.
+    expect(updateChip({ phase: "failed", message: "nope", details: [] })).toBeNull();
+    expect(updateChip({ phase: "idle" })).toBeNull();
+    expect(updateChip({ phase: "checking" })).toBeNull();
+    expect(updateChip({ phase: "current" })).toBeNull();
+    expect(updateChip({ phase: "unsupported", reason: "translocated" })).toBeNull();
+  });
+
+  it("givenAnUpdateToActOn_whenTheChipRenders_thenOnePressDoesTheOneThing", () => {
+    const available = updateChip({
+      phase: "available",
+      version: "1.4.0",
+      notesUrl: "https://example.invalid",
+      sizeBytes: 134_217_728,
+    });
+
+    expect(available?.action).toBe("download");
+    expect(available?.detail).toBe("1.4.0");
+    // The tooltip is the sentence the bar used to be, so nothing the move dropped is unsaid.
+    expect(available?.title).toContain("128 MB");
+    expect(updateChip({ phase: "ready", version: "1.4.0" })?.action).toBe("install");
+  });
+
+  it("givenADownloadInFlight_whenTheChipRenders_thenItReportsItselfAndOffersNoPress", () => {
+    // The one phase the move adds rather than relocates: a bar could not report a press back at
+    // the presser, but the chip *is* the control that was pressed and must not vanish mid-download.
+    const half = updateChip({ phase: "downloading", version: "1.4.0", receivedBytes: 1, totalBytes: 2 });
+    expect(half?.action).toBeNull();
+    expect(half?.detail).toBe("50%");
+
+    // No `content-length`, no denominator, and no invented percentage that could jump backwards.
+    const unknown = updateChip({ phase: "downloading", version: "1.4.0", receivedBytes: 1, totalBytes: 0 });
+    expect(unknown?.detail).toBe("1.4.0");
+  });
+
+  it("givenTheChipInAPhaseItCannotActIn_whenItRenders_thenItIsNotADisabledButton", () => {
+    const found = UPDATE_CHIP.exec(code(APP));
+    expect(found).not.toBeNull();
+    const body = found?.[0] ?? NOTHING;
+
+    // A disabled `<button>` emits no pointer events in Chromium, so its tooltip never opens.
+    // `design-system.md` states this for the field lead; the chip is the second case of it.
+    expect(body).toContain("chip.action === null ?");
+    expect(body).not.toContain("disabled");
+  });
+
+  it("givenTheTitleBarsTrailingGroup_whenTheChipArrives_thenItGrowsBesideTheGearRatherThanMovingIt", () => {
+    const source = code(APP);
+    // A transient placed after the row's permanent controls widens the trailing group leftwards
+    // and shifts every one of them. Placed before, it grows into the empty run and shifts nothing.
+    expect(source.indexOf("<UpdateChip />")).toBeLessThan(source.indexOf('label="Settings"'));
+  });
+
+  it("givenTheChip_whenItRenders_thenItsGlyphIsNotTheSidebarsImportTray", () => {
+    const body = UPDATE_CHIP.exec(code(APP))?.[0] ?? NOTHING;
+
+    // `ImportIcon` is "Import from cURL", four rows below in the same window. One glyph cannot
+    // mean both "read this file" and "there is a new version".
+    expect(body).toContain("<UpdateIcon />");
+    expect(body).not.toContain("ImportIcon");
+  });
+
+  it("givenTheUpdater_whenTheWindowRenders_thenItOwnsNoBannerAndNoToneOfItsOwn", () => {
+    expect(code(APP)).not.toContain("UpdateBanner");
+    // `info` had exactly one caller and this was it, so the tone went with it rather than being
+    // kept warm for a second bar that says nothing is wrong.
+    expect(code(BANNER)).not.toContain('"info"');
   });
 });
 

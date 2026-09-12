@@ -13,39 +13,33 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 
-import { CheckIcon, CopyIcon, InfoIcon, WarningIcon, type Icon } from "@preman/desktop/renderer/ui/icons.js";
+import { CheckIcon, CopyIcon, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { m } from "@preman/desktop/renderer/ui/motion.js";
 
 /**
- * The three tones that mean "read me". `ok` and `neutral` still do not warrant a bar.
+ * The two tones that mean "read me". `ok` and `neutral` still do not warrant a bar.
  *
- * `info` is the late arrival and it is deliberately narrow: it exists for a fact the user has to be
- * told and can act on, where nothing is wrong. Today that is exactly one thing — a newer preman is
- * available, and then that it is ready to install. It wears the accent rather than a colour of its
- * own because there is no `--color-info` in any of the forty-three palettes and adding one would be
- * forty-three generated files changed to tint one strip. See `docs/design-system.md`.
+ * There were three for a while. `info` existed for a fact the user had to be told and could act on
+ * where nothing was wrong, and there was exactly one of those — a newer preman is available — so
+ * when decision 055 moved that into the title bar the tone had no callers left. It is gone rather
+ * than kept warm: a tone nothing wears is a tone the next reader has to decide about, and a bar is
+ * the shape this app uses for a problem. Good news that is not a problem is not a bar.
+ *
+ * Both remaining tones therefore wear the same glyph, which is why there is no map from tone to
+ * icon any more. Reintroduce one the day a tone arrives that is not a warning.
  */
-export type BannerTone = "danger" | "warn" | "info";
+export type BannerTone = "danger" | "warn";
 
 const SURFACE_CLASS: Record<BannerTone, string> = {
   danger: "border-danger/40 bg-danger/10",
   warn: "border-warn/40 bg-warn/10",
-  info: "border-accent/40 bg-accent/10",
 };
 
 const ICON_CLASS: Record<BannerTone, string> = {
   danger: "text-danger",
   warn: "text-warn",
-  info: "text-accent",
-};
-
-/** A warning triangle over good news says the wrong thing, so the glyph moves with the tone. */
-const ICON_BY_TONE: Record<BannerTone, Icon> = {
-  danger: WarningIcon,
-  warn: WarningIcon,
-  info: InfoIcon,
 };
 
 const NO_DETAILS: readonly string[] = [];
@@ -112,7 +106,6 @@ export function Banner({
   /** The one thing to do about it - Retry, Dismiss - to the right of the copy button. */
   readonly children?: ReactNode;
 }): ReactElement {
-  const Glyph = ICON_BY_TONE[tone];
   return (
     /* `role="alert"` stays on the animated element. On a wrapper it would change what the screen
      * reader announces, and the height is deliberately not animated: the banner's own height is
@@ -123,7 +116,7 @@ export function Banner({
       {...BANNER_MOTION}
       className={cn("flex shrink-0 items-start gap-2 border-b px-gutter py-1.5", SURFACE_CLASS[tone])}
     >
-      <Glyph className={cn("mt-px shrink-0", ICON_CLASS[tone])} />
+      <WarningIcon className={cn("mt-px shrink-0", ICON_CLASS[tone])} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-xs text-ink">{message}</span>

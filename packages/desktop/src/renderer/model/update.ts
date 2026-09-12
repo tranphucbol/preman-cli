@@ -2,7 +2,7 @@
  * The updater's phase, in words.
  *
  * Pure and no React, like everything else in `model/`: the window has two readers of the same
- * union — the Settings section and the strip above the workspace — and a sentence written twice is
+ * union — the Settings section and the chip in the title bar — and a sentence written twice is
  * a sentence that eventually says two different things about one state.
  *
  * Nothing here decides. The phase is main's; this only chooses which words go with it.
@@ -38,7 +38,7 @@ export const LOCAL_NETWORK_CAVEAT =
 
 const BYTES_IN_MB = 1024 * 1024;
 const MB_DECIMALS = 0;
-const NO_BANNER = null;
+const NO_CHIP = null;
 const NOTHING_RECEIVED = 0;
 const WHOLE = 100;
 
@@ -82,28 +82,54 @@ export function updateHeadline(status: UpdateStatus): string {
   }
 }
 
-export interface UpdateBanner {
-  readonly message: string;
-  /** The version, monospace and beside the message — an id, not a second sentence. */
+export interface UpdateChip {
+  /** The verb, in a title bar's worth of room: what the press does, or what is already happening. */
+  readonly label: string;
+  /**
+   * Monospace beside the label: the shortest true thing. The version while there is a decision to
+   * make about it, and how far the download has got once the decision is made — an id, never a
+   * second sentence.
+   */
   readonly detail: string;
-  /** Whether the one action is Install rather than Download. */
-  readonly ready: boolean;
+  /** The whole sentence, for the tooltip. `updateHeadline` already writes it; this does not. */
+  readonly title: string;
+  /** What the press does, or `null` while a download is in flight and there is nothing to press. */
+  readonly action: "download" | "install" | null;
 }
 
 /**
- * The strip above the workspace, or nothing.
+ * The chip in the title bar, or nothing.
  *
- * Only `available` and `ready` interrupt. Not `failed`: a background check that could not reach
- * GitHub is not worth a bar across someone's window, and the Settings section says so for whoever
- * goes looking. Not `downloading` either — the user pressed the button that started it and the
- * pane they pressed it in is where the progress belongs.
+ * Three phases earn a place in the window's chrome and five do not. `idle`, `checking`, `current`
+ * and `unsupported` are answers to a question nobody asked from here — the Settings section is
+ * where someone who wants them goes looking. `failed` is not here either: a laptop that could not
+ * reach GitHub has nothing for the user to do about it, and a permanent mark in the chrome saying
+ * so is worse than a bar that at least went away.
+ *
+ * `downloading` _is_ here, which is the one thing the move changes rather than relocates. A bar
+ * across the window could not show it — the user pressed the button that started it and a strip
+ * reporting their own press back at them is noise — but the chip is the button they pressed, and a
+ * control that vanishes on the press and reappears two minutes later as a different control is a
+ * control that looks broken. It reports itself in place instead.
  */
-export function updateBanner(status: UpdateStatus): UpdateBanner | null {
+export function updateChip(status: UpdateStatus): UpdateChip | null {
   if (status.phase === "available") {
-    return { message: "A new version of preman is available.", detail: status.version, ready: false };
+    return { label: "Update", detail: status.version, title: updateHeadline(status), action: "download" };
+  }
+  if (status.phase === "downloading") {
+    const percent = downloadPercent(status);
+    return {
+      label: "Downloading",
+      // The version until a denominator exists, because a response with no `content-length` has no
+      // percentage to state and an invented one jumps backwards.
+      detail: percent === null ? status.version : `${percent}%`,
+      title: updateHeadline(status),
+      action: null,
+    };
   }
   if (status.phase === "ready") {
-    return { message: "The update is ready. preman will restart to finish.", detail: status.version, ready: true };
+    // Not "Restart": the one press in this app that quits it says what it quits for.
+    return { label: "Restart to update", detail: status.version, title: updateHeadline(status), action: "install" };
   }
-  return NO_BANNER;
+  return NO_CHIP;
 }
