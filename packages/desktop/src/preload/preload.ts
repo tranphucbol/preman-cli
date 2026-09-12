@@ -16,6 +16,7 @@ import {
   type DiagnosticsInfo,
   type EnginePortDelivery,
   type HostFailure,
+  type LogBatch,
   type MigrateResult,
   type MigrationProgress,
   type Preferences,
@@ -183,6 +184,21 @@ const bridge: PremanBridge = {
   // which would re-prime, and throw away the first second of every re-render.
   watchResources: (watching: boolean) => {
     ipcRenderer.send(CHANNELS.watchResources, watching);
+  },
+  onLogLines(listener) {
+    const handler = (_event: IpcRendererEvent, batch: LogBatch): void => {
+      listener(batch);
+    };
+    ipcRenderer.on(CHANNELS.logLines, handler);
+    return () => {
+      ipcRenderer.off(CHANNELS.logLines, handler);
+    };
+  },
+  // Not paired with the subscription above, for a stronger version of the sampler's reason: the
+  // subscription is attached once at the top of the window and never removed, and this is flipped
+  // by a button in a pane that comes and goes underneath it.
+  watchLog: (watching: boolean) => {
+    ipcRenderer.send(CHANNELS.watchLog, watching);
   },
   // The same unsubscribe-safe shape `onHostFailure` has, and for the same reason: the phase is
   // pushed, so a listener that could not be removed would stack across re-renders.

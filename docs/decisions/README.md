@@ -63,6 +63,8 @@ The CLI's own design predates the practice.
 | [052](052-a-stream-is-a-response-in-parts.md)                       | A stream is a response in parts                                        |
 | [053](053-a-json-body-arrives-pretty-printed.md)                    | A JSON body arrives pretty-printed                                     |
 | [054](054-the-app-signs-its-own-updates.md)                         | The app signs its own updates, because Squirrel cannot                 |
+| [055](055-the-update-lives-in-the-title-bar.md)                     | The update lives in the title bar                                      |
+| [056](056-the-log-can-be-watched-while-it-is-written.md)            | The log can be watched while it is written                             |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -399,5 +401,15 @@ accent stops needing a carve-out, because in the chrome the chip really is the t
 press, and `downloading` becomes showable at all, since a control reporting its own press in place
 is the opposite problem from a strip reporting it back at the presser. The third tone and its icon
 are deleted rather than kept warm.
+
+056 is the first amendment made _by_ an invariant rather than to one. 035 refused to render the log
+in one sentence of its Consequences, and the clause after it — that the file contains nothing worth
+redacting, by construction — is exactly what makes the refusal unnecessary: a window drawing the
+file decides nothing the writer had not already decided. What is bought is the question Reveal
+cannot answer, "what happens when I do this", which a file manager turns into a loop nobody runs
+twice. The cost is that loosening 035's rule about what may be written is now a reversal of two
+records, and the second has a window in it. It deliberately does not copy 040's shape: the sampler
+stops when its pane unmounts because a reading nobody is watching is worthless, and a log line
+nobody is watching is the only kind worth having.
 
 `TEMPLATE.md` is the shape of a new one.

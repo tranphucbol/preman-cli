@@ -23,7 +23,7 @@
  * same boolean. See `docs/decisions/040`.
  */
 import * as Tabs from "@radix-ui/react-tabs";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { DENSITIES, densityTokens } from "@preman/desktop/renderer/appearance/density.js";
 import {
@@ -34,15 +34,36 @@ import {
 } from "@preman/desktop/renderer/appearance/fonts.js";
 import type { Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
+import {
+  formatLogTime,
+  levelClass,
+  LOG_HEIGHT_MIN,
+  matchingLines,
+  splitMatches,
+  stepMatch,
+  NO_MATCH,
+  NO_QUERY,
+} from "@preman/desktop/renderer/model/log.js";
 import { formatCpu, formatMemory, loadClass, totalOf } from "@preman/desktop/renderer/model/resources.js";
 import { LOCAL_NETWORK_CAVEAT, updateHeadline } from "@preman/desktop/renderer/model/update.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
+import { selectHeight, selectLines, selectWatching, useLogStore } from "@preman/desktop/renderer/stores/log.js";
 import { selectHistory, selectSample, useResourcesStore } from "@preman/desktop/renderer/stores/resources.js";
 import { switchWorkspace, useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { selectStatus, useUpdateStore } from "@preman/desktop/renderer/stores/update.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Button, Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
-import { CloseIcon } from "@preman/desktop/renderer/ui/icons.js";
+import {
+  ClearIcon,
+  CloseIcon,
+  GLYPH_CLASS,
+  NextMatchIcon,
+  RefreshIcon,
+  PreviousMatchIcon,
+  RevealIcon,
+  SearchIcon,
+  StreamIcon,
+} from "@preman/desktop/renderer/ui/icons.js";
 import { Sparkline } from "@preman/desktop/renderer/ui/Sparkline.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import { SHARED_PROTO_ROOT } from "@preman/desktop/engine/protocol.js";
@@ -92,6 +113,7 @@ const UPDATES_HINT = "Whether there is a newer preman, and the two clicks that i
  * automatically" would promise exactly the thing decision 16 refuses to build.
  */
 const AUTO_CHECK_LABEL = "Check for updates automatically";
+const CHECK_NOW_LABEL = "Check for updates now";
 
 const SHARED_ROOT_FIELD_ID = "settings-shared-proto-root";
 const SHARED_ROOT_HINT = "Where a declared proto path is resolved to a checkout on this machine.";
@@ -396,6 +418,8 @@ const ENGINE_RUNNING = "Running";
 const ENGINE_STOPPED = "Stopped";
 /** Before the one `invoke` settles. It is a local round trip, so this is a frame, not a wait. */
 const UNKNOWN_VALUE = "…";
+/** Nothing collected yet, which is both a caption and the reason Clear is disabled. */
+const NO_LINES = 0;
 
 /**
  * Where this machine resolves a shared proto link.
@@ -444,6 +468,9 @@ function ProtosSection(): React.JSX.Element {
               commit(clean === EMPTY ? NO_OVERRIDE : clean);
             }}
           />
+          {/* The one button in this pane that keeps the content tier, because it is the one paired
+              with a field: a 26px button beside a 30px input is a row that does not line up, and
+              matching the control it acts on is what the tiers are for. */}
           <Button
             variant="neutral"
             disabled={shared === NO_OVERRIDE}
@@ -540,6 +567,7 @@ function UpdateActions({ status }: { readonly status: UpdateStatus }): React.JSX
       <span className="flex shrink-0 items-center gap-1">
         <Button
           variant="neutral"
+          tier="chrome"
           onClick={() => {
             void window.preman.skipUpdate(status.version);
           }}
@@ -547,6 +575,7 @@ function UpdateActions({ status }: { readonly status: UpdateStatus }): React.JSX
           Skip
         </Button>
         <Button
+          tier="chrome"
           onClick={() => {
             void window.preman.downloadUpdate();
           }}
@@ -559,6 +588,7 @@ function UpdateActions({ status }: { readonly status: UpdateStatus }): React.JSX
   if (status.phase === "ready") {
     return (
       <Button
+        tier="chrome"
         onClick={() => {
           void window.preman.installUpdate();
         }}
@@ -570,25 +600,33 @@ function UpdateActions({ status }: { readonly status: UpdateStatus }): React.JSX
   // Absent rather than disabled while a check or a download is in flight: a greyed button that
   // will come back in four seconds is a button the reader has to keep watching.
   if (status.phase === "checking" || status.phase === "downloading") return null;
+  // The one glyph in this section, and the only one that earns it. Skip, Download and Restart and
+  // install are consequential and rare — one of them reboots the app — so they say what they do.
+  // This one means refresh, which has a glyph everyone already reads, and costs nothing if it is
+  // misread: it checks again. See `docs/decisions/056`.
   return (
-    <Button
-      variant="neutral"
+    <IconButton
+      label={CHECK_NOW_LABEL}
       onClick={() => {
         void window.preman.checkForUpdate();
       }}
     >
-      Check now
-    </Button>
+      <RefreshIcon />
+    </IconButton>
   );
 }
 
 /**
- * The four versions a bug report needs, and where to find the log.
+ * The four versions a bug report needs, where the log is, and what is being written to it.
  *
- * Not a line of the log is rendered. A pane that showed it would have to decide what to redact, and
- * `docs/decisions/035` decided that by not writing it — the console drawer is where a request is
- * looked at. The button reveals the *directory* rather than the file: the rotated `preman.log.1` is
- * half of what a report wants, and a file manager showing the folder gives both.
+ * The lines are here because there was never anything to redact: `docs/decisions/035` fixed what
+ * may be written at all — no URL, no header, no body, no variable — so a window that draws the file
+ * decides nothing that the writer had not already decided. `docs/decisions/056` is that argument
+ * and the switch it bought. The console drawer is still where a *request* is looked at; this is
+ * where the app says what it is doing to itself.
+ *
+ * Reveal still opens the *directory* rather than the file: the rotated `preman.log.1` is half of
+ * what a report wants, and a file manager showing the folder gives both.
  */
 function DiagnosticsSection(): React.JSX.Element {
   const [info, setInfo] = useState<DiagnosticsInfo | null>(null);
@@ -627,18 +665,426 @@ function DiagnosticsSection(): React.JSX.Element {
         </DiagnosticsRow>
         <DiagnosticsRow term="Log">
           <span className="truncate font-mono text-2xs text-ink-dim">{info?.logFile ?? UNKNOWN_VALUE}</span>
-          <Button
-            variant="neutral"
+          <StreamToggle />
+          <IconButton
+            label={REVEAL_LABEL}
             disabled={info === null}
             onClick={() => {
               if (info !== null) void window.preman.revealInFileManager(info.directory);
             }}
           >
-            Reveal
-          </Button>
+            <RevealIcon />
+          </IconButton>
         </DiagnosticsRow>
       </dl>
+      <LogStream />
     </Section>
+  );
+}
+
+/**
+ * The words for the glyphs. Every control in this section is an icon now, which means each one's
+ * whole label lives in its tooltip — so these are sentences a reader meets cold, not captions
+ * under a picture that already said it.
+ */
+const REVEAL_LABEL = "Reveal the log folder";
+const STREAM_START = "Stream the log";
+const STREAM_STOP = "Stop streaming the log";
+const CLEAR_LABEL = "Clear what is on screen";
+const SEARCH_LABEL = "Find in the log";
+const SEARCH_CLOSE = "Close the search";
+const SEARCH_NEXT = "Next match";
+const SEARCH_PREVIOUS = "Previous match";
+const SEARCH_PLACEHOLDER = "Find";
+
+/** While it is on and the file was empty too, which on a first run is most of the time. */
+const STREAM_IDLE = "Streaming. The file was empty, and nothing has been written since.";
+const STREAM_LIVE = "Streaming. The tail of the file, then whatever is written next, newest at the bottom.";
+const STREAM_STOPPED = "Stopped. These are the lines that were collected while it was on.";
+
+/** Ordinals count from one and indices from zero. The one place that difference is arithmetic. */
+const MATCH_ORDINAL_OFFSET = 1;
+/** What a query with matches steps to before anybody has stepped. */
+const FIRST_MATCH = 0;
+const STEP_FORWARD = 1;
+const STEP_BACK = -1;
+const MATCH_COUNT_SEPARATOR = "/";
+/** `splitMatches` answers with one segment when nothing matched, and it is the whole string. */
+const SINGLE_SEGMENT = 1;
+
+const ESCAPE_KEY = "Escape";
+const ENTER_KEY = "Enter";
+
+/**
+ * How close to the bottom still counts as being at it.
+ *
+ * Fractional line heights mean the arithmetic almost never lands on zero, so a strict comparison
+ * would unpin the view on a scroll nobody performed. A few pixels is smaller than a line.
+ */
+const PIN_SLACK_PX = 4;
+
+/**
+ * How much taller than the window the box may be: not at all, less a margin.
+ *
+ * Measured at the moment of the drag rather than written down, because the window is resizable and
+ * a constant would be wrong on every screen but the author's. Deliberately not "what is left below
+ * the box", which was the first attempt and is the wrong question here: this pane scrolls, so a box
+ * taller than the space under it does not push anything off anything — it scrolls, like every other
+ * row in the pane. Measuring the leftover space made the ceiling a function of how much text
+ * happened to be above the box, which on a full Diagnostics tab meant the edge could be dragged
+ * about five pixels. The margin that is left is what keeps the box from becoming a second viewport
+ * with no way to see its own edges.
+ */
+const LOG_CEILING_MARGIN_PX = 80;
+
+/** What a resize step moves on an arrow key. A line and a bit, so a press is visible. */
+const LOG_RESIZE_STEP_PX = 24;
+const GROW = 1;
+const SHRINK = -1;
+
+/**
+ * The edge is reachable and movable from the keyboard, which is what makes it a `separator` rather
+ * than a decorated div. A drag handle that only answers a pointer is a size a keyboard cannot
+ * choose, and this one changes how much of the thing being read is visible.
+ */
+const RESIZE_LABEL = "Resize the log";
+const RESIZE_KEYS: Record<string, number | undefined> = {
+  ArrowDown: GROW,
+  ArrowUp: SHRINK,
+};
+
+/** Which of the three states the line above the box is in. */
+function streamCaption(watching: boolean, count: number): string {
+  if (!watching) return STREAM_STOPPED;
+  return count === NO_LINES ? STREAM_IDLE : STREAM_LIVE;
+}
+
+/**
+ * The switch, wherever it happens to be drawn.
+ *
+ * The state it toggles is in the store rather than here, which is the whole feature: this button
+ * unmounts when the tab changes, the pane closes, or the window shows something else, and the
+ * stream is supposed to survive all three. See `docs/decisions/056`.
+ */
+function StreamToggle(): React.JSX.Element {
+  const watching = useLogStore(selectWatching);
+  const setWatching = useLogStore((state) => state.setWatching);
+
+  return (
+    // `active` and not a second glyph: the pressed state is what `IconButton` has for exactly this,
+    // and a button that swapped a heartbeat for a stop square would be two icons to learn for one
+    // switch. The tooltip carries the verb, and it changes with the state.
+    <IconButton
+      label={watching ? STREAM_STOP : STREAM_START}
+      active={watching}
+      onClick={() => {
+        setWatching(!watching);
+      }}
+    >
+      <StreamIcon />
+    </IconButton>
+  );
+}
+
+/**
+ * The tail itself, drawn only once there is a reason to.
+ *
+ * Absent rather than empty when the stream has never been on, because an empty box under a button
+ * that has not been pressed reads as a box that failed to fill. Once it has been on it stays, with
+ * whatever it caught, until Clear — stopping is not throwing away.
+ */
+function LogStream(): React.JSX.Element | null {
+  const lines = useLogStore(selectLines);
+  const watching = useLogStore(selectWatching);
+  const clear = useLogStore((state) => state.clear);
+  const height = useLogStore(selectHeight);
+  const resize = useLogStore((state) => state.resize);
+  const viewport = useRef<HTMLDivElement | null>(null);
+  const field = useRef<HTMLInputElement | null>(null);
+  /**
+   * Whether the view follows the bottom. A ref and not state: it changes on every scroll frame and
+   * nothing renders differently for it, so making it state would repaint the list to store a
+   * boolean the list does not read.
+   */
+  const pinned = useRef(true);
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState(NO_QUERY);
+  /** Where the reader has stepped to, which is not always where they are. See `active` below. */
+  const [stepped, setStepped] = useState(NO_MATCH);
+
+  const matches = useMemo(() => matchingLines(lines, query), [lines, query]);
+  /**
+   * The match the reader is on: what they stepped to, clamped to what is still there.
+   *
+   * Derived rather than corrected in an effect, because the list moves underneath the search — a
+   * live line arriving at a full buffer drops the oldest and shifts every index — and an effect
+   * that fixed it afterwards would paint one frame of an ordinal it had already decided was wrong.
+   * Before anyone steps, it is the first match: a search that highlighted matches but stood on none
+   * of them would make Next mean "second" the first time it is pressed.
+   */
+  const active =
+    matches.length === NO_LINES
+      ? NO_MATCH
+      : Math.min(Math.max(stepped, FIRST_MATCH), matches.length - MATCH_ORDINAL_OFFSET);
+  const activeLine = active === NO_MATCH ? NO_MATCH : (matches[active] ?? NO_MATCH);
+
+  // Pinned to the bottom, and only while it is pinned. A reader who has scrolled up is reading
+  // something, and a tail that yanked them back down on the next line would be unusable for the
+  // one thing it is for. Stepping through matches scrolls, which unpins, which is why a search
+  // does not have to stop the stream to stay still.
+  useEffect(() => {
+    const node = viewport.current;
+    if (node === null || !pinned.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [lines]);
+
+  // The row, by position among the scroller's children. The children *are* the rows, one per line
+  // in order, so the index into `lines` is the index into them — which beats an attribute and a
+  // selector, both of which would be a second statement of the same fact.
+  useEffect(() => {
+    if (activeLine === NO_MATCH) return;
+    viewport.current?.children.item(activeLine)?.scrollIntoView({ block: "nearest" });
+  }, [activeLine]);
+
+  useEffect(() => {
+    if (searching) field.current?.focus();
+  }, [searching]);
+
+  function step(delta: number): void {
+    setStepped(stepMatch(matches.length, active, delta));
+  }
+
+  /**
+   * How tall the box may be right now: the window, less a margin. Read at the moment it is asked
+   * for, so a window the reader has just resized is the one that answers.
+   */
+  function ceiling(): number {
+    return globalThis.innerHeight - LOG_CEILING_MARGIN_PX;
+  }
+
+  /**
+   * Drag the bottom edge.
+   *
+   * The pointer is captured, so the drag survives leaving the 5px strip — which it will, on the
+   * first fast pull — and keeps reporting until the button comes up. Height is measured from the
+   * box's own top to the pointer rather than accumulated from a delta: the element cannot drift
+   * away from the cursor, and letting go at the floor and pulling back up starts growing on the
+   * first pixel instead of after paying back the slack.
+   */
+  function onResizePointerDown(pressed: React.PointerEvent<HTMLDivElement>): void {
+    const node = viewport.current;
+    if (node === null) return;
+    const strip = pressed.currentTarget;
+    const from = node.getBoundingClientRect().top;
+    const limit = ceiling();
+    strip.setPointerCapture(pressed.pointerId);
+
+    function onMove(moved: PointerEvent): void {
+      resize(moved.clientY - from, limit);
+    }
+    function onUp(): void {
+      strip.removeEventListener("pointermove", onMove);
+      strip.removeEventListener("pointerup", onUp);
+    }
+    strip.addEventListener("pointermove", onMove);
+    strip.addEventListener("pointerup", onUp);
+  }
+
+  function closeSearch(): void {
+    setSearching(false);
+    setQuery(NO_QUERY);
+    setStepped(NO_MATCH);
+  }
+
+  if (!watching && lines.length === NO_LINES) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="min-w-0 text-2xs text-ink-faint">{streamCaption(watching, lines.length)}</p>
+      {/* The controls float over the log rather than sitting above it, which is what the reader
+          asked for and what a tail wants: the box is the tall thing in this section, and a strip of
+          chrome above it would push the newest line — the one being watched — further down. */}
+      <div className="relative">
+        <div
+          ref={viewport}
+          // A log is read, not operated: `tabIndex` so a scroller full of text can be reached and
+          // paged by a keyboard, which a plain overflow container cannot be.
+          tabIndex={0}
+          role="log"
+          aria-label="Application log"
+          onScroll={() => {
+            const node = viewport.current;
+            if (node === null) return;
+            pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight <= PIN_SLACK_PX;
+          }}
+          style={{ height }}
+          // `select-text` is a deliberate local exception to the app-wide `select-none` in
+          // `app.css`, the same one `ResponsePane` and `ResponseFailure` take and for the same
+          // reason: this is the text of a bug report. A log you cannot copy a line out of sends the
+          // reader to the file for something they are already looking at.
+          className="overflow-y-auto overscroll-contain rounded-sm border border-line bg-canvas p-1.5 font-mono text-2xs select-text focus-visible:outline-1 focus-visible:outline-accent"
+        >
+          {lines.map((line, index) => (
+            <div key={line.seq} className={cn("flex gap-2", index === activeLine && "bg-hover")}>
+              <span className="shrink-0 text-ink-faint tabular-nums">
+                <Marked text={formatLogTime(line.at)} query={query} active={index === activeLine} />
+              </span>
+              <span className={cn("w-10 shrink-0", levelClass(line.level))}>
+                <Marked text={line.level} query={query} active={index === activeLine} />
+              </span>
+              <span className="min-w-0 break-all whitespace-pre-wrap text-ink-dim">
+                <Marked text={line.text} query={query} active={index === activeLine} />
+              </span>
+            </div>
+          ))}
+        </div>
+        {/* The bottom edge, grabbable. Not `ui/Handle` — that one is a `react-resizable-panels`
+            `Separator` and only means anything inside a `PanelGroup`, which this scrolling pane is
+            not. What it does carry over is the paint: a hairline that answers on hover, because a
+            visible gutter is a visible gutter every time the pane is opened. `touch-none` is what
+            stops the pane scrolling under a drag on a trackpad that reports touch. */}
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={RESIZE_LABEL}
+          aria-valuenow={height}
+          aria-valuemin={LOG_HEIGHT_MIN}
+          tabIndex={0}
+          onPointerDown={onResizePointerDown}
+          onKeyDown={(pressed) => {
+            const delta = RESIZE_KEYS[pressed.key];
+            if (delta === undefined) return;
+            // Claimed, or the arrow also scrolls the pane behind the handle the reader is holding.
+            pressed.preventDefault();
+            resize(height + delta * LOG_RESIZE_STEP_PX, ceiling());
+          }}
+          className="group -mb-1 flex h-2 cursor-row-resize touch-none items-center justify-center focus-visible:outline-1 focus-visible:outline-accent"
+        >
+          <div className="h-px w-10 rounded-full bg-line transition-colors duration-(--duration-glyph) ease-out group-hover:bg-glyph group-active:bg-accent" />
+        </div>
+        {/* Its own surface and border: `bg-panel` is what every floating thing in this app sits on,
+            and without one the glyphs would be drawn on top of the log text they are for.
+            `items-center` is what lets a 30px field share a strip with 26px buttons — the strip is
+            sized by the tallest and the rest are centred in it, rather than a row pretending to be
+            one tier while holding two. */}
+        <div className="absolute top-1 right-2.5 z-chrome flex items-center gap-0.5 rounded-sm border border-line bg-panel p-0.5">
+          {searching ? (
+            <>
+              <div className="w-48">
+                <Field
+                  ref={field}
+                  mono
+                  value={query}
+                  placeholder={SEARCH_PLACEHOLDER}
+                  aria-label={SEARCH_LABEL}
+                  lead={<SearchIcon className={GLYPH_CLASS} />}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    // Back to the first match of the new query, not the third match of the old
+                    // one. `active` resolves an unstepped search to the first hit, so this is the
+                    // whole of "typing starts the search over".
+                    setStepped(NO_MATCH);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === ESCAPE_KEY) {
+                      // Claimed, or the pane's own window-level Escape closes Settings out from
+                      // under a reader who only meant to put the search away. That listener skips
+                      // a prevented event for exactly this — it is how a Radix layer above the
+                      // pane keeps its dismissal to itself.
+                      event.preventDefault();
+                      closeSearch();
+                      return;
+                    }
+                    if (event.key !== ENTER_KEY) return;
+                    // Enter in a field inside a pane would otherwise be the pane's to interpret.
+                    event.preventDefault();
+                    step(event.shiftKey ? STEP_BACK : STEP_FORWARD);
+                  }}
+                />
+              </div>
+              <span className="px-1 text-2xs text-ink-faint tabular-nums">
+                {matches.length === NO_LINES ? FIRST_MATCH : active + MATCH_ORDINAL_OFFSET}
+                {MATCH_COUNT_SEPARATOR}
+                {matches.length}
+              </span>
+              <IconButton
+                label={SEARCH_PREVIOUS}
+                disabled={matches.length === NO_LINES}
+                onClick={() => {
+                  step(STEP_BACK);
+                }}
+              >
+                <PreviousMatchIcon />
+              </IconButton>
+              <IconButton
+                label={SEARCH_NEXT}
+                disabled={matches.length === NO_LINES}
+                onClick={() => {
+                  step(STEP_FORWARD);
+                }}
+              >
+                <NextMatchIcon />
+              </IconButton>
+              <IconButton label={SEARCH_CLOSE} onClick={closeSearch}>
+                <CloseIcon />
+              </IconButton>
+            </>
+          ) : (
+            <>
+              <IconButton
+                label={SEARCH_LABEL}
+                onClick={() => {
+                  setSearching(true);
+                }}
+              >
+                <SearchIcon />
+              </IconButton>
+              <IconButton label={CLEAR_LABEL} disabled={lines.length === NO_LINES} onClick={clear}>
+                <ClearIcon />
+              </IconButton>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One column of a row, with whatever the query matched banded.
+ *
+ * A match is a *line* and not an occurrence, which is why `active` is per column rather than per
+ * hit: what Next steps to is a line the reader then reads, and banding one of three occurrences on
+ * it more strongly than the other two would be a distinction about a row they are already on.
+ *
+ * Runs and not characters. `CommandPalette`'s `Highlighted` goes letter by letter because a fuzzy
+ * subsequence is letters; this is a substring, so a full screen of log costs a handful of spans
+ * rather than thirty thousand. The common case — no query — is one segment and no spans at all.
+ */
+function Marked({
+  text,
+  query,
+  active,
+}: {
+  readonly text: string;
+  readonly query: string;
+  readonly active: boolean;
+}): React.JSX.Element {
+  const segments = splitMatches(text, query);
+  if (segments.length === SINGLE_SEGMENT) return <>{text}</>;
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.hit ? (
+          // The index is the identity: the same word twice in one line is two places.
+          <span key={index} className={cn("rounded-xs", active ? "bg-match-active" : "bg-match")}>
+            {segment.text}
+          </span>
+        ) : (
+          <span key={index}>{segment.text}</span>
+        ),
+      )}
+    </>
   );
 }
 

@@ -209,6 +209,8 @@ function fakeBridge(): FakeBridge {
     onMigrateProgress: () => () => undefined,
     onResourceSample: () => () => undefined,
     watchResources: () => undefined,
+    onLogLines: () => () => undefined,
+    watchLog: () => undefined,
     // The updater's five, inert: no store here subscribes to a phase, and a fake that answered
     // one would be asserting something this file does not test.
     onUpdateState: () => () => undefined,

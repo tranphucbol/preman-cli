@@ -16,6 +16,7 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -118,6 +119,60 @@ export function createOutputTail(): OutputTail {
   };
 }
 
+/**
+ * One line of the file, read back into the three things {@link Diagnostics.write} was given.
+ *
+ * Structural and local on purpose, the way `main/resources.ts` declares its reading: the window's
+ * `LogLine` adds a sequence number the window needs for a list key, and a file that has been on
+ * disk since the last run has no opinion about that.
+ */
+export interface LogRecord {
+  readonly at: number;
+  readonly level: LogLevel;
+  readonly text: string;
+}
+
+/** What {@link parseLog} knows how to read: the levels {@link Diagnostics.write} can stamp. */
+const LEVEL_BY_COLUMN = new Map<string, LogLevel>(LOG_LEVELS.map((level) => [level.toUpperCase(), level]));
+const NO_STAMP = -1;
+const UNREADABLE_TIME = Number.NaN;
+const NOTHING_PARSED = 0;
+
+/**
+ * The file, back into records. The inverse of the stamp {@link Diagnostics.write} writes.
+ *
+ * Positional rather than a regex, because it is reading a format this module produced eleven lines
+ * above: the ISO stamp up to the first space, then a level column padded to {@link LEVEL_WIDTH},
+ * then the prose. A line that does not start that way is not a new record — it is the second line
+ * of the one before it, which is how a stack trace reaches the file — so it is appended to that
+ * record rather than dropped. Only a continuation with nothing to continue is dropped, and that
+ * happens exactly once per file: at the top, when a rotation cut a record in half.
+ *
+ * Exported for the test, and taking text rather than a path for the same reason.
+ */
+export function parseLog(contents: string, limit: number): readonly LogRecord[] {
+  const records: LogRecord[] = [];
+  for (const raw of contents.split(LINE_BREAK)) {
+    if (raw === NOTHING_HELD) continue;
+    const boundary = raw.indexOf(STAMP_SEPARATOR);
+    const at = boundary === NO_STAMP ? UNREADABLE_TIME : Date.parse(raw.slice(0, boundary));
+    const column = raw.slice(boundary + STAMP_SEPARATOR.length, boundary + STAMP_SEPARATOR.length + LEVEL_WIDTH);
+    const level = LEVEL_BY_COLUMN.get(column.trimEnd());
+    const previous = records[records.length - 1];
+    if (Number.isNaN(at) || level === undefined) {
+      if (previous !== undefined) {
+        records[records.length - 1] = { ...previous, text: `${previous.text}${NEWLINE}${raw}` };
+      }
+      continue;
+    }
+    const text = raw.slice(boundary + STAMP_SEPARATOR.length + LEVEL_WIDTH + STAMP_SEPARATOR.length);
+    records.push({ at, level, text });
+  }
+  // Sliced after parsing and not before: a stack trace is one record and a dozen lines, and a
+  // slice taken over lines would count it a dozen times and cut it in the middle.
+  return records.slice(Math.max(NOTHING_PARSED, records.length - limit));
+}
+
 export interface DiagnosticsOptions {
   /** `app.getPath("logs")`. Passed in so `main.ts` keeps owning every path decision. */
   readonly directory: string;
@@ -129,6 +184,20 @@ export interface Diagnostics {
    * the caller supplies severity and prose, never punctuation.
    */
   write(level: LogLevel, line: string): void;
+  /**
+   * The last `limit` records of the current file, oldest first, or nothing if it cannot be read.
+   *
+   * Synchronous, and that is the point rather than an oversight. The caller reads the tail and
+   * then starts forwarding live lines; anything asynchronous between those two steps is a window
+   * in which a line is written, missed by the read that had already happened and missed again by
+   * the forwarding that had not started yet. A blocking read of a file capped at
+   * {@link LOG_MAX_BYTES} costs a couple of milliseconds, once, when a button is pressed.
+   *
+   * The rotated `preman.log.1` is not consulted. Just after a rotation the tail is short, which is
+   * true, and reading two files to make it look full would put a gap of unknown size in the middle
+   * of a list that reads as continuous.
+   */
+  readTail(limit: number): readonly LogRecord[];
   /**
    * Persist a Node diagnostic report; returns the file it went to, or `null` if it could not be
    * written. Never the report itself: `details[]` gets a path, because the alternative is a
@@ -191,6 +260,16 @@ export function createDiagnostics(options: DiagnosticsOptions): Diagnostics {
       } catch {
         // A log that can take the app down is worse than no log. The line reached stderr above,
         // which is the half a developer with a terminal was going to read anyway.
+      }
+    },
+
+    readTail(limit) {
+      try {
+        return parseLog(readFileSync(logFile, ENCODING), limit);
+      } catch {
+        // No file yet is the common case, not a failure: nothing has been written this run and
+        // the last run's file was rotated away. An empty tail says that honestly.
+        return [];
       }
     },
 

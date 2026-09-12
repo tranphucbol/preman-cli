@@ -29,7 +29,12 @@ export {
   ArrowSquareOut as RevealIcon,
   BracketsCurly as FormatIcon,
   Broom as ClearIcon,
+  // The two halves of "go to the next one of these", in the log search. Down and up rather than
+  // right and left because the thing being stepped through is a column of lines, and a caret
+  // pointing the way the list runs is the only part of a 14px glyph anyone reads.
+  CaretDown as NextMatchIcon,
   CaretRight as CaretRightIcon,
+  CaretUp as PreviousMatchIcon,
   CaretUpDown as PickerIcon,
   Check as CheckIcon,
   CheckCircle as PassIcon,
@@ -70,6 +75,11 @@ export {
   PlayCircle as RunnerIcon,
   Plus as AddIcon,
   Prohibit as UnsupportedIcon,
+  // Watching the log, on the button that starts and stops it. Not `SendIcon`'s triangle and not
+  // `CancelIcon`'s square: those two are a request's verbs, and a strip that used them here would
+  // say "send" on the tab that cannot. A heartbeat is the thing itself — a line that keeps
+  // arriving — and it reads at 14px, which a wave or a radio glyph does not.
+  Pulse as StreamIcon,
   // The pane itself, drawn as a pane. The toggle is the only thing on screen naming the sidebar
   // while the sidebar is gone, so it has to be the noun and not a direction.
   SidebarSimple as SidebarIcon,

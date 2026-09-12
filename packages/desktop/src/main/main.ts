@@ -25,6 +25,7 @@ import { PremanError } from "@preman/core/errors.js";
 import type * as MigrationApi from "@preman/core/api/migrate.js";
 import { createDiagnostics, type Diagnostics } from "@preman/desktop/main/diagnostics.js";
 import { createHostRegistry, SERVICE_NAME_PREFIX, type HostRegistry } from "@preman/desktop/main/hosts.js";
+import { createLogStream, type LogStream } from "@preman/desktop/main/logstream.js";
 import { createResourceSampler, type ResourceSampler } from "@preman/desktop/main/resources.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
 import { bundlePathFrom } from "@preman/desktop/main/update/eligibility.js";
@@ -33,6 +34,7 @@ import { createWorkspace } from "@preman/desktop/main/workspaces.js";
 import { markPhase, PHASES, SHARED_PROTO_ROOT_ENV, type LogLevel } from "@preman/desktop/engine/protocol.js";
 import {
   CHANNELS,
+  LOG_TAIL_LINES,
   TRAFFIC_LIGHT_HEIGHT_PX,
   TRAFFIC_LIGHT_INSET_PX,
   type CloudWorkspaceListResult,
@@ -127,6 +129,11 @@ let sampler: ResourceSampler | undefined;
  * would go on asking GitHub about a window nobody can see the answer in.
  */
 let updater: Updater | undefined;
+/**
+ * The third, and the only one that holds nothing while it is off. Forwards what `note` writes to a
+ * window that asked for it; until one does, `push` is a branch and a return.
+ */
+let logStream: LogStream | undefined;
 
 /**
  * Say something, and keep it if there is anywhere to keep it.
@@ -135,13 +142,19 @@ let updater: Updater | undefined;
  * stderr only, and carry the level in the text so the two halves of a session read alike.
  * Everything after it reaches both. A level, but no opt-in and no filter: a log nobody turned on
  * is a log nobody has when it is needed. See `docs/decisions/035` and `036`.
+ *
+ * The stream is a tee off this one function rather than a tail of the file, which is only honest
+ * because every line in the app comes through here — the registry and the updater are handed this
+ * as their `write`. Writing the file first: if the disk is what is failing, the line that says so
+ * belongs in the file before it belongs in a window. See `docs/decisions/056`.
  */
 function note(level: LogLevel, line: string): void {
   if (diagnostics === undefined) {
     process.stderr.write(`${level.toUpperCase()} ${line}\n`);
-    return;
+  } else {
+    diagnostics.write(level, line);
   }
-  diagnostics.write(level, line);
+  logStream?.push(level, line);
 }
 
 function requireDiagnostics(): Diagnostics {
@@ -799,6 +812,12 @@ function registerIpc(): void {
     sampler?.watch(watching);
   });
 
+  // The same shape and the same dropping, one channel along. What differs is who sends `false`:
+  // the sampler's comes from an unmount, this one from a press, and the window closing below.
+  ipcMain.on(CHANNELS.watchLog, (_event, watching: boolean) => {
+    logStream?.watch(watching);
+  });
+
   ipcMain.on(CHANNELS.windowControl, (_event, action: WindowControl) => {
     if (window === undefined) return;
     if (action === "close") window.close();
@@ -836,6 +855,20 @@ function start(): void {
   // `~/Library/Logs/preman` on macOS and the equivalent elsewhere — resolved after `setName`, so
   // an unpackaged run and an installed one keep one file between them rather than two.
   diagnostics = createDiagnostics({ directory: app.getPath("logs") });
+  // Beside it and before the first line, so the tee is never the reason a line is missing. It
+  // forwards nothing until a window switches it on, so building it this early costs one object.
+  logStream = createLogStream({
+    // Guarded like the sampler's `send`: a batch is delivered off a timer, so the window can go
+    // away between the line being written and the flush that would have carried it.
+    send: (batch) => {
+      if (window === undefined || window.webContents.isDestroyed()) return;
+      window.webContents.send(CHANNELS.logLines, batch);
+    },
+    // The file is the history, so the thing that owns the file answers for it. Read through the
+    // module-scope binding rather than captured, because `requireDiagnostics` is the one place
+    // that decides what a missing one means.
+    tail: () => requireDiagnostics().readTail(LOG_TAIL_LINES),
+  });
   // The first line of every session, so a file that has survived a rotation still says which
   // build wrote the lines under it. Versions only: the four the Diagnostics section already shows.
   note(
@@ -925,6 +958,9 @@ function start(): void {
     // Same reason, one timer along: a check nobody can be shown the answer to is a request nobody
     // asked for, and a staged 317MB bundle nobody chose to install is not worth keeping either.
     updater?.stop();
+    // And the tee, which is the one of the three that would otherwise keep *collecting*: a flush
+    // timer whose window is gone would go on batching lines for a reader that no longer exists.
+    logStream?.stop();
   });
 }
 

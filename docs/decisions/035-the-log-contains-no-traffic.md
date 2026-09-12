@@ -1,6 +1,6 @@
 # 035: The log contains no traffic
 
-Status: Accepted, amended by 036
+Status: Accepted, amended by 036 and 056
 
 ## Decision
 
@@ -60,8 +60,10 @@ corrupt state file, does not take the evidence with it. The reverse is also true
 user who deletes app data has not deleted the log, and the reveal button in the Settings pane's
 Diagnostics section is the app's only admission that the file is there.
 
-The pane points at the directory and never renders a line from the file. A pane that showed the log
-would have to decide what to redact, and this record already decided that by not writing it.
+The pane points at the directory. _(056 amends this: the pane may also stream the lines as they are
+written. The argument for it is the sentence that follows — a pane showing the log would have to
+decide what to redact, and this record decided that by not writing it, which is what leaves the
+window nothing left to decide.)_
 
 The file is bounded, so a long-lived install cannot fill a disk, and equally cannot answer a question
 about last Tuesday. That is a deliberate trade and not an oversight.

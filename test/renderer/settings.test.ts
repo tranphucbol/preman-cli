@@ -76,8 +76,32 @@ const TABS = ["appearance", "protos", "diagnostics", "resources"] as const;
 /** A bottom border on a trigger looks like the underline and cannot travel. `design-system.md`. */
 const HAND_ROLLED_UNDERLINE = "border-b-2 border-accent";
 
+const BUTTON_TAG = "<Button";
+const CHROME_TIER = 'tier="chrome"';
+/** `Controls.tsx`'s content tier, worn by the input the one exception is paired with. */
+const FIELD_HEIGHT = "h-control-lg";
+const ICON_BUTTON_TAG = "<IconButton";
+/** Every function in the pane that draws a labelled button, except the one holding a field. */
+const CHROME_TIER_FUNCTIONS = ["UpdateActions"] as const;
+/** The three that draw the log's controls, all of which are a glyph and a tooltip. */
+const ICON_ONLY_FUNCTIONS = ["DiagnosticsSection", "StreamToggle", "LogStream"] as const;
+/** The Updates buttons that say what they do, because doing it is not free. */
+const CONSEQUENTIAL_ACTIONS = ["Skip", "Download", "Restart and install"] as const;
+const ONE_GLYPH = 1;
+
 function code(source: string): string {
   return source.replace(BLOCK_COMMENT, NOTHING).replace(LINE_COMMENT, NOTHING);
+}
+
+/** A named function's body, from its `function` line to the first close at column zero. */
+function functionBody(name: string): string {
+  const found = new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}\\n`).exec(code(SETTINGS));
+  expect(found).not.toBeNull();
+  return found?.[0] ?? NOTHING;
+}
+
+function occurrences(body: string, needle: string): number {
+  return body.split(needle).length - 1;
 }
 
 function section(): string {
@@ -112,14 +136,25 @@ describe("the Settings pane's Diagnostics section", () => {
     expect(body).not.toContain("revealInFileManager(info.logFile)");
   });
 
-  it("givenTheDiagnosticsSection_whenItRenders_thenNoLogLineIsShown", () => {
+  it("givenTheDiagnosticsRead_whenItAnswers_thenItStillCarriesNoLogLine", () => {
     const found = DIAGNOSTICS_INFO.exec(code(BRIDGE));
     expect(found).not.toBeNull();
 
     const fields = [...(found?.[1] ?? NOTHING).matchAll(FIELD)].map(([, name]) => name);
 
+    // `docs/decisions/056` let the *pane* show the log; it did not turn this read into one. Two
+    // paths and four version strings, answered once on mount and never again — the lines arrive on
+    // their own push channel, only while somebody asked for them, and are never a reply to this.
     expect(fields).toEqual([...DIAGNOSTICS_FIELDS]);
-    expect(section()).not.toContain("lines");
+  });
+
+  it("givenTheDiagnosticsSection_whenItRenders_thenTheLogCanBeWatchedFromTheRowThatNamesIt", () => {
+    const body = section();
+
+    // The switch sits in the Log row, beside the Reveal that answers the other question: the file
+    // is what has last Tuesday in it, and the stream is what has the next ten seconds.
+    expect(body).toContain("<StreamToggle />");
+    expect(body).toContain("<LogStream />");
   });
 });
 
@@ -254,6 +289,75 @@ describe("the title bar's update chip", () => {
     // `info` had exactly one caller and this was it, so the tone went with it rather than being
     // kept warm for a second bar that says nothing is wrong.
     expect(code(BANNER)).not.toContain('"info"');
+  });
+});
+
+/**
+ * Every control in this pane is chrome.
+ *
+ * The pane is a column of rows that report something, and the buttons in them act on what the row
+ * says rather than on a thing being edited — which is `Controls.tsx`'s definition of the chrome
+ * tier. At 30px they were the tallest objects in rows they are not the subject of, and the
+ * Diagnostics tab had four of them stacked. The single exception is the one paired with a field.
+ */
+describe("the Settings pane's control tiers", () => {
+  it("givenARowThatReportsSomething_whenItsButtonsRender_thenTheyAreChromeTier", () => {
+    for (const name of CHROME_TIER_FUNCTIONS) {
+      const body = functionBody(name);
+
+      expect(occurrences(body, BUTTON_TAG)).toBeGreaterThan(0);
+      expect(occurrences(body, CHROME_TIER)).toBe(occurrences(body, BUTTON_TAG));
+    }
+  });
+
+  it("givenTheLogsOwnControls_whenTheyRender_thenTheyAreGlyphsAndNotWords", () => {
+    for (const name of ICON_ONLY_FUNCTIONS) {
+      const body = functionBody(name);
+
+      // `IconButton` is already the chrome tier with no border and no fill, and it takes a `label`
+      // that is both the tooltip and the accessible name — which is why going icon-only here costs
+      // no new variant and loses nothing to a screen reader.
+      expect(occurrences(body, ICON_BUTTON_TAG)).toBeGreaterThan(0);
+      expect(occurrences(body, BUTTON_TAG)).toBe(0);
+    }
+  });
+
+  it("givenTheLogSearchIsOpen_whenEscapeIsPressed_thenOnlyTheSearchCloses", () => {
+    const body = functionBody("LogStream");
+
+    // The pane dismisses itself on a window-level Escape and skips a prevented one. Without the
+    // claim, putting the search away also closes Settings — which is how this was found, by eye.
+    expect(body).toContain("if (event.key === ESCAPE_KEY) {");
+    expect(body).toContain("event.preventDefault();");
+  });
+
+  it("givenTheConsequentialUpdateActions_whenTheyRender_thenTheyKeepTheirWords", () => {
+    const body = functionBody("UpdateActions");
+
+    // Skip, Download and Restart and install are deliberately not icons: one of them reboots the
+    // app, they appear only when there is an update, and a strip of unlabelled buttons over a
+    // version number is a quiz. Each still says which of them it is.
+    for (const words of CONSEQUENTIAL_ACTIONS) expect(body).toContain(words);
+    expect(occurrences(body, BUTTON_TAG)).toBe(CONSEQUENTIAL_ACTIONS.length);
+  });
+
+  it("givenCheckNow_whenItRenders_thenItIsTheSectionsOneGlyph", () => {
+    const body = functionBody("UpdateActions");
+
+    // The exception, and the argument for it is that it is cheap to misread: it checks again.
+    expect(occurrences(body, ICON_BUTTON_TAG)).toBe(ONE_GLYPH);
+    expect(body).toContain("<RefreshIcon />");
+    expect(body).not.toContain("Check now<");
+  });
+
+  it("givenAButtonPairedWithAField_whenItRenders_thenItKeepsTheFieldsHeight", () => {
+    const body = functionBody("ProtosSection");
+
+    // A 26px button beside a 30px input is a row that does not line up. `Controls.tsx` has the
+    // long version: a field and the button that acts on it are one control in the user's head.
+    expect(occurrences(body, BUTTON_TAG)).toBe(1);
+    expect(occurrences(body, CHROME_TIER)).toBe(0);
+    expect(body).toContain(FIELD_HEIGHT);
   });
 });
 
