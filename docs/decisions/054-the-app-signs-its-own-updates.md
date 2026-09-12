@@ -136,3 +136,8 @@ responsibility; this is that responsibility finally built, in the only shape ad-
 where nothing is wrong, which today is exactly one thing. It wears the accent rather than a colour
 of its own, because there is no `--color-info` in any of the forty-three palettes and adding one
 would be forty-three generated files changed to tint one strip.
+
+> Superseded by ADR 055. The announcement moved out of the banner and into the title bar, and the
+> tone had no callers left, so `info` and `InfoIcon` are gone. Everything else in this record —
+> the manifest, the key, the eligibility guards, the swap script, and "never without a press" —
+> stands unchanged.

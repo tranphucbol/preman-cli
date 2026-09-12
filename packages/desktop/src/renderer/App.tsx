@@ -20,6 +20,7 @@ import {
   SelectCommand,
   SelectOption,
   SelectSeparator,
+  Tooltip,
   TooltipProvider,
 } from "@preman/desktop/renderer/ui/Controls.js";
 import { Handle } from "@preman/desktop/renderer/ui/Handle.js";
@@ -44,11 +45,13 @@ import {
   ImportIcon,
   NewFolderIcon,
   PickerIcon,
+  RefreshIcon,
   SearchIcon,
   SettingsIcon,
   SidebarIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
-import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
+import { Banner, BANNER_MOTION } from "@preman/desktop/renderer/ui/Banner.js";
+import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { AnimatePresence, MotionRoot, m } from "@preman/desktop/renderer/ui/motion.js";
 import { CommandPalette } from "@preman/desktop/renderer/panes/CommandPalette.js";
 import { ConsoleDrawer } from "@preman/desktop/renderer/panes/ConsoleDrawer.js";
@@ -73,7 +76,7 @@ import {
 import { paletteItems, type PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { skeletonWidths } from "@preman/desktop/renderer/model/opening.js";
 import { sectionFor } from "@preman/desktop/renderer/model/search.js";
-import { updateBanner } from "@preman/desktop/renderer/model/update.js";
+import { updateChip } from "@preman/desktop/renderer/model/update.js";
 import { SkeletonBlock } from "@preman/desktop/renderer/ui/Skeleton.js";
 import {
   applyPlan,
@@ -179,6 +182,23 @@ const CREATE_ENVIRONMENT = "\u0000create";
  */
 const CHOOSE_ENVIRONMENT = "Select environment";
 const NO_ENVIRONMENTS_YET = "No environments yet";
+
+/**
+ * The update chip's shape, which is the workspace picker's shape: `h-control`, `rounded-sm`,
+ * `px-1.5`, `text-xs`. The two are the only things in the title bar with words in them and they
+ * are one row apart, so a chip that measured differently would read as a different kind of object
+ * rather than as the other end of the same strip.
+ *
+ * Shape here, paint at the call site — `cn` joins and does not merge, so a colour in both strings
+ * would leave the winner to the order Tailwind emitted them in. `design-system.md` says this is
+ * the rule a chart broke twice.
+ */
+const CHIP_CLASS =
+  "flex h-control shrink-0 items-center gap-1.5 rounded-sm border px-1.5 text-xs font-medium transition-[color,background-color,transform] duration-(--duration-press) ease-out";
+/** The accent, and the one in this row: the chip is the thing you came to press. */
+const CHIP_ACTION_CLASS = "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15 active:scale-[0.97]";
+/** No accent and no border of its own, because there is nothing here to press yet. */
+const CHIP_WAITING_CLASS = "border-line-strong bg-control text-ink-dim";
 
 /**
  * What the palette can do besides jumping to a request.
@@ -426,7 +446,6 @@ export function App(): React.JSX.Element {
           <div className="flex h-full flex-col">
             <TitleBar onCreateWorkspace={showCreateWorkspace} />
             <HostBanner />
-            <UpdateBanner />
             <DegradedBanner />
             <FailureBanner failure={failure} onDismiss={dismissFailure} />
             <Group
@@ -675,7 +694,7 @@ function TitleBar({ onCreateWorkspace }: { readonly onCreateWorkspace: () => voi
       <div className="flex-1" />
       {/* `no-drag` is not decoration here: the whole header is a drag region, and a button inside
           one is a place the window moves from rather than a button. */}
-      <div className="flex items-center no-drag">
+      <div className="flex items-center gap-1 no-drag">
         <IconButton
           label="Settings"
           onClick={() => {
@@ -684,8 +703,67 @@ function TitleBar({ onCreateWorkspace }: { readonly onCreateWorkspace: () => voi
         >
           <SettingsIcon />
         </IconButton>
+        {/* After the gear and not before it. The chip comes and goes on its own clock — once a
+            release, and again when the payload lands — and anything to its left would move twice
+            per release. The gear is the one thing in this row people aim at without looking, and
+            the top of this file is a promise that it does not move. Decision 055. */}
+        <UpdateChip />
       </div>
     </header>
+  );
+}
+
+/**
+ * The whole of what the window says about a newer preman, in one chrome-tier control.
+ *
+ * It wears the accent tint the banner used to — `border-accent/40 bg-accent/10 text-accent`, which
+ * is the `info` tone verbatim — and here that is no longer an exception to "the accent is a fill
+ * exactly once per pane": this _is_ the thing you came to press, and it is the only accent in the
+ * row. `design-system.md` says why there is no `--color-info` to reach for instead.
+ *
+ * The `downloading` phase is a `<span>` and not a disabled `<button>`, for the reason the field
+ * lead is a span in the state it cannot act in: a disabled button emits no pointer events in
+ * Chromium, so its tooltip never opens, and a control whose whole content is "wait" needs the
+ * tooltip more than the press.
+ *
+ * `BANNER_MOTION` rather than a second curve. This is the same gesture the bar had — a notice
+ * arriving — and `app.css`'s easing is already duplicated once for Motion's sake. Twice is drift.
+ */
+function UpdateChip(): React.JSX.Element {
+  const status = useUpdateStore(selectStatus);
+  const chip = updateChip(status);
+  return (
+    <AnimatePresence>
+      {chip === null ? null : (
+        <m.div {...BANNER_MOTION}>
+          {chip.action === null ? (
+            <span className={cn(CHIP_CLASS, CHIP_WAITING_CLASS)}>
+              <ImportIcon />
+              {chip.label}
+              <span className="font-mono text-2xs">{chip.detail}</span>
+            </span>
+          ) : (
+            <Tooltip content={chip.title}>
+              <button
+                type="button"
+                className={cn(CHIP_CLASS, CHIP_ACTION_CLASS)}
+                onClick={() => {
+                  // Two verbs behind one control, chosen by the phase rather than by two controls
+                  // that are never both meaningful. Skip still lives in the Settings pane: a chip
+                  // that opened a menu would be a notice that had stopped being one press.
+                  if (chip.action === "install") void window.preman.installUpdate();
+                  else void window.preman.downloadUpdate();
+                }}
+              >
+                {chip.action === "install" ? <RefreshIcon /> : <ImportIcon />}
+                {chip.label}
+                <span className="font-mono text-2xs">{chip.detail}</span>
+              </button>
+            </Tooltip>
+          )}
+        </m.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -1437,38 +1515,6 @@ function HostBanner(): React.JSX.Element {
             }}
           >
             Retry
-          </Button>
-        </Banner>
-      )}
-    </AnimatePresence>
-  );
-}
-
-/**
- * The one interruption the updater is allowed.
- *
- * `available` and `ready` only, and `tone="info"` because neither is a problem: nothing is wrong
- * with the app the user is looking at. A failed check gets no bar at all — a laptop that could not
- * reach GitHub is not worth a strip across the window, and the Settings pane says so for whoever
- * goes looking. Decision 054.
- */
-function UpdateBanner(): React.JSX.Element {
-  const status = useUpdateStore(selectStatus);
-  const banner = updateBanner(status);
-  return (
-    <AnimatePresence>
-      {banner === null ? null : (
-        <Banner tone="info" message={banner.message} detail={banner.detail}>
-          <Button
-            onClick={() => {
-              // Two verbs behind one button, chosen by the phase rather than by two buttons that
-              // are never both meaningful. The pane is where Skip lives; a bar with three controls
-              // in it is a bar that has stopped being a notice.
-              if (banner.ready) void window.preman.installUpdate();
-              else void window.preman.downloadUpdate();
-            }}
-          >
-            {banner.ready ? "Restart and install" : "Download"}
           </Button>
         </Banner>
       )}

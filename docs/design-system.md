@@ -307,17 +307,23 @@ Three things, and they are not interchangeable.
 | the pane's content   | `panes/ResponseFailure.tsx` | there is nothing to show, and why there is nothing is the information     |
 | one faint line       | a local `Hint`              | there is nothing to show and that is unremarkable: no cookies, no tests   |
 
-`Banner` is `border-{tone}/40 bg-{tone}/10`, chrome tier, `px-gutter py-1.5`, and three tones:
-`danger` and `warn` wear the `WarningIcon`, and `info` wears the `InfoIcon`. `ok` and `neutral`
-still do not warrant a bar. `info` is narrow on purpose — a fact the reader has to be told and can
-act on, where nothing is wrong — and today it is used by exactly one thing, the updater's "a new
-version is available" and "it is ready to install" (ADR 054). It is tinted with the accent rather
-than a colour of its own because no palette declares a `--color-info` and adding one would be
-forty-three generated files changed to tint one strip; that is the one place the accent appears
-without being the thing you came to press. It takes either a
-`detail` beside the message — monospace and truncated, so an id or a path — or `details` below it,
-one prose line each, which is what a `PremanError` carries. It exists because four panes wanted it
-and three had already written their own with three different class strings.
+`Banner` is `border-{tone}/40 bg-{tone}/10`, chrome tier, `px-gutter py-1.5`, and two tones, both
+wearing the `WarningIcon`. `ok` and `neutral` still do not warrant a bar, and neither does good
+news: there was an `info` tone for one release, for the updater's "a new version is available", and
+decision 55 moved that into the title bar and deleted the tone. A bar is the shape this app uses
+for a problem, so a tone whose job was to say nothing is wrong was a tone arguing with its own
+component. It takes either a `detail` beside the message — monospace and truncated, so an id or a
+path — or `details` below it, one prose line each, which is what a `PremanError` carries. It exists
+because four panes wanted it and three had already written their own with three different class
+strings.
+
+**A fact that is not a problem goes in the chrome, not in a bar.** The update chip in `App.tsx` is
+the one case and the pattern for the next: a chrome-tier control at the trailing end of the title
+bar, borrowing the workspace picker's geometry exactly — `h-control rounded-sm px-1.5 text-xs` — so
+the row reads as one strip rather than as a strip with a notice bolted onto it. It is the only
+accent in that row, and it is the thing you came to press, so it is not an exception to the rule
+below. The phase it cannot act in is a `<span>` and not a disabled button, for the reason a field's
+lead is: Chromium emits no pointer events from a disabled button, so its tooltip never opens.
 
 `details` is capped at eight lines and scrolls past that, with the count said beside the message
 once there is more than the box shows. It is the box that is bounded and never the list: those lines
@@ -491,8 +497,10 @@ What actually animates:
   appears at all after 150ms of waiting — a workspace of a normal size opens inside that and paints
   no placeholder, which is the whole reason the delay is there. `docs/performance.md` gates both
   halves of that.
-- **Two surfaces with real presence**, via Motion through `ui/motion.tsx`: the banner and the
-  overlay-pane swap.
+- **Three surfaces with real presence**, via Motion through `ui/motion.tsx`: the banner, the
+  overlay-pane swap, and the title bar's update chip. The chip spreads `BANNER_MOTION` rather than
+  restating the curve — it is the same gesture, a notice arriving — which is what keeps the
+  duplicated easing below a count of one.
 - **The disclosure caret**, in the sidebar and the console drawer, and dnd-kit's drop animation.
 - **The active tab's underline**, which travels rather than blinking. `ui/Tabs.tsx` owns the trigger
   and the underline for all four tab groups — the request editor's sections, its Edit/Preview

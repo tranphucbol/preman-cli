@@ -388,4 +388,16 @@ macOS 26's app-bound data protection lets a self-updated build read its own `sta
 whether TCC re-prompts — and the phase 0 change to `store.ts`, which is worth having on its own,
 is what will tell us if the first one bites.
 
+055 is a retraction inside 054 rather than a new capability. The updater shipped announcing itself
+with a bar across the window, which meant `Banner` — the component `design-system.md` files under
+"saying something went wrong" — grew a tone whose whole job was to say nothing was wrong. The
+argument was legible in the pixels: a release announcement was the same width and the same shape as
+a dead engine, and it charged a permanent row of the window for as long as the user's answer was
+"not now". Moving it into the title bar costs the guarantee that the user sees it — accepted on
+purpose, and the honest half of the trade — and buys back two things the bar could not have: the
+accent stops needing a carve-out, because in the chrome the chip really is the thing you came to
+press, and `downloading` becomes showable at all, since a control reporting its own press in place
+is the opposite problem from a strip reporting it back at the presser. The third tone and its icon
+are deleted rather than kept warm.
+
 `TEMPLATE.md` is the shape of a new one.
