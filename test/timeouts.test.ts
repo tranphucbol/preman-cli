@@ -28,7 +28,7 @@ describe("resolveTimeouts", () => {
   });
 
   it("givenNoTimeoutFlags_whenResolving_thenDefaultsApply", () => {
-    expect(resolveTimeouts({})).toEqual({ runMs: 0, requestMs: 30000, scriptMs: 5000 });
+    expect(resolveTimeouts({})).toEqual({ runMs: 0, requestMs: 600000, scriptMs: 5000 });
   });
 
   it("givenTimeoutScript_whenResolving_thenScriptBudgetOverridden", () => {

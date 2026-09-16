@@ -72,7 +72,7 @@ import {
 } from "@preman/desktop/engine/protocol.js";
 
 /** Matching the CLI's defaults, so the app and `preman run` behave the same by default. */
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SCRIPT_TIMEOUT_MS = 5_000;
 const DEFAULT_RUN_TIMEOUT_MS = 0;
 const NO_DELAY_MS = 0;

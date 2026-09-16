@@ -84,7 +84,7 @@ afterAll(async () => {
 const BASE: Omit<RunSelectionArgs, "dir" | "selector" | "env" | "url"> = {
   tls: undefined,
   tlsCerts: {},
-  timeoutMs: 30_000,
+  timeoutMs: 600_000,
   runTimeoutMs: 0,
   scriptTimeoutMs: 5_000,
   iterationCount: undefined,

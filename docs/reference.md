@@ -46,7 +46,7 @@ preman migrate --workspace <id|name> --out <dir> [--dry-run]
 | `--iteration-data <path>`        | Load iteration rows from a `.json` or `.csv` file.                                                                                                                   |
 | `--delay-request <ms>`           | Delay between requests, including iteration boundaries. The default is `0`.                                                                                          |
 | `--timeout <ms>`                 | Whole-run budget when paired with `--timeout-request`; `0` means unbounded. Alone, temporarily retains its old per-request meaning and prints a deprecation warning. |
-| `--timeout-request <ms>`         | Per-request deadline. The default is `30000`.                                                                                                                        |
+| `--timeout-request <ms>`         | Per-request deadline. The default is `600000`.                                                                                                                       |
 | `--timeout-script <ms>`          | Per-script deadline. The default is `5000`.                                                                                                                          |
 | `--var <key=value>`              | Set a local variable at the highest precedence. Repeatable.                                                                                                          |
 | `--safe-eval`                    | Expose `eval` to scripts, for the `eval(pm.environment.get("lib_code"))` library idiom. Also settable as `safeEval: true` in `.postman/preman.yaml`.                 |

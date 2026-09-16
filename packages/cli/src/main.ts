@@ -38,7 +38,7 @@ const VERSION =
   typeof __PREMAN_VERSION__ === "undefined"
     ? (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version
     : __PREMAN_VERSION__;
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_SCRIPT_TIMEOUT_MS = 5_000;
 const DEFAULT_RUN_TIMEOUT_MS = 0;
 const TIMEOUT_DEPRECATION = "--timeout now means the whole-run budget; use --timeout-request for the per-call deadline";

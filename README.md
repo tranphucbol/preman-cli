@@ -101,7 +101,7 @@ Common options:
 | `--iteration-data <path>`        | Load iteration rows from a JSON or CSV file                                    |
 | `--delay-request <ms>`           | Wait between collection requests                                               |
 | `--timeout <ms>`                 | Set the whole-run budget when used with `--timeout-request`; `0` is unbounded  |
-| `--timeout-request <ms>`         | Set each request deadline; defaults to `30000`                                 |
+| `--timeout-request <ms>`         | Set each request deadline; defaults to `600000`                                |
 | `--timeout-script <ms>`          | Set each script deadline; defaults to `5000`                                   |
 | `--no-save`                      | Do not write script changes back to the environment                            |
 | `--bail`                         | Stop a collection run after the first failure                                  |
