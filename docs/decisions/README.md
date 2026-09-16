@@ -65,6 +65,7 @@ The CLI's own design predates the practice.
 | [054](054-the-app-signs-its-own-updates.md)                         | The app signs its own updates, because Squirrel cannot                 |
 | [055](055-the-update-lives-in-the-title-bar.md)                     | The update lives in the title bar                                      |
 | [056](056-the-log-can-be-watched-while-it-is-written.md)            | The log can be watched while it is written                             |
+| [057](057-lint-restates-the-runner-rather-than-running-it.md)       | Lint restates the runner rather than running it                        |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -411,5 +412,16 @@ twice. The cost is that loosening 035's rule about what may be written is now a 
 records, and the second has a window in it. It deliberately does not copy 040's shape: the sampler
 stops when its pane unmounts because a reading nobody is watching is worthless, and a log line
 nobody is watching is the only kind worth having.
+
+057 writes the runner's rules down a second time. preman already knows that `body.content` beside
+`body.formdata` is ignored — `buildBody` returns warnings next to its bytes — but only ever says so
+while a request is going out, which is both too expensive and, for a mutating request, not an
+affordable question at all. The workspace that prompted it had multipart parts under `body.content`:
+the schema passed them through, the desktop grid painted nothing, and a run would have POSTed no
+body and no `Content-Type` while staying silent. `preman lint` therefore restates the checks
+statically and grades them, error against warning, with `--strict` for CI. The cost is the
+duplication, paid down by naming each rule and pinning it to the branch it mirrors; the thing
+deliberately not attempted is variables, because a `{{token}}` a script sets at run time is
+unresolved at rest for good reason.
 
 `TEMPLATE.md` is the shape of a new one.

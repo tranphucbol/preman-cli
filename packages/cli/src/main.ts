@@ -15,6 +15,7 @@ import { progressWriter } from "@preman/cli/progress.js";
 import { renderCommand } from "@preman/cli/render/command.js";
 import { renderEnvironment, renderEnvironmentSet } from "@preman/cli/render/env.js";
 import { renderImport } from "@preman/cli/render/import.js";
+import { renderLint } from "@preman/cli/render/lint.js";
 import { renderList } from "@preman/cli/render/list.js";
 import { renderMigration, renderWorkspaceList } from "@preman/cli/render/migrate.js";
 import { renderLinkWrite, renderSpecs } from "@preman/cli/render/protos.js";
@@ -23,6 +24,7 @@ import { copySelection } from "@preman/core/api/command.js";
 import { readEnvironment, writeEnvironmentValue } from "@preman/core/api/environments.js";
 import { applyImportPlan, planImport } from "@preman/core/api/import.js";
 import { describeWorkspace } from "@preman/core/api/inspect.js";
+import { lintWorkspace } from "@preman/core/api/lint.js";
 import { listCloudWorkspaces, migrateCloudWorkspace } from "@preman/core/api/migrate.js";
 import { describeSpecs, linkCheckout } from "@preman/core/api/specs.js";
 import { runSelection } from "@preman/core/api/run.js";
@@ -50,11 +52,13 @@ const TIMEOUT_DEPRECATION = "--timeout now means the whole-run budget; use --tim
 const END_OF_FLAGS = "--";
 const IMPORT_COMMAND = "import";
 const FIRST_ARG = 0;
+const NO_FINDINGS = 0;
 
 const HELP = `${pc.bold("preman")} — run Postman-format gRPC and HTTP requests from the CLI
 
 ${pc.bold("usage")}
   preman list
+  preman lint [--strict]              report authored fields preman will not honour
   preman run [<collection/request>]   run one request
   preman run <collection|folder>      run every request in it, in order
   preman env show
@@ -128,6 +132,7 @@ ${pc.bold("options")}
       --dry-run         migrate and import: print what would be written, write
                         nothing
       --repoint         protos link only: move a link that already points elsewhere
+      --strict          lint only: exit 1 on warnings too, not only on errors
   -h, --help            show this help
       --version         print the version
 
@@ -140,6 +145,21 @@ ${pc.bold("exit codes")}
   4  the call succeeded but a pm.test assertion failed
 
 A collection run reports the worst outcome it saw, in that same order.
+
+${pc.bold("lint")}
+  Reads every request without sending one, and reports the fields preman will
+  not honour. Two kinds of finding: an ${pc.bold("error")} means the request cannot do what
+  it says — a body that will arrive empty, a file that is not on disk, an auth
+  type that throws; a ${pc.bold("warning")} means it will run, but something authored is
+  being dropped, usually because it sits under a key the declared type never
+  reads. Errors exit 1; warnings exit 0 unless --strict.
+
+    preman lint
+    preman lint --strict --verbose
+
+  It deliberately says nothing about {{tokens}}. A script in one request may set
+  a variable another request reads, so an unresolved token is not evidence of a
+  mistake and reporting it would make the clean case unreachable.
 
 ${pc.bold("import")}
   Turns a pasted curl or grpcurl command into a request file. The paste comes
@@ -288,6 +308,7 @@ const OPTIONS = {
   // `protos link` only. A shared link is read by every workspace that names it, so moving one is
   // asked for rather than assumed; without this the refusal names both targets and stops.
   repoint: { type: "boolean" },
+  strict: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
 } as const;
@@ -326,6 +347,15 @@ export async function main(argv: string[]): Promise<ExitCode> {
     case "list": {
       process.stdout.write(`${renderList(describeWorkspace(dir), { json, verbose })}\n`);
       return EXIT.OK;
+    }
+
+    case "lint": {
+      const report = lintWorkspace(dir);
+      process.stdout.write(`${renderLint(report, { json, verbose })}\n`);
+      // A findings report is the command's output, not its failure, so it goes to stdout and
+      // returns a code rather than throwing: `preman lint` in CI wants both halves.
+      const failed = report.errors > NO_FINDINGS || (values.strict === true && report.warnings > NO_FINDINGS);
+      return failed ? EXIT.CLI : EXIT.OK;
     }
 
     case "env": {

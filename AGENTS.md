@@ -33,6 +33,8 @@ packages/core/                   @preman/core - the engine, private, bundled fro
     run.ts                       runSelection: resolve, run, return outcomes and warnings
     select.ts                    SelectionPort + failOnAmbiguity, the only ambiguity escape
     inspect.ts                   describeWorkspace -> WorkspaceSnapshot
+    lint.ts                      the runner's warnings, restated so they cost no request; 057
+                                 says why they are a second copy and not a shared check
     environments.ts              read/write one environment value
     specs.ts                     declare a .proto: plan links, load-check, write resources.yaml
   src/runner.ts                  orchestration: scripts -> interpolate -> invoke -> writeback

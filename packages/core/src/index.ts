@@ -103,6 +103,15 @@ export {
 } from "@preman/core/api/variables.js";
 export { previewText, type TextPreview } from "@preman/core/api/preview.js";
 export {
+  LINT_RULES,
+  lintWorkspace,
+  type LintFinding,
+  type LintReport,
+  type LintRule,
+  type LintSeverity,
+  type LintedRequest,
+} from "@preman/core/api/lint.js";
+export {
   applySpecPlan,
   collectProtoFiles,
   describeSpecs,
