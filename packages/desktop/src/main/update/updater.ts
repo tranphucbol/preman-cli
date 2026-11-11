@@ -34,8 +34,11 @@ const SCRIPT_FILE = "preman-swap.sh";
  * for the ten seconds it exists.
  */
 const STAGING_PREFIX = ".preman-update-";
-/** Once a day. A release is not an event that happens hourly, and nor should the request be. */
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/**
+ * Every two hours. Often enough that a window left open all day still hears about a release the
+ * same working day, and rare enough that the request stays a trickle against GitHub.
+ */
+const CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
 /**
  * How long after the window has loaded the first check waits.
  *

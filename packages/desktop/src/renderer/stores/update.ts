@@ -4,7 +4,7 @@
  * One store and one subscription, which is the file-per-subscription rule in `AGENTS.md`, and the
  * reason it is a store rather than component state is the same one `resources.ts` gives: the thing
  * pushing and the things reading have different lifetimes. Main pushes on its own clock — ten
- * seconds after the window loads, then once a day — while the Settings pane and the banner mount
+ * seconds after the window loads, then every two hours — while the Settings pane and the banner mount
  * and unmount around it. A phase kept in either of them would be a phase lost when it closed.
  *
  * Nothing here decides anything. The phase is a value main owns; the window renders it and calls

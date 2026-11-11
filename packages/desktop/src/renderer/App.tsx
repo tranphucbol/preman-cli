@@ -287,7 +287,7 @@ export function App(): React.JSX.Element {
   // process and the pane is a piece of renderer state — so it sends, and this is where it lands.
   useEffect(() => window.preman.onOpenSettings(useOverlayStore.getState().showSettings), []);
   // Subscribed once, at the top, and never in the pane that draws it: the first check lands ten
-  // seconds after the window loads and the next a day later, so a listener that came and went with
+  // seconds after the window loads and the next two hours later, so a listener that came and went with
   // the Settings pane would miss every transition that matters.
   useEffect(() => window.preman.onUpdateState(useUpdateStore.getState().apply), []);
   // Subscribed here for the same reason and a second one: the Settings pane is where the stream is

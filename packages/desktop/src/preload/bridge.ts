@@ -204,7 +204,7 @@ export interface Preferences {
    */
   sharedProtoRoot: string | null;
   /**
-   * Whether the app asks GitHub whether there is a newer one, on launch and once a day after.
+   * Whether the app asks GitHub whether there is a newer one, on launch and every two hours after.
    *
    * A preference because the check is a network request the user did not initiate, and it ships on
    * because a user who never learns a release happened stays on the old build indefinitely. It
@@ -698,7 +698,7 @@ export interface PremanBridge {
    * Where the updater is. Returns an unsubscribe function, the same shape `onHostFailure` has.
    *
    * A push and not a read, because the interesting transitions happen while nobody is looking: the
-   * first check is ten seconds after the window loaded, and the next is a day later. The window
+   * first check is ten seconds after the window loaded, and the next is two hours later. The window
    * subscribes once, at the top, and keeps the last phase in a store — so the Settings pane opened
    * an hour later reads what was pushed rather than asking again.
    */
