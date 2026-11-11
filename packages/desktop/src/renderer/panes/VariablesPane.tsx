@@ -25,6 +25,7 @@ import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { useEscapeToDismiss } from "@preman/desktop/renderer/ui/escape.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence } from "@preman/desktop/renderer/ui/motion.js";
 import { CellField, IconButton, toneClass, type FieldTone } from "@preman/desktop/renderer/ui/Controls.js";
@@ -66,6 +67,9 @@ export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void })
   const [failure, setFailure] = useState<Failure | null>(null);
   /** Bumped by Reload. The effect is the only reader, so a manual reload is another run of it. */
   const [nonce, setNonce] = useState(FIRST_READ);
+
+  // Every cell commits on blur, so Escape saves a half-typed value the way the close button does.
+  useEscapeToDismiss(onDismiss);
 
   useEffect(() => {
     let live = true;
