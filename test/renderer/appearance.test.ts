@@ -316,6 +316,25 @@ describe("applying the window style", () => {
     expect(written.get("--radius-island")).toBe(ISLAND_SIZES.default.radius);
   });
 
+  /** Classic is today's app: switching to it may move nothing a pane reads outside ADR 058's tokens. */
+  it("givenEveryThemeAndDensity_whenClassicIsApplied_thenOnlyWindowStyleVariablesDifferFromIslands", () => {
+    const owned = new Set<string>(WINDOW_STYLE_VARIABLES);
+    const outsideWindowStyle = (written: Map<string, string>): [string, string][] =>
+      [...written].filter(([name]) => !owned.has(name));
+
+    for (const theme of THEMES) {
+      for (const density of DENSITIES) {
+        const islands = recordingRoot();
+        const classic = recordingRoot();
+        applyPreferences(theme, preferences({ density, windowStyle: "islands" }), islands.element);
+        applyPreferences(theme, preferences({ density, windowStyle: "classic" }), classic.element);
+
+        expect(outsideWindowStyle(classic.written)).toStrictEqual(outsideWindowStyle(islands.written));
+        expect(outsideWindowStyle(classic.written).length).toBeGreaterThan(THEME_PROPERTY_COUNT);
+      }
+    }
+  });
+
   /**
    * The stylesheet's literals are the first frame, before any script runs, so they have to be what
    * the default preferences apply — Islands, `default` density, preman-dark — or the window visibly
