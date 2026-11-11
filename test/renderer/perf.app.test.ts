@@ -58,6 +58,7 @@ import type { AppState } from "@preman/desktop/main/store.js";
 import { PHASE_PREFIX, PHASES, type PhaseReport } from "@preman/desktop/engine/protocol.js";
 import { PORT_CLOSED_MESSAGE } from "@preman/desktop/renderer/client.js";
 import { PHASE_READER_KEY, type PhaseReader } from "@preman/desktop/renderer/phases.js";
+import { electronBinary } from "../app/harness.js";
 import { FIXTURE_WS } from "../helpers.js";
 import { writeBigWorkspace, type GeneratedWorkspace } from "../support/big-workspace.js";
 
@@ -67,7 +68,7 @@ const PERF_ENABLED = process.env[PERF_ENV_VAR] === "1";
 const here = dirname(fileURLToPath(import.meta.url));
 const DESKTOP_ROOT = resolve(here, "../../packages/desktop");
 const MAIN_ENTRY = join(DESKTOP_ROOT, "dist/main/main.js");
-const ELECTRON_BINARY = join(DESKTOP_ROOT, "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron");
+const ELECTRON_BINARY = electronBinary();
 
 /** A sidebar row. Every selector this file depends on is an ARIA role or a behaviour, not a class. */
 const ROW_SELECTOR = '[role="treeitem"]';

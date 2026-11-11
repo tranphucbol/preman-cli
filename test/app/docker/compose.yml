@@ -1,0 +1,35 @@
+# The Linux box for the app suites. Run it through `bun run test:app:linux` or
+# `bun run readme:media`, which pass BUN_VERSION from .bun-version.
+name: preman-app
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        BUN_VERSION: ${BUN_VERSION:-1.3.4}
+    image: preman-app:local
+    working_dir: /work
+    init: true
+    # Chromium's default /dev/shm is 64 MB, which crashes renderers.
+    shm_size: 1gb
+    environment:
+      PREMAN_HEADLESS: "1"
+    volumes:
+      - ../../..:/work
+      # The host's node_modules hold a macOS Electron; these keep the box's Linux install apart
+      # from it in both directions.
+      - node_modules:/work/node_modules
+      - cli_node_modules:/work/packages/cli/node_modules
+      - core_node_modules:/work/packages/core/node_modules
+      - desktop_node_modules:/work/packages/desktop/node_modules
+      - bun_cache:/root/.bun/install/cache
+      - electron_cache:/root/.cache/electron
+
+volumes:
+  node_modules:
+  cli_node_modules:
+  core_node_modules:
+  desktop_node_modules:
+  bun_cache:
+  electron_cache:
