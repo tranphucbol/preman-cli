@@ -4,12 +4,14 @@
     "name": "gRpc - Exchange",
     "description": "Exchange service, descriptor-backed.",
     "owner": "12345",
-    "auth": {
-      "type": "bearer",
-      "credentials": {
-        "token": "{{token}}"
+    "auth": [
+      {
+        "type": "bearer",
+        "credentials": {
+          "token": "{{token}}"
+        }
       }
-    },
+    ],
     "$kind": "collection",
     "items": [
       {
