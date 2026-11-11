@@ -148,8 +148,12 @@ export const TRAFFIC_LIGHT_INSET_PX = 12;
 export const TITLE_BAR_GUTTER_PX = 76;
 /** The cluster is 12px tall; centring it is arithmetic, not a guess. */
 export const TRAFFIC_LIGHT_HEIGHT_PX = 12;
-/** `preman-dark`'s `--color-canvas`. What the window is painted before the renderer has loaded. */
-export const DEFAULT_CANVAS = "#111214";
+/**
+ * `preman-dark`'s islands frame, as `renderer/appearance/islands.ts` derives it. What the window is
+ * painted before the renderer has loaded. A literal because preload may not import the renderer;
+ * `test/renderer/islands.test.ts` holds it equal to the derivation.
+ */
+export const DEFAULT_BACKGROUND = "#232527";
 
 /**
  * How tightly the interface is packed. Three presets rather than a scale slider: every row height,
@@ -159,12 +163,19 @@ export const DEFAULT_CANVAS = "#111214";
 export type Density = "compact" | "default" | "comfortable";
 
 /**
+ * Whether the panes are rounded islands on a frame or flat panes ruled by a line. Declared here for
+ * the reason `Density` is: it is part of the stored record. `renderer/appearance/islands.ts` holds
+ * the list and the derivation. See `docs/decisions/058`.
+ */
+export type WindowStyle = "islands" | "classic";
+
+/**
  * What the user chose about how the app looks. Global, not per-workspace — a theme is a property
  * of the person, and two windows onto two workspaces that disagreed about their colours would be
  * two apps.
  *
- * `canvas` and `barHeightPx` are denormalised copies of two values the theme and the density
- * already determine. They are here so the main process can paint the window and place the traffic
+ * `background` and `barHeightPx` are denormalised copies of two values the theme, the window style
+ * and the density already determine. They are here so the main process can paint the window and place the traffic
  * lights without knowing what a theme is; that keeps `main/` ignorant of `renderer/appearance/`,
  * at the cost of one launch of staleness if the two ever drift. The renderer corrects them on
  * every save, so they cannot drift twice.
@@ -177,7 +188,10 @@ export interface Preferences {
   /** A family name to put in front of the default stack, or `null` for the stack as shipped. */
   fontMono: string | null;
   fontSans: string | null;
-  canvas: string;
+  /** Islands by default; a choice already saved is kept. An unknown value reads as the default. */
+  windowStyle: WindowStyle;
+  /** The native window's colour: the frame under Islands, `canvas` under Classic. */
+  background: string;
   barHeightPx: number;
   /**
    * Where this machine keeps its shared proto links, or `null` for the directory core defaults to.
@@ -214,7 +228,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorFontSize: DEFAULT_EDITOR_FONT_SIZE_PX,
   fontMono: null,
   fontSans: null,
-  canvas: DEFAULT_CANVAS,
+  windowStyle: "islands",
+  background: DEFAULT_BACKGROUND,
   barHeightPx: TITLE_BAR_HEIGHT_PX,
   sharedProtoRoot: null,
   autoCheckUpdates: true,
@@ -222,7 +237,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
 
 /** The two things about the window itself that a preference change moves. */
 export interface WindowChrome {
-  canvas: string;
+  background: string;
   barHeightPx: number;
 }
 

@@ -121,9 +121,9 @@ function reconcile(raw: unknown): AppState {
     window: { ...base.window, ...(candidate.window ?? {}) },
     // Filled in rather than versioned. Adding a field with a default is not a breaking change to
     // the file, and bumping `STATE_VERSION` would trade every registered workspace for a colour.
-    // An unknown `themeId` or `density` survives to the renderer, which falls back to the default
-    // rather than trusting a hand-edited file to name something that exists.
-    preferences: { ...base.preferences, ...(candidate.preferences ?? {}) },
+    // An unknown `themeId`, `density` or `windowStyle` survives to the renderer, which falls back
+    // to the default rather than trusting a hand-edited file to name something that exists.
+    preferences: reconcilePreferences(base.preferences, candidate.preferences),
     activeRoot: typeof candidate.activeRoot === "string" ? candidate.activeRoot : null,
     workspaces: Array.isArray(candidate.workspaces) ? candidate.workspaces : [],
     // Spread rather than defaulted: both are optional, and JSON writes no key for an `undefined`,
@@ -134,6 +134,22 @@ function reconcile(raw: unknown): AppState {
       ? { skippedUpdateVersion: candidate.skippedUpdateVersion }
       : {}),
   };
+}
+
+/** What `background` was called before the window style existed (ADR 058). */
+const LEGACY_BACKGROUND_KEY = "canvas";
+
+/**
+ * The stored preferences over the defaults. A file written before the window style existed has the
+ * theme's canvas under `canvas` and no `background`; that canvas is carried over rather than
+ * dropped, because it is at least the right tone for the window's first frame — a light theme's
+ * window must not open on the dark default — and the renderer replaces it on the next save.
+ */
+function reconcilePreferences(base: Preferences, stored: unknown): Preferences {
+  if (typeof stored !== "object" || stored === null) return base;
+  const { [LEGACY_BACKGROUND_KEY]: legacy, ...rest } = stored as Partial<Preferences> & Record<string, unknown>;
+  const migrated = typeof legacy === "string" && rest.background === undefined ? { background: legacy } : {};
+  return { ...base, ...rest, ...migrated };
 }
 
 export interface AppStoreOptions {

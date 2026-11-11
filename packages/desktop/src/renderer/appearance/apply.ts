@@ -13,17 +13,34 @@
  */
 import { densityTokens, type DensityTokens } from "@preman/desktop/renderer/appearance/density.js";
 import { FONT_VARIABLES, userFontValue } from "@preman/desktop/renderer/appearance/fonts.js";
+import {
+  CLASSIC_DIALOG_RADIUS_PX,
+  CLASSIC_POPOVER_RADIUS_PX,
+  ELEVATION,
+  ISLANDS_POPOVER_RADIUS_PX,
+  TOOLTIP_RADIUS_PX,
+  frameColors,
+  resolveWindowStyle,
+} from "@preman/desktop/renderer/appearance/islands.js";
 import { COLOR_TOKENS, SYNTAX_TOKENS, type Theme } from "@preman/desktop/renderer/appearance/theme.js";
-import type { Preferences } from "@preman/desktop/preload/bridge.js";
+import type { Preferences, WindowStyle } from "@preman/desktop/preload/bridge.js";
 
 const PX = "px";
+
+/**
+ * The two density numbers that belong to the window style rather than to the density alone:
+ * Classic draws no island, so its radius is 0 whatever the density says. `applyWindowStyle` writes
+ * them.
+ */
+type IslandToken = "islandGap" | "islandRadius";
+type SizingToken = Exclude<keyof DensityTokens, IslandToken>;
 
 /**
  * Which custom property each density number is. Spelled out rather than derived from the key,
  * because `controlLarge` is `--spacing-control-lg` and a camel-to-kebab rule would call it
  * `--spacing-control-large`; one exception is not worth a transformation nobody can predict.
  */
-const DENSITY_VARIABLES: Readonly<Record<keyof DensityTokens, string>> = {
+const DENSITY_VARIABLES: Readonly<Record<SizingToken, string>> = {
   row: "--spacing-row",
   control: "--spacing-control",
   controlLarge: "--spacing-control-lg",
@@ -57,8 +74,39 @@ export function applyTheme(theme: Theme, root: HTMLElement = document.documentEl
 
 export function applyDensity(tokens: DensityTokens, root: HTMLElement = document.documentElement): void {
   for (const [key, variable] of Object.entries(DENSITY_VARIABLES)) {
-    root.style.setProperty(variable, `${String(tokens[key as keyof DensityTokens])}${PX}`);
+    root.style.setProperty(variable, `${String(tokens[key as SizingToken])}${PX}`);
   }
+}
+
+/**
+ * The frame, the island's shape and the floating ladder (ADR 058). Written in both styles, so a
+ * component that reads `bg-frame` or `rounded-popover` never has to ask which one is on: under
+ * Classic the island radius is 0 and the ladder falls back to the radii the app drew before it.
+ */
+export function applyWindowStyle(
+  windowStyle: WindowStyle,
+  theme: Theme,
+  tokens: DensityTokens,
+  root: HTMLElement = document.documentElement,
+): void {
+  const style = root.style;
+  const islands = windowStyle === "islands";
+  const frame = frameColors(theme);
+  const elevation = ELEVATION[theme.variant];
+  style.setProperty("--color-frame", frame.frame);
+  style.setProperty("--color-frame-raised", frame.frameRaised);
+  style.setProperty("--color-island-edge", frame.islandEdge);
+  style.setProperty("--spacing-island-gap", px(tokens.islandGap));
+  style.setProperty("--radius-island", px(islands ? tokens.islandRadius : 0));
+  style.setProperty("--radius-dialog", px(islands ? tokens.islandRadius : CLASSIC_DIALOG_RADIUS_PX));
+  style.setProperty("--radius-popover", px(islands ? ISLANDS_POPOVER_RADIUS_PX : CLASSIC_POPOVER_RADIUS_PX));
+  style.setProperty("--radius-tooltip", px(TOOLTIP_RADIUS_PX));
+  style.setProperty("--shadow-popover", elevation.popover);
+  style.setProperty("--shadow-dialog", elevation.dialog);
+}
+
+function px(value: number): string {
+  return `${String(value)}${PX}`;
 }
 
 export function applyFonts(preferences: Preferences, root: HTMLElement = document.documentElement): void {
@@ -75,15 +123,17 @@ export function applyFonts(preferences: Preferences, root: HTMLElement = documen
  * Which is also why it is fenced by `data-retheme`: sixty writes with a colour transition on every
  * mounted control is forty to a hundred transitions starting in the frame the 16ms theme-switch
  * budget measures. Decision 26. The guard is here and not inside `applyTheme`/`applyDensity`/
- * `applyFonts`, because those three are called directly by tests that would then be exercising it
- * without meaning to.
+ * `applyWindowStyle`/`applyFonts`, because those four are called directly by tests that would then
+ * be exercising it without meaning to.
  */
 export function applyPreferences(theme: Theme, preferences: Preferences, root?: HTMLElement): void {
   const target = root ?? document.documentElement;
   target.setAttribute(RETHEME_ATTRIBUTE, "");
   try {
     applyTheme(theme, target);
-    applyDensity(densityTokens(preferences.density), target);
+    const tokens = densityTokens(preferences.density);
+    applyDensity(tokens, target);
+    applyWindowStyle(resolveWindowStyle(preferences.windowStyle), theme, tokens, target);
     applyFonts(preferences, target);
   } finally {
     // Measuring is what forces the recalculation, so the new colours are committed while

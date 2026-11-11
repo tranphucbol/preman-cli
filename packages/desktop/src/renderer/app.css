@@ -63,6 +63,21 @@
   --radius-md: 6px;
   --radius-lg: 8px;
 
+  /* The window style's shape (ADR 058): the island, and the floating ladder above it. A ladder
+   * rather than a free choice per component because a dialog that rounds more than the island it
+   * floats over reads as a toy, and a menu that rounds more than its rows reads as a pill. The
+   * island radius and gap come from the density preset; under Classic `apply.ts` writes
+   * `--radius-island: 0px` and the ladder falls back to the 8/6/4 the app drew before it existed.
+   *
+   * The literals are what `apply.ts` writes for the default preferences, Islands at `default`
+   * density, for the same reason as the heights below: the unstyled first frame is the applied one.
+   * test/renderer/appearance.test.ts holds them equal. */
+  --radius-island: 10px;
+  --radius-dialog: 10px;
+  --radius-popover: 8px;
+  --radius-tooltip: 4px;
+  --spacing-island-gap: 5px;
+
   /* Control heights, and the five values below them, are the `default` density preset.
    *
    * TypeScript owns these now: `renderer/appearance/density.ts` holds all three presets and
@@ -93,7 +108,7 @@
    * Unlike the five above it, this one is not part of a density preset, and that is deliberate: a
    * preset moves control heights, the gutter is the room around them, and scaling both compounds —
    * `compact` would lose height and inset at once and land somewhere nobody has looked at. If it
-   * ever should scale, it belongs in `density.ts` with the other eight, not in a second
+   * ever should scale, it belongs in `density.ts` with the others, not in a second
    * mechanism. */
   --spacing-gutter: 12px;
 
@@ -108,6 +123,15 @@
   --color-control: #1d2024;
   --color-hover: #23262b;
   --color-selected: #1d2632;
+
+  /* The frame the islands sit on, and a control raised on it. Not in any theme file: `islands.ts`
+   * derives both from `panel` (stepped away from `canvas` until the two hold 1.2:1, never past where
+   * ink and ink-dim stop reading), so every theme has a frame on the day it is added. The island
+   * edge is `canvas` — no visible outline — unless the frame could not reach 1.2:1, when it is
+   * `line`. These literals are preman-dark's derivation; the appearance test holds them to it. */
+  --color-frame: #232527;
+  --color-frame-raised: #161719;
+  --color-island-edge: #111214;
 
   /* Decorative hairlines. These are 1px dividers and nothing else: never the sole affordance of
    * a control, because at 1.4:1 they cannot be. Anything load-bearing uses --color-glyph. */
@@ -182,10 +206,17 @@
   --duration-panel: 180ms;
   --duration-modal: 200ms;
 
-  /* The one elevation in the app, used by the one thing that genuinely floats: the drag preview.
-   * Tinted to the canvas hue rather than pure black, because a black shadow on a near-black
-   * surface reads as a smudge. Everything else groups with a hairline or with space. */
+  /* The drag preview's shadow. Tinted to the canvas hue rather than pure black, because a black
+   * shadow on a near-black surface reads as a smudge. Each theme carries its own. */
   --shadow-float: 0 4px 12px rgb(9 10 12 / 0.55);
+
+  /* What floats over the window, by how far it floats: menus, popups and tooltips, then dialogs
+   * and the palette. Keyed by the theme's variant and not by the window style — the reason for them
+   * is a dark canvas, on which a stock `shadow-lg` barely shows. A soft ambient shadow paired with
+   * a tight contact one, so the edge still reads over a darker island. These are the dark pair;
+   * `islands.ts` holds both. */
+  --shadow-popover: 0 6px 20px -2px rgb(0 0 0 / 0.5), 0 1px 4px rgb(0 0 0 / 0.4);
+  --shadow-dialog: 0 24px 64px -12px rgb(0 0 0 / 0.7), 0 2px 8px rgb(0 0 0 / 0.4);
 
   /* HTTP method colours, keyed by verb so a row cannot invent its own. */
   --color-method-get: #5ec27f;

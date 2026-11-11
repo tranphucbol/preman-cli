@@ -32,6 +32,7 @@ import {
   isFontAvailable,
   sanitiseFamily,
 } from "@preman/desktop/renderer/appearance/fonts.js";
+import { WINDOW_STYLES } from "@preman/desktop/renderer/appearance/islands.js";
 import type { Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
 import {
@@ -67,7 +68,13 @@ import {
 import { Sparkline } from "@preman/desktop/renderer/ui/Sparkline.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import { SHARED_PROTO_ROOT } from "@preman/desktop/engine/protocol.js";
-import type { Density, DiagnosticsInfo, ProcessReading, UpdateStatus } from "@preman/desktop/preload/bridge.js";
+import type {
+  Density,
+  DiagnosticsInfo,
+  ProcessReading,
+  UpdateStatus,
+  WindowStyle,
+} from "@preman/desktop/preload/bridge.js";
 
 /** The nine colours a card shows: the three surfaces you look at, then the six verbs you read. */
 const SWATCHES = [
@@ -97,6 +104,11 @@ const DENSITY_LABEL: Readonly<Record<Density, string>> = {
   compact: "Compact",
   default: "Default",
   comfortable: "Comfortable",
+};
+
+const WINDOW_STYLE_LABEL: Readonly<Record<WindowStyle, { readonly name: string; readonly detail: string }>> = {
+  islands: { name: "Islands", detail: "Panes on a frame" },
+  classic: { name: "Classic", detail: "Panes edge to edge" },
 };
 
 const VARIANT_LABEL = { dark: "Dark", light: "Light" } as const;
@@ -188,6 +200,7 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
       </Tabs.List>
 
       <Pane value="appearance">
+        <WindowStyleSection />
         <DensitySection />
         <FontSection />
         <ThemeSection />
@@ -288,6 +301,7 @@ function Choice({
 
 const THEME_GROUP = "preman-theme";
 const DENSITY_GROUP = "preman-density";
+const WINDOW_STYLE_GROUP = "preman-window-style";
 
 function ThemeSection(): React.JSX.Element {
   const current = useAppearanceStore((state) => state.preferences.themeId);
@@ -351,6 +365,32 @@ function DensitySection(): React.JSX.Element {
           >
             <span className="text-xs text-ink">{DENSITY_LABEL[density]}</span>
             <span className="font-mono text-2xs text-ink-faint">{densityTokens(density).row}px row</span>
+          </Choice>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function WindowStyleSection(): React.JSX.Element {
+  const current = useAppearanceStore((state) => state.preferences.windowStyle);
+  const setWindowStyle = useAppearanceStore((state) => state.setWindowStyle);
+
+  return (
+    <Section title="Window style" hint="Whether the panes sit as rounded islands on a frame, or meet edge to edge.">
+      <div role="radiogroup" aria-label="Window style" className="grid grid-cols-3 gap-2">
+        {WINDOW_STYLES.map((style) => (
+          <Choice
+            key={style}
+            group={WINDOW_STYLE_GROUP}
+            value={style}
+            checked={style === current}
+            onChoose={() => {
+              setWindowStyle(style);
+            }}
+          >
+            <span className="text-xs text-ink">{WINDOW_STYLE_LABEL[style].name}</span>
+            <span className="text-2xs text-ink-faint">{WINDOW_STYLE_LABEL[style].detail}</span>
           </Choice>
         ))}
       </div>

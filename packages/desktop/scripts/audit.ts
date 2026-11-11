@@ -1,10 +1,14 @@
 /**
  * The colour maths behind a theme, and the six properties every theme has to have.
  *
- * This module deliberately imports nothing. `generate-themes.ts` runs it to decide what to write,
- * and `test/renderer/themes.test.ts` runs the same code over what was written — so a hand edit to
- * a generated file fails `bun run test` rather than waiting for someone to remember the script.
- * A `node:*` import here would put the second of those two out of reach.
+ * This module imports one pure module and nothing else. `generate-themes.ts` runs it to decide what
+ * to write, and `test/renderer/themes.test.ts` runs the same code over what was written — so a hand
+ * edit to a generated file fails `bun run test` rather than waiting for someone to remember the
+ * script. A `node:*` import here would put the second of those two out of reach.
+ *
+ * The WCAG half — parsing, luminance, contrast, mixing, and the `CONTRAST_TARGET` floors — lives in
+ * `renderer/appearance/contrast.ts` and is re-exported below, because the islands frame is derived
+ * against those floors at run time and the renderer may not import from `scripts/`.
  *
  * The token names below are the *subject of the assertions*, not the theme's type. Exhaustiveness
  * over all 21 colours and 35 syntax colours is `tsc`'s job, against `renderer/appearance/theme.ts`.
@@ -12,63 +16,46 @@
  * tier has to clear, which colours form the luminance ladder, which six are the method column.
  */
 
-export interface Rgb {
-  readonly r: number;
-  readonly g: number;
-  readonly b: number;
-}
+import {
+  BLACK,
+  CHANNEL_MAX,
+  CONTRAST_TARGET,
+  FLARE,
+  LINEAR_EXPONENT,
+  LINEAR_KNEE,
+  LINEAR_OFFSET,
+  LINEAR_SCALE,
+  LINEAR_SLOPE,
+  OPAQUE,
+  WHITE,
+  clampChannel,
+  contrast,
+  luminance,
+  mix,
+  parseColor,
+  toLinear,
+  type Rgb,
+  type Rgba,
+} from "@preman/desktop/renderer/appearance/contrast.js";
 
-export interface Rgba extends Rgb {
-  /** 0 to 1. Eight-digit source hex is the only thing that produces anything but 1. */
-  readonly a: number;
-}
+export {
+  BLACK,
+  CONTRAST_TARGET,
+  WHITE,
+  contrast,
+  luminance,
+  mix,
+  parseColor,
+  toHex,
+  type Rgb,
+  type Rgba,
+} from "@preman/desktop/renderer/appearance/contrast.js";
 
-const HEX_PREFIX = "#";
-const SHORT_HEX_LENGTH = 3;
-const HEX_LENGTH = 6;
-const HEX_WITH_ALPHA_LENGTH = 8;
-const HEX_RADIX = 16;
 const HEX_PAIR = 2;
-const CHANNEL_MAX = 255;
-const OPAQUE = 1;
-const LINEAR_KNEE = 0.04045;
-const LINEAR_SLOPE = 12.92;
-const LINEAR_OFFSET = 0.055;
-const LINEAR_SCALE = 1.055;
-const LINEAR_EXPONENT = 2.4;
-const LUMINANCE_R = 0.2126;
-const LUMINANCE_G = 0.7152;
-const LUMINANCE_B = 0.0722;
-/** WCAG's 0.05 flare term, which is why no ratio is ever 1:0. */
-const FLARE = 0.05;
 const SOLVER_STEPS = 40;
 /** Enough digits that a near miss reads as a near miss in the violation text. */
 const DISTANCE_DIGITS = 4;
 const HALF = 2;
-
-export const BLACK: Rgb = { r: 0, g: 0, b: 0 };
-export const WHITE: Rgb = { r: CHANNEL_MAX, g: CHANNEL_MAX, b: CHANNEL_MAX };
-
-/**
- * The contrast contract, as numbers rather than as a comment.
- *
- * These are `app.css`'s own tiers read back as targets. The faint tier is 4.6 and not the 4.7 the
- * stylesheet rounds to: preman-dark's `--color-ink-faint` measures 4.671 against `--color-hover`,
- * and a floor above the palette it was derived from is a floor that fails its own reference.
- */
-export const CONTRAST_TARGET = {
-  ink: 10.8,
-  inkDim: 6.7,
-  inkFaint: 4.6,
-  /** WCAG 1.4.11: a non-text control's only affordance. Never used for text. */
-  glyph: 3.3,
-  /** AA for the method column, which is 11px monospace on two different surfaces. */
-  method: 4.5,
-  /** An accent fill is a large solid area, so 1.4.11 rather than 1.4.3. */
-  accentFill: 3,
-  /** What sits on top of that fill. */
-  accentForeground: 4.5,
-} as const;
 
 /**
  * The smallest contrast ratio between two adjacent surfaces. Below this, hovering a row does
@@ -129,62 +116,12 @@ export interface AuditableTheme {
   readonly syntax: Readonly<Record<string, string>>;
 }
 
-function clampChannel(value: number): number {
-  return Math.min(CHANNEL_MAX, Math.max(0, Math.round(value)));
-}
-
-/**
- * `#rgb`, `#rrggbb` and `#rrggbbaa`. The last is what openchamber writes for its overlay colours,
- * and reading the alpha rather than discarding it is what makes `flatten` possible.
- */
-export function parseColor(value: string): Rgba {
-  const body = value.startsWith(HEX_PREFIX) ? value.slice(HEX_PREFIX.length) : value;
-  const expanded =
-    body.length === SHORT_HEX_LENGTH ? [...body].map((character) => `${character}${character}`).join("") : body;
-  if (expanded.length !== HEX_LENGTH && expanded.length !== HEX_WITH_ALPHA_LENGTH) {
-    throw new Error(`not a hex colour: ${value}`);
-  }
-  const channel = (index: number): number => parseInt(expanded.slice(index, index + HEX_PAIR), HEX_RADIX);
-  const alpha = expanded.length === HEX_WITH_ALPHA_LENGTH ? channel(HEX_LENGTH) / CHANNEL_MAX : OPAQUE;
-  return { r: channel(0), g: channel(HEX_PAIR), b: channel(HEX_PAIR * HALF), a: alpha };
-}
-
-export function toHex(colour: Rgb): string {
-  const pair = (value: number): string => clampChannel(value).toString(HEX_RADIX).padStart(HEX_PAIR, "0");
-  return `${HEX_PREFIX}${pair(colour.r)}${pair(colour.g)}${pair(colour.b)}`;
-}
-
 /** An overlay over an opaque base, which is what preman's solid `hover` and `selected` are. */
 export function flatten(overlay: Rgba, base: Rgb): Rgb {
   return {
     r: overlay.r * overlay.a + base.r * (OPAQUE - overlay.a),
     g: overlay.g * overlay.a + base.g * (OPAQUE - overlay.a),
     b: overlay.b * overlay.a + base.b * (OPAQUE - overlay.a),
-  };
-}
-
-function toLinear(channel: number): number {
-  const scaled = channel / CHANNEL_MAX;
-  return scaled <= LINEAR_KNEE
-    ? scaled / LINEAR_SLOPE
-    : Math.pow((scaled + LINEAR_OFFSET) / LINEAR_SCALE, LINEAR_EXPONENT);
-}
-
-export function luminance(colour: Rgb): number {
-  return LUMINANCE_R * toLinear(colour.r) + LUMINANCE_G * toLinear(colour.g) + LUMINANCE_B * toLinear(colour.b);
-}
-
-export function contrast(a: Rgb, b: Rgb): number {
-  const first = luminance(a);
-  const second = luminance(b);
-  return (Math.max(first, second) + FLARE) / (Math.min(first, second) + FLARE);
-}
-
-export function mix(from: Rgb, to: Rgb, amount: number): Rgb {
-  return {
-    r: from.r + (to.r - from.r) * amount,
-    g: from.g + (to.g - from.g) * amount,
-    b: from.b + (to.b - from.b) * amount,
   };
 }
 

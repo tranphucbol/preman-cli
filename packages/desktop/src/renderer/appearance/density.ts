@@ -15,7 +15,7 @@
 import type { Density } from "@preman/desktop/preload/bridge.js";
 
 /**
- * All eight values, in pixels. Nothing here is derived at rest — the derivations are stated as
+ * All ten values, in pixels. Nothing here is derived at rest — the derivations are stated as
  * comments and asserted in the tests, because a table you can read down is worth more than five
  * arithmetic expressions you have to evaluate.
  */
@@ -31,6 +31,14 @@ export interface DensityTokens {
   text2xs: number;
   textXs: number;
   textSm: number;
+  /**
+   * The frame showing between two islands and around them, and an island's corner. Presets for the
+   * reason the rest are: a radius that has to agree with a row height belongs to the same choice as
+   * the row height. Written by `applyWindowStyle`, not `applyDensity`, because under Classic the
+   * radius is 0. See `docs/decisions/058`.
+   */
+  islandGap: number;
+  islandRadius: number;
 }
 
 /**
@@ -38,9 +46,44 @@ export interface DensityTokens {
  * later: it is what makes turning this feature on a no-op for everyone who does not go looking.
  */
 export const DENSITY: Readonly<Record<Density, DensityTokens>> = {
-  compact: { row: 24, control: 24, controlLarge: 26, tab: 30, bar: 36, text2xs: 10.5, textXs: 11, textSm: 12.5 },
-  default: { row: 28, control: 26, controlLarge: 30, tab: 32, bar: 40, text2xs: 11, textXs: 12, textSm: 13.5 },
-  comfortable: { row: 32, control: 30, controlLarge: 34, tab: 36, bar: 44, text2xs: 12, textXs: 13, textSm: 14.5 },
+  compact: {
+    row: 24,
+    control: 24,
+    controlLarge: 26,
+    tab: 30,
+    bar: 36,
+    text2xs: 10.5,
+    textXs: 11,
+    textSm: 12.5,
+    // JetBrains' compact 3px reads as a seam rather than a gap at 24px rows.
+    islandGap: 4,
+    islandRadius: 8,
+  },
+  default: {
+    row: 28,
+    control: 26,
+    controlLarge: 30,
+    tab: 32,
+    bar: 40,
+    text2xs: 11,
+    textXs: 12,
+    textSm: 13.5,
+    // JetBrains' Islands: the gap is `Island.borderWidth` less one, the radius half `Island.arc`.
+    islandGap: 5,
+    islandRadius: 10,
+  },
+  comfortable: {
+    row: 32,
+    control: 30,
+    controlLarge: 34,
+    tab: 36,
+    bar: 44,
+    text2xs: 12,
+    textXs: 13,
+    textSm: 14.5,
+    islandGap: 6,
+    islandRadius: 10,
+  },
 };
 
 export const DENSITIES = ["compact", "default", "comfortable"] as const;

@@ -11,9 +11,19 @@
  * `environment: "node"` and the module only ever touches `element.style`, so a recording stub
  * proves more about the contract than a DOM would.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
-import { applyDensity, applyFonts, applyPreferences, applyTheme } from "@preman/desktop/renderer/appearance/apply.js";
+import {
+  applyDensity,
+  applyFonts,
+  applyPreferences,
+  applyTheme,
+  applyWindowStyle,
+} from "@preman/desktop/renderer/appearance/apply.js";
 import {
   DENSITIES,
   DENSITY,
@@ -22,7 +32,8 @@ import {
   searchRowHeight,
 } from "@preman/desktop/renderer/appearance/density.js";
 import { FONT_VARIABLES, sanitiseFamily, userFontValue } from "@preman/desktop/renderer/appearance/fonts.js";
-import { COLOR_TOKENS, SYNTAX_TOKENS } from "@preman/desktop/renderer/appearance/theme.js";
+import { ELEVATION, frameColors } from "@preman/desktop/renderer/appearance/islands.js";
+import { COLOR_TOKENS, SYNTAX_TOKENS, type Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
 import { HIGHLIGHT_STYLE } from "@preman/desktop/renderer/ui/highlight.js";
 import { DEFAULT_PREFERENCES, type Preferences } from "@preman/desktop/preload/bridge.js";
@@ -34,9 +45,57 @@ const PALETTE_OVER_ROW = 6;
 const SEARCH_OVER_ROW = 16;
 
 /** What `app.css` declares, and therefore what `default` has to keep saying. */
-const SHIPPED = { row: 28, control: 26, controlLarge: 30, tab: 32, bar: 40, text2xs: 11, textXs: 12, textSm: 13.5 };
+const SHIPPED = {
+  row: 28,
+  control: 26,
+  controlLarge: 30,
+  tab: 32,
+  bar: 40,
+  text2xs: 11,
+  textXs: 12,
+  textSm: 13.5,
+  islandGap: 5,
+  islandRadius: 10,
+};
 
-const DENSITY_PROPERTY_COUNT = Object.keys(SHIPPED).length;
+/** The two island numbers are written by `applyWindowStyle`, because Classic overrides one of them. */
+const ISLAND_TOKEN_COUNT = 2;
+const DENSITY_PROPERTY_COUNT = Object.keys(SHIPPED).length - ISLAND_TOKEN_COUNT;
+
+/** `ADR 058`'s island sizes per density: gap, then radius. */
+const ISLAND_SIZES = {
+  compact: { gap: "4px", radius: "8px" },
+  default: { gap: "5px", radius: "10px" },
+  comfortable: { gap: "6px", radius: "10px" },
+} as const;
+
+/** Every custom property `applyWindowStyle` writes. */
+const WINDOW_STYLE_VARIABLES = [
+  "--color-frame",
+  "--color-frame-raised",
+  "--color-island-edge",
+  "--spacing-island-gap",
+  "--radius-island",
+  "--radius-dialog",
+  "--radius-popover",
+  "--radius-tooltip",
+  "--shadow-popover",
+  "--shadow-dialog",
+] as const;
+
+const APP_CSS = join(dirname(fileURLToPath(import.meta.url)), "../../packages/desktop/src/renderer/app.css");
+
+/** The literal `app.css` declares for `variable` in its `@theme` block. */
+function stylesheetLiteral(css: string, variable: string): string | undefined {
+  const declaration = new RegExp(`^\\s*${variable}:\\s*([^;]+);`, "m").exec(css);
+  return declaration?.[1]?.trim();
+}
+
+function defaultTheme(): Theme {
+  const theme = THEMES[0];
+  if (theme === undefined) throw new Error("no themes are bundled");
+  return theme;
+}
 /** Every colour, every syntax colour, `--shadow-float`, and `color-scheme`. */
 const THEME_PROPERTY_COUNT = COLOR_TOKENS.length + SYNTAX_TOKENS.length + 2;
 
@@ -200,5 +259,78 @@ describe("applying preferences", () => {
     expect(written.get("--color-canvas")).toBe(theme.colors.canvas);
     expect(written.get("--spacing-bar")).toBe("44px");
     expect(written.get(FONT_VARIABLES.sans)).toBe('"Inter"');
+    expect(written.get("--spacing-island-gap")).toBe("6px");
+    expect(written.get("--color-frame")).toBe(frameColors(theme).frame);
+  });
+});
+
+describe("applying the window style", () => {
+  it.each(DENSITIES)("given%sDensityUnderIslands_whenApplied_thenTheIslandGapAndRadiusAreThePresets", (density) => {
+    const { written, element } = recordingRoot();
+    applyWindowStyle("islands", defaultTheme(), DENSITY[density], element);
+
+    expect(written.get("--spacing-island-gap")).toBe(ISLAND_SIZES[density].gap);
+    expect(written.get("--radius-island")).toBe(ISLAND_SIZES[density].radius);
+    expect(written.get("--radius-dialog")).toBe(ISLAND_SIZES[density].radius);
+    expect(written.get("--radius-popover")).toBe("8px");
+    expect(written.get("--radius-tooltip")).toBe("4px");
+  });
+
+  it.each(DENSITIES)(
+    "given%sDensityUnderClassic_whenApplied_thenThereIsNoIslandAndTheLadderIsTheOldRadii",
+    (density) => {
+      const { written, element } = recordingRoot();
+      applyWindowStyle("classic", defaultTheme(), DENSITY[density], element);
+
+      expect(written.get("--radius-island")).toBe("0px");
+      expect(written.get("--radius-dialog")).toBe("8px");
+      expect(written.get("--radius-popover")).toBe("6px");
+      expect(written.get("--radius-tooltip")).toBe("4px");
+      // The gap is still written: a component that reads it under Classic gets a number, not nothing.
+      expect(written.get("--spacing-island-gap")).toBe(ISLAND_SIZES[density].gap);
+    },
+  );
+
+  it("givenEitherStyle_whenApplied_thenEveryWindowStyleVariableIsWritten", () => {
+    for (const style of ["islands", "classic"] as const) {
+      const { written, element } = recordingRoot();
+      applyWindowStyle(style, defaultTheme(), DENSITY.default, element);
+      expect([...written.keys()].sort()).toStrictEqual([...WINDOW_STYLE_VARIABLES].sort());
+    }
+  });
+
+  it("givenALightTheme_whenApplied_thenTheShadowsAreTheLightElevation", () => {
+    const light = THEMES.find((candidate) => candidate.variant === "light");
+    if (light === undefined) throw new Error("no light theme is bundled");
+    const { written, element } = recordingRoot();
+    applyWindowStyle("classic", light, DENSITY.default, element);
+
+    expect(written.get("--shadow-popover")).toBe(ELEVATION.light.popover);
+    expect(written.get("--shadow-dialog")).toBe(ELEVATION.light.dialog);
+  });
+
+  it("givenAnUnknownStoredWindowStyle_whenPreferencesAreApplied_thenIslandsIsDrawn", () => {
+    const { written, element } = recordingRoot();
+    applyPreferences(defaultTheme(), preferences({ windowStyle: "floating" as never }), element);
+
+    expect(written.get("--radius-island")).toBe(ISLAND_SIZES.default.radius);
+  });
+
+  /**
+   * The stylesheet's literals are the first frame, before any script runs, so they have to be what
+   * the default preferences apply — Islands, `default` density, preman-dark — or the window visibly
+   * jumps on start.
+   */
+  it("givenTheDefaultPreferences_whenApplied_thenEveryWindowStyleVariableEqualsTheStylesheetLiteral", () => {
+    const css = readFileSync(APP_CSS, "utf8");
+    const { written, element } = recordingRoot();
+    applyPreferences(defaultTheme(), preferences(), element);
+
+    for (const variable of WINDOW_STYLE_VARIABLES) {
+      expect({ variable, value: stylesheetLiteral(css, variable) }).toStrictEqual({
+        variable,
+        value: written.get(variable),
+      });
+    }
   });
 });

@@ -44,7 +44,8 @@ const CHOSEN: Preferences = {
   editorFontSize: 14,
   fontMono: "Iosevka",
   fontSans: null,
-  canvas: "#2e3440",
+  windowStyle: "classic",
+  background: "#2e3440",
   barHeightPx: 36,
   sharedProtoRoot: null,
   autoCheckUpdates: false,
@@ -99,6 +100,39 @@ describe("app store preferences", () => {
       themeId: "gruvbox-light",
       density: "comfortable",
     });
+  });
+
+  // Every install from before the window style has this record: no `windowStyle`, and the window's
+  // colour under the name it had then.
+  it("givenARecordFromBeforeTheWindowStyle_whenRead_thenIslandsIsChosenAndTheCanvasBecomesTheBackground", () => {
+    const dir = userData();
+    seed(dir, {
+      version: CURRENT_VERSION,
+      window: { x: null, y: null, width: 1440, height: 900 },
+      preferences: { themeId: "gruvbox-light", canvas: "#f8f1d5", barHeightPx: 40 },
+      activeRoot: null,
+      workspaces: [],
+    });
+
+    const preferences = createAppStore(dir).read().preferences;
+    expect(preferences).toEqual({ ...DEFAULT_PREFERENCES, themeId: "gruvbox-light", background: "#f8f1d5" });
+    expect(preferences.windowStyle).toBe("islands");
+    expect(Object.keys(preferences)).not.toContain("canvas");
+  });
+
+  // Passed through, not corrected here: the renderer owns what a window style means, and resolves an
+  // unknown one to the default the way it resolves an unknown theme id.
+  it("givenAnUnknownWindowStyle_whenRead_thenItSurvivesForTheRendererToResolve", () => {
+    const dir = userData();
+    seed(dir, {
+      version: CURRENT_VERSION,
+      window: { x: null, y: null, width: 1440, height: 900 },
+      preferences: { windowStyle: "floating" },
+      activeRoot: null,
+      workspaces: [],
+    });
+
+    expect(createAppStore(dir).read().preferences.windowStyle).toBe("floating");
   });
 
   // A version this build does not know is the one case where the whole file is discarded. That is

@@ -15,6 +15,7 @@ import { create } from "zustand";
 
 import { applyPreferences } from "@preman/desktop/renderer/appearance/apply.js";
 import { densityTokens, type DensityTokens } from "@preman/desktop/renderer/appearance/density.js";
+import { resolveWindowStyle, windowBackground } from "@preman/desktop/renderer/appearance/islands.js";
 import type { Theme } from "@preman/desktop/renderer/appearance/theme.js";
 import { THEMES } from "@preman/desktop/renderer/appearance/themes/index.js";
 import {
@@ -22,6 +23,7 @@ import {
   type Density,
   type Preferences,
   type WindowChrome,
+  type WindowStyle,
 } from "@preman/desktop/preload/bridge.js";
 
 const FIRST = 0;
@@ -39,11 +41,11 @@ export function themeById(id: string): Theme {
 
 /**
  * The two values the main process caches. Recomputed on every save rather than trusted, so a
- * stored copy that went stale — a theme whose canvas changed under a rebuild — is corrected the
+ * stored copy that went stale — a theme whose colours changed under a rebuild — is corrected the
  * first time the user touches anything.
  */
-function chromeFor(theme: Theme, density: Density): WindowChrome {
-  return { canvas: theme.colors.canvas, barHeightPx: densityTokens(density).bar };
+function chromeFor(theme: Theme, density: Density, windowStyle: WindowStyle): WindowChrome {
+  return { background: windowBackground(theme, windowStyle), barHeightPx: densityTokens(density).bar };
 }
 
 export interface AppearanceState {
@@ -54,6 +56,7 @@ export interface AppearanceState {
   setPreferences: (next: Preferences) => void;
   setTheme: (themeId: string) => void;
   setDensity: (density: Density) => void;
+  setWindowStyle: (windowStyle: WindowStyle) => void;
   setEditorFontSize: (px: number) => void;
   setFontMono: (family: string | null) => void;
   setFontSans: (family: string | null) => void;
@@ -64,7 +67,8 @@ export interface AppearanceState {
  * the entire reason it is a value there and not a promise.
  */
 function initialPreferences(): Preferences {
-  return { ...DEFAULT_PREFERENCES, ...window.preman.preferences };
+  const stored = { ...DEFAULT_PREFERENCES, ...window.preman.preferences };
+  return { ...stored, windowStyle: resolveWindowStyle(stored.windowStyle) };
 }
 
 export const useAppearanceStore = create<AppearanceState>((set, get) => {
@@ -72,7 +76,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
 
   function commit(next: Preferences): void {
     const theme = themeById(next.themeId);
-    const chrome = chromeFor(theme, next.density);
+    const chrome = chromeFor(theme, next.density, next.windowStyle);
     const corrected: Preferences = { ...next, ...chrome };
     applyPreferences(theme, corrected);
     window.preman.setWindowChrome(chrome);
@@ -90,6 +94,9 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
     },
     setDensity(density) {
       commit({ ...get().preferences, density });
+    },
+    setWindowStyle(windowStyle) {
+      commit({ ...get().preferences, windowStyle });
     },
     setEditorFontSize(px) {
       commit({ ...get().preferences, editorFontSize: px });
@@ -111,9 +118,18 @@ export function useDensity(): Density {
   return useAppearanceStore((state) => state.preferences.density);
 }
 
-/** All eight numbers. The returned record is the shared frozen preset, so the selector is stable. */
+/** All ten numbers. The returned record is the shared frozen preset, so the selector is stable. */
 export function useDensityTokens(): DensityTokens {
   return useAppearanceStore((state) => densityTokens(state.preferences.density));
+}
+
+/**
+ * Whether the panes are islands on a frame. For the few components whose structure, not only their
+ * styling, differs between the two styles; one that differs only in a radius or a colour reads the
+ * token and never asks.
+ */
+export function useIslands(): boolean {
+  return useAppearanceStore((state) => state.preferences.windowStyle === "islands");
 }
 
 /**
