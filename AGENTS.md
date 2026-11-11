@@ -16,6 +16,8 @@ and `@preman/desktop` is the window in front of it. Both front ends read and wri
 - `bun run build` - every package; `packages/cli/dist/preman.js` is the shipped CLI artifact
 - `bun run desktop` - build the Electron app and launch it
 - `bun run desktop:package` - build it, then wrap it with electron-builder into `packages/desktop/release`
+- `bun run test:app` - build the app, then drive it (`test/app/`); `test:app:linux` does it in Docker
+- `bun run readme:media` - re-record the README GIFs in Docker; `readme:media:host` on this machine
 - `bun run lint` - ESLint, must be clean
 - `bun run lint:fix` - apply ESLint fixes
 - `bun run format` - apply Prettier formatting
@@ -107,6 +109,10 @@ test/fixtures/ssl/               committed certificates; regenerate with `genera
 test/support/big-workspace.ts    generates an N-request workspace in a temp dir; never committed
 test/perf.test.ts                the catalog and workspace-switch budgets; runs with the suite
 test/renderer/perf.app.test.ts   the budgets that need a window; gated behind PREMAN_PERF=1
+test/app/                        the built app driven by Playwright; gated behind PREMAN_APP=1
+  harness.ts                     the one launcher: throwaway profile, pinned 1200x800 content
+  docker/                        the Linux box: Xvfb, openbox, macOS-metric fonts, ffmpeg
+  media/                         records docs/media/*.gif; also gated behind PREMAN_README_MEDIA
 ```
 
 ## Conventions

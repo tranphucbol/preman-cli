@@ -5,7 +5,7 @@ import { concatList } from "./app/media/timeline.js";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 /** Every Markdown file a reader reaches from the README without leaving the repository. */
-const DOCUMENTS = ["README.md"];
+const DOCUMENTS = ["README.md", "CONTRIBUTING.md"];
 /** `[text](target)` and `<img src="target">`; a target with a scheme or a bare anchor is not a file. */
 const LINK_PATTERNS = [/\]\(([^)\s]+)\)/g, /\bsrc="([^"]+)"/g];
 const EXTERNAL = /^(?:[a-z]+:|#)/i;

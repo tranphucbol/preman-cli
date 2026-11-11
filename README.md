@@ -1,18 +1,40 @@
+<div align="center">
+
+<img src="packages/desktop/resources/icon.png" alt="preman logo" width="128">
+
 # preman
 
-Run requests from a Postman Local View workspace, including unary gRPC, from the terminal.
+**Run a Postman Local View workspace, unary gRPC included, from the terminal or a desktop app**
 
-`preman` is a small alternative runner for Postman's filesystem format. It is not a replacement
-for the full Postman CLI.
+A CLI and a macOS app that read the `.postman/` and `postman/` files checked into your repository
+and run them locally: HTTP and unary gRPC, Postman scripts and tests, environments, and CI reports,
+without the paid Postman runner.
+
+[![Release](https://img.shields.io/github/v/release/tranphucbol/preman-cli?color=orange)](https://github.com/tranphucbol/preman-cli/releases/latest)
+[![npm](https://img.shields.io/npm/v/preman?color=cb3837&logo=npm)](https://www.npmjs.com/package/preman)
+[![License](https://img.shields.io/github/license/tranphucbol/preman-cli?color=blue)](LICENSE)
+[![Built with TypeScript](https://img.shields.io/badge/Built_with-TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Built with Electron](https://img.shields.io/badge/Built_with-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org)
+[![CI](https://github.com/tranphucbol/preman-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/tranphucbol/preman-cli/actions/workflows/ci.yml)
+
+**[Releases](https://github.com/tranphucbol/preman-cli/releases)** ·
+**[Documentation](#documentation)** ·
+**[Contributing](CONTRIBUTING.md)** ·
+**[Report a bug](https://github.com/tranphucbol/preman-cli/issues/new)**
+
+[Why](#why) · [Highlights](#highlights) · [Install](#install) · [Quick start](#quick-start) ·
+[How it works](#how-it-works) · [Reference](docs/reference.md) · [License](#license)
+
+<img src="docs/media/send.gif" alt="Opening a request in the preman desktop app, sending it, and reading its tests" width="900">
+
+</div>
 
 ## Why
 
 [Local View and Native Git](https://learning.postman.com/docs/use/native-git/overview/) keep
 collections, environments, specs, and tests in the same Git repository as the application code.
-Postman Desktop remains a good place to edit them.
-
-The free Postman CLI can run HTTP collections, but
-[gRPC collection runs require a paid plan](https://learning.postman.com/docs/postman-cli/postman-cli-run-collection/):
+Postman Desktop remains a good place to edit them. The free Postman CLI can run HTTP collections,
+but [gRPC collection runs require a paid plan](https://learning.postman.com/docs/postman-cli/postman-cli-run-collection/):
 
 ```text
 $ postman collection run postman/collections/payment
@@ -20,24 +42,68 @@ Error: This collection contains gRPC requests. Please upgrade your plan to run c
 Visit https://www.postman.com/pricing/ for more details.
 ```
 
-`preman` reads the checked-in `.postman/` and `postman/` files directly, then runs those requests
-locally without the paid Postman runner.
+preman reads the checked-in files directly and runs those requests locally. It is a small
+alternative runner for Postman's filesystem format, not a replacement for the full Postman CLI.
 
-## Quick Start
+## Highlights
 
-Requires Node.js 20+ to install and Bun plus Node.js 20.19+ to build.
+- [Unary gRPC and HTTP](docs/guide/cli.md#what-runs): a request's `.proto` or embedded descriptor;
+  multipart, `urlencoded`, binary and GraphQL bodies; server-sent events.
+- [Postman's scripts, as written](docs/reference.md#scripts): pre-request, post-response and
+  `onMessage`, `pm.test`, `pm.sendRequest`, and Lodash, CryptoJS, Moment and the other common
+  libraries.
+- [Made for CI](docs/guide/cli.md#in-ci): JSON and JUnit reports, iteration data, environment
+  writeback, and exit codes that tell a transport failure from a failed test.
+- [A linter for silent mistakes](docs/guide/lint.md): fields that parse but are never read, found
+  without sending a request.
+- [Protos that resolve on every machine](docs/guide/protos.md): declared through one shared link per
+  repository, with the missing ones named and a one-command repair.
+- [Paste a curl or grpcurl](docs/guide/import-and-copy.md#importing-a-pasted-command): it becomes a
+  request file, and every flag that could not be kept is named.
+- [Copy a request as a command](docs/guide/import-and-copy.md#copying-a-request-as-a-command): the
+  `curl` or `grpcurl` that would send it, with what it cannot carry listed.
+- [Migrate from Postman cloud](docs/guide/migrate.md): a cloud workspace onto disk, gRPC included,
+  borrowing Postman Desktop's session.
+- [A desktop app on the same files](docs/guide/desktop.md): edit and run requests in a window; the
+  CLI sees every change, and `git status` stays clean.
+- [Mutual TLS and private CAs](docs/reference.md#tls-and-certificates): from flags or
+  `.postman/preman.yaml`.
+
+In the app, `Cmd+K` opens any request by name, and a script's `pm.environment.set` carries a login
+token into the next request:
+
+<img src="docs/media/palette.gif" alt="Opening Login and Profile from the command palette and sending both" width="900">
+
+A pasted `curl` becomes a request file you can send straight away:
+
+<img src="docs/media/import.gif" alt="Importing a curl command as a request and sending it" width="900">
+
+## Install
+
+**CLI**: requires Node.js 20 or later.
 
 ```sh
-git clone https://github.com/tranphucbol/preman-cli.git
-cd preman-cli
-bun install
-bun run build
-cd packages/cli && npm link
+npm install -g preman
 ```
 
-The built `packages/cli/dist/preman.js` resolves runtime dependencies from `node_modules`; it is not
-a standalone file. Keep it with the installed package, or install through npm so those dependencies
-are present.
+**Desktop app**: download the arm64 DMG from the
+[latest release](https://github.com/tranphucbol/preman-cli/releases/latest). Once installed, the app
+[updates itself](docs/guide/install.md#updates).
+
+| Platform              | Download                                                                                  |
+| :-------------------- | :---------------------------------------------------------------------------------------- |
+| macOS (Apple silicon) | [`preman-<version>-arm64.dmg`](https://github.com/tranphucbol/preman-cli/releases/latest) |
+
+The app is ad-hoc signed rather than notarized, so macOS calls the download _damaged_ the first time.
+Drag `preman.app` to `/Applications` and clear the quarantine attribute:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/preman.app
+```
+
+See [Install](docs/guide/install.md) for why, and for building from source.
+
+## Quick start
 
 From a repository connected to Postman Local View:
 
@@ -60,473 +126,63 @@ target localhost:9095 [plaintext] (request url) · schema proto-file
 1 test · 1 passed
 ```
 
-`preman` searches upward from the current directory for `.postman/resources.yaml` or a
-`postman/collections` directory. Use `-d <path>` to point it at another repository.
+1. `preman` searches upward from the current directory for `.postman/resources.yaml` or a
+   `postman/collections` directory; `-d <path>` points it at another repository.
+2. `preman run <collection>` runs every request in a collection or folder in Postman order;
+   `-e <name>` picks the environment.
+3. If a gRPC request cannot find its schema, `preman protos` names the link that is missing.
+4. In the app, **Open workspace…** on the same repository shows the same requests.
 
-## Usage
+## How it works
 
-```text
-preman list
-preman lint [--strict]              report authored fields preman will not honour
-preman run [<collection/request>]   run one request
-preman run <collection|folder>      run every request in order
-preman env show
-preman env set <key> <value>
-preman protos                       list the declared .proto files, grouped by shared link
-preman protos link <name> <dir>     point a shared link at a checkout on this machine
-preman import --into <collection>   turn a pasted curl or grpcurl into a request
-preman import --into <collection> -- <pasted command>
-preman copy <collection/request>    print that request as a curl or grpcurl command
-preman migrate --list               list the Postman cloud workspaces in reach
-preman migrate --workspace <id|name> --out <dir>
-```
+preman is three packages. `@preman/core` is the engine: it discovers the workspace, resolves
+variables, runs scripts in a `node:vm` sandbox, and sends the request. The `preman` CLI and
+`@preman/desktop` are two front ends to it, and both read and write the same files, so the
+workspace on disk is the only state they share. The desktop app runs three kinds of process: the
+main process owns the window and holds no workspace state, each open workspace gets its own engine
+in an Electron utility process, and the renderer is a pure view that talks to that engine over a
+`MessagePort`. Response bodies stay in the engine, and edits are written through the YAML document
+API so comments and formatting survive. [The reference](docs/reference.md) describes the behaviour
+in full, and [docs/decisions](docs/decisions/README.md) records why it is built this way.
 
-Common options:
+## Documentation
 
-| Option                           | Purpose                                                                        |
-| -------------------------------- | ------------------------------------------------------------------------------ |
-| `-d, --dir <path>`               | Select a workspace                                                             |
-| `-e, --env <name>`               | Select an environment                                                          |
-| `--url <target>`                 | Override the gRPC target or HTTP origin                                        |
-| `--var <key=value>`              | Override a variable; repeatable                                                |
-| `--tls` / `--plaintext`          | Force TLS or cleartext                                                         |
-| `--ssl-extra-ca-certs <path>`    | Trust an extra CA on top of the public roots                                   |
-| `--ssl-client-cert <path>`       | Client certificate for mutual TLS                                              |
-| `--ssl-client-key <path>`        | Private key for that certificate                                               |
-| `--ssl-client-passphrase <text>` | Passphrase for an encrypted key                                                |
-| `-k, --insecure`                 | Skip server certificate verification                                           |
-| `--working-dir <path>`           | Resolve request file paths from this directory; defaults to the workspace root |
-| `--insecure-file-read`           | Allow request files outside the working directory                              |
-| `-n, --iteration-count <n>`      | Run a collection or folder multiple times                                      |
-| `--iteration-data <path>`        | Load iteration rows from a JSON or CSV file                                    |
-| `--delay-request <ms>`           | Wait between collection requests                                               |
-| `--timeout <ms>`                 | Set the whole-run budget when used with `--timeout-request`; `0` is unbounded  |
-| `--timeout-request <ms>`         | Set each request deadline; defaults to `600000`                                |
-| `--timeout-script <ms>`          | Set each script deadline; defaults to `5000`                                   |
-| `--no-save`                      | Do not write script changes back to the environment                            |
-| `--bail`                         | Stop a collection run after the first failure                                  |
-| `-r, --reporter <name>`          | Select `cli`, `json`, or `junit`; repeat or comma-separate                     |
-| `--reporter-json-export <path>`  | Write the JSON report to a file                                                |
-| `--reporter-junit-export <path>` | Write the JUnit report to a file                                               |
-| `--json`                         | Alias for `--reporter json`                                                    |
-| `--repoint`                      | `protos link` only: move a link that already points elsewhere                  |
-| `--into <group>`                 | `import` only: which collection or folder to write the request into            |
-| `--name <name>`                  | `import` only: name the request instead of taking the proposed one             |
-| `--from <path>`                  | `import` only: read the pasted command from a file instead of the fence        |
-| `-v, --verbose`                  | Show request, response, script, and transport details                          |
+**Using preman**
 
-Run `preman --help` for every option.
+- [Install](docs/guide/install.md): the CLI, the desktop app, opening the unsigned macOS app,
+  updates, and building from source.
+- [Running from the terminal](docs/guide/cli.md): commands, options, CI reports, and what runs.
+- [Linting](docs/guide/lint.md): finding fields preman will not honour, without sending a request.
+- [Protos](docs/guide/protos.md): declaring `.proto` files through a shared link.
+- [Importing and copying commands](docs/guide/import-and-copy.md): `curl` and `grpcurl`, in and out.
+- [Migrating from Postman cloud](docs/guide/migrate.md): a cloud workspace onto disk.
 
-## Supported
+**The desktop app**
 
-- Unary gRPC using the request's `.proto` file or embedded descriptor
-- HTTP requests, including multipart form-data uploads, structured `urlencoded`, binary, and GraphQL bodies
-- Server-sent event streams, shown event by event as they arrive in the app and buffered by the CLI
-- Collections and folders in Postman order
-- Repeated collection runs with JSON or CSV iteration data
-- Postman environments, globals, collection variables, and the [dynamic variable set](docs/reference.md#variables)
-- Pre-request, post-response, and gRPC `onMessage` scripts
-- Collection- and folder-level scripts and authentication, inherited by descendant requests
-- `bearer`, `basic`, and `apikey` authentication for both HTTP and gRPC
-- `pm.test`, `pm.expect`, cookies, `pm.sendRequest`, mutable `pm.request`, and sandbox `require()`
-- Postman's common script libraries, including Lodash, CryptoJS, Moment, Cheerio, XML2JS, and UUID
-- Private certificate authorities and mutual TLS, from flags or `.postman/preman.yaml`
-- Declaring `.proto` files from a file browser, through a shared link that resolves on any machine
-- Importing a pasted `curl` or `grpcurl` command as a request, with every dropped flag named
-- Migrating a Postman cloud workspace onto disk, gRPC included
-- Linting a workspace for fields that parse but are never read, without sending a request
-- Environment writeback and JSON output for CI
-- JUnit reports for GitLab, Jenkins, and other CI test-report consumers
+- [The desktop app](docs/guide/desktop.md): workspaces, requests, environments, auth, bodies and
+  responses.
+- [The log and debugging](docs/guide/diagnostics.md): what the log holds, and attaching an
+  inspector to the engine.
 
-Print the normal report while writing JUnit XML for the CI test tab:
+**Reference**
 
-```sh
-preman run payment -r cli,junit --reporter-junit-export junit.xml
-```
+- [Reference](docs/reference.md): selection rules, variable precedence, protocol behaviour, scripts,
+  assertions, exit codes, schema resolution, and the engine protocol.
+- [Decisions](docs/decisions/README.md): the architecture decision records.
+- [Performance](docs/performance.md): the budgets the test suite asserts.
 
-Streaming gRPC and request kinds other than gRPC and HTTP are not supported. Unsupported items in
-a collection run are reported instead of being executed.
+## Not supported
 
-See [the reference](docs/reference.md) for selection rules, variable precedence, protocol behavior,
-scripts, assertions, exit codes, and schema resolution.
+- Streaming gRPC (client, server or bidirectional), gRPC server reflection, WebSocket and other
+  request kinds; a collection run reports them instead of executing them.
+- Intel, universal, Windows and Linux builds of the desktop app.
 
-## Linting
+## Contributing
 
-A Postman request file can be valid and still be wrong in a way nothing tells you about. Write
-multipart parts under `body.content` instead of `body.formdata` and the file parses, the app paints
-an empty grid, and a run sends no body and no `Content-Type` — silently, because preman only raises
-that class of warning while a request is going out.
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setting up and
+which checks a change needs; [AGENTS.md](AGENTS.md) is the full reference for commands and
+conventions.
 
-`preman lint` reads every request and reports those fields without sending anything:
+## License
 
-```sh
-preman lint                  # what will be ignored, and what cannot run
-preman lint --strict -v      # warnings are fatal too, with the rule id on each line
-preman lint --json           # the same findings, machine-readable
-```
-
-```text
-  Paparazzi/Instances/Create Instance  postman/collections/Paparazzi/Instances/Create Instance.request.yaml
-    error body.formdata  body.content is not read by type formdata, and body.formdata is absent: no body is sent
-           rename body.content to body.formdata
-```
-
-An **error** means the request cannot do what it says — no body is sent, a named file is not on
-disk, an auth type throws before the socket opens — and exits `1`. A **warning** means it runs, but
-something you wrote is being dropped, and exits `0` unless you pass `--strict`, which is what a CI
-job wants.
-
-It says nothing about `{{tokens}}`. A variable a script sets on one request and reads on the next
-is unresolved at rest for good reason, and a linter that flagged it would be wrong far more often
-than right. See [ADR 057](docs/decisions/057-lint-restates-the-runner-rather-than-running-it.md).
-
-## Protos
-
-A gRPC request finds its method through the `.proto` files the workspace declares in
-`.postman/resources.yaml`. In the app, **Protos** in the command palette — or the link button beside
-a gRPC request's method picker — browses for them.
-
-Every declared path runs through a symlink farm at `/Users/Shared/postman-protos`, one link per
-repository, named after it:
-
-```yaml
-localResources:
-  specs:
-    - /Users/Shared/postman-protos/zas-spec/api/zas/admin/admin.proto
-    - /Users/Shared/postman-protos/acquiring-core/api/proto/admin.proto
-```
-
-That path is the same string on every machine, which an absolute path to your home directory is
-not. What differs per machine is one symlink per repository, and both front ends tell you which ones
-are missing by name. On a fresh checkout:
-
-```sh
-preman protos                                    # what is declared, and which links are absent
-preman protos link zas-spec ~/repos/zas-spec     # one link covers every proto in that repository
-```
-
-In the app the same repair is a **Locate…** button beside each missing link. Adding a proto stages a
-plan first: it names the link it would create, shows the path it would write, and loads each `.proto`
-so an unresolvable `import` surfaces before anything is written. Nothing reaches disk until you
-apply it.
-
-The link points at the checkout's root, so imports resolve exactly as they do inside the repository.
-A workspace whose specs are still plain relative or absolute paths keeps working; **Move onto
-links…** converts them in one reviewed step.
-
-A workspace that lives _inside_ the repository whose protos it declares needs no link at all. If the
-missing link is named after the checkout the workspace itself is in — the directory holding the
-`.git` above `.postman/` — those specs are read straight out of that checkout, so a fresh clone
-resolves its own protos with nothing set up. The link name stays on screen, labelled as coming from
-the workspace's own checkout, because anyone whose workspace is _not_ in that repository still needs
-it — the label appears only where it is news, so a machine whose link already points at that same
-checkout reads exactly as it did before. Every other case is unchanged: a spec from another repository, or one absent from this checkout,
-still comes through the link, and a clone in a differently-named directory still has to be located
-by hand — with the path pre-filled rather than guessed.
-
-Set `PREMAN_SHARED_PROTO_ROOT`, or the field in the app's settings, if `/Users/Shared` is not
-writable on your machine. Only where this machine _looks_ moves — what the workspace records is
-always the default, so the file stays portable.
-
-## Importing a pasted command
-
-**Copy as cURL** in a browser's devtools, or a `grpcurl` line from a runbook, becomes a request file:
-
-```sh
-pbpaste | preman import --into admin
-```
-
-```text
-Imported POST Create order -> postman/collections/admin/Create order.request.yaml
-
-  Not imported
-    --compressed  preman already negotiates response encoding
-```
-
-Every flag is accounted for. The ones `preman` can represent become fields; the ones it cannot are
-listed with the reason, so nothing is dropped quietly. `--dry-run` prints the document it would
-write and writes nothing.
-
-**Pasting inline needs a `--` fence.** `preman` owns `-d`, `-e`, `-k`, `-n`, `-r` and `-v`, and curl
-spells all six differently — unfenced, `curl -d '{"sku":"A-1"}' https://x` hands the body to
-`--dir` and nothing reports it. So everything after `--` is the paste, verbatim:
-
-```sh
-preman import --into admin -- curl -X POST -H 'content-type: application/json' \
-  --data-raw '{"sku":"A-1","qty":2}' https://api.example.test/v1/orders
-```
-
-Piping from the clipboard or passing `--from <file>` needs no fence. `--into` picks the collection
-or folder, and is required as soon as the workspace has more than one collection; `--name` overrides
-the name taken from the URL's last path segment. Chrome's macOS copy (`\`-continued, with `$'…'`
-quoting) and its Windows copy (`^`-continued, with `"…"`) are both accepted and produce the same
-file.
-
-A `grpcurl` paste is imported the same way. A `-proto` that exists on disk is declared through the
-shared link described above, so the request runs on the first send:
-
-```sh
-preman import --into payment -- grpcurl -plaintext \
-  -proto ~/src/refund-core/api/refund/v1/refund.proto \
-  -d '{"id":"r-1"}' localhost:9090 refund.v1.RefundService/Get
-```
-
-A paste with no `-proto` relies on gRPC server reflection, which `preman` does not do. It is still
-imported — the target, metadata, and message are worth keeping — and it says so at import time and
-again when the run reaches schema resolution.
-
-The desktop app does the same from the sidebar header's import button, **File ▸ Import from cURL or
-grpcurl…**, a group's context menu, or the command palette. The dialog pre-fills itself from the
-clipboard when it holds a command, and shows the exact document before anything is written.
-
-## Copying a request as a command
-
-The other direction. `preman copy` prints one request as the command that would send it — `curl`
-for an HTTP request, `grpcurl` for a gRPC one, decided by the request's kind rather than by a flag:
-
-```sh
-preman copy admin/Profile --env QC | pbcopy
-```
-
-```text
-curl -H 'Authorization: Bearer eyJhbGci…' -L 'https://api.example.test/profile?tab=main'
-
-  Not in this command
-    collection admin http:beforeRequest  not run; a script that sets a header is not in this command
-    pm.test assertions                   a command has no test result
-    cookie jar                           populated by earlier responses in a run
-
-  In cleartext
-    auth      the request's own auth block
-    http_url  environment
-    token     environment
-```
-
-Nothing is sent and no script runs, so the only exit codes are `0` and `1`. Everything the command
-cannot carry is named — the scripts that would have run, the `pm.test` assertions that have no
-result, the cookie jar, the timeout — and every `{{token}}` that was substituted is listed with the
-scope it came from. Nothing is redacted: `preman` has no way to tell a credential from a variable,
-so it reports what it resolved and leaves the judgement to you.
-
-A gRPC request comes out as a `grpcurl` with the `-proto` and `-import-path` flags it needs. Those
-are paths on this machine, which is warned; a request resolved from an embedded descriptor has no
-`.proto` to name at all, so the command is printed with the schema listed as missing and a warning
-that it will not run as written.
-
-The app shows the same thing in a panel beside the request, opened with the **`</>`** button in the
-request bar, a request's context menu, **File ▸ Copy as cURL or grpcurl**, or the command palette.
-It follows your unsaved edits rather than what is on disk, so editing the url rewrites the command
-without saving first — a text box lands when you leave it, an editor when you pause. The clipboard
-is written when you press Copy and never on open.
-
-## Migrating from Postman cloud
-
-If the collections are still in a Postman cloud workspace rather than in Git, `preman migrate` copies
-one onto disk in the same format Local View writes:
-
-```sh
-preman migrate --list
-preman migrate --workspace "Payment Core" --out ./payment-core
-```
-
-```text
-Migrated 2 collections, 1 folder, 1 environment into ./payment-core
-  1 gRPC request
-  2 HTTP requests
-  1 skipped (websocket-request)
-      Adapter/Legacy/Legacy Socket
-```
-
-**Postman Desktop must be running and signed in.** `preman` borrows that window's own session, so
-there is no API key to create and no password to type. `--workspace` takes an id or a name; two
-workspaces sharing a name are reported with their ids rather than guessed between. `--dry-run` prints
-every file that would be written and writes none. The destination must be empty — an existing
-workspace is never merged into.
-
-A large workspace takes the better part of a minute, so it draws a bar while it works:
-
-```text
-  reading collections   █████░░░░░░░░░░░░░░░  29%  12/41  327 reads
-```
-
-It is on standard error, so the report and `--json` still pipe cleanly, and it comes back down before
-anything is printed. The proportion counts collections rather than requests, because Postman reveals
-what is inside a collection only as it is read — the total number of calls is genuinely unknown until
-the end, and a bar that revised its own denominator would slide backwards.
-
-This reads Postman's private API, which is the only one that can see gRPC requests; the documented
-one returns schema v2.1 and omits them entirely. It is undocumented, so a Postman update can break
-it without notice.
-
-**A migrated gRPC request needs its `.proto` on disk.** Postman's cloud copy of the embedded
-descriptor is truncated — 184 of 188 requests in the workspace this was measured against came back cut
-to 300 characters, and a truncated descriptor does not decode. Where Postman recorded the path to the
-`.proto` it was built from, the migration keeps that path exactly as recorded and lists it in
-`.postman/resources.yaml`, so on the machine that authored the request it runs against the live file,
-which is the better source anyway. Where it did not, or where the file is not on this machine, the
-request is still written and says which `.proto` it wants when you run it. Request kinds `preman`
-cannot run, websockets among them, are skipped and named one line each, so it is clear what stayed
-behind.
-
-The desktop app does the same thing from **File ▸ Migrate from Postman…**, or the command palette: it
-lists the workspaces, asks where to put the one you pick, and opens it when it is written.
-
-## Desktop app
-
-`@preman/desktop` puts a window in front of the same engine: it opens a workspace, edits requests
-and environments, and runs them. The CLI and the app read and write the same files, so a request
-created in the window runs from the terminal, and a file changed by either one appears in the other
-on its next read.
-
-Every release carries a macOS **arm64** DMG on
-[the releases page](https://github.com/tranphucbol/preman-cli/releases). It is ad-hoc signed rather
-than notarized, because a Developer ID belongs to whoever ships the build and not to this repository
-([ADR 018](docs/decisions/018-what-goes-in-the-packaged-bundle.md)). macOS quarantines anything a
-browser downloaded, and Gatekeeper reports a quarantined ad-hoc-signed app as
-`"preman" is damaged and can't be opened` rather than as merely unsigned — so drag `preman.app` to
-`/Applications`, then clear the attribute the download added:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/preman.app
-```
-
-Nothing inside the app changes; only that attribute is removed. There is no Intel or universal
-build, so an Intel Mac has nothing to run yet
-([ADR 030](docs/decisions/030-ci-asserts-everything-but-the-clock.md)).
-
-That is the first install only. From then on the app checks for new versions itself — the app menu's
-**Check for Updates**, or Settings → Diagnostics → Updates, which also carries the switch that turns
-the automatic check off. What it downloads is verified against an Ed25519 signature the app ships the
-public half of, rather than by Squirrel.Mac, which cannot update an ad-hoc-signed app at all
-([ADR 054](docs/decisions/054-the-app-signs-its-own-updates.md)). Nothing installs itself: the check
-is automatic, the download and the restart are two separate presses. macOS may ask for Local Network
-access again after an update, because the new build is a different signature to it.
-
-It can also create an empty workspace, named from the workspace dropdown, the File menu or the
-command palette, always under `~/.local/share/preman/workspace`; `Open workspace…` remains the way
-to a workspace that already exists anywhere else.
-
-A new request comes from either end of the window. The sidebar's context menu on a collection or a
-folder offers **New HTTP request**, **New gRPC request** and **New folder**, which put one inside it;
-the `+` in the tab row, beside the environment picker, asks the same three as one form — the
-protocol, a name, and which collection or folder it goes in, with **New folder** beside its
-**Create**. That form's destination list starts at the workspace root, which is where a collection
-lives, so the first one can be made from there too. The context menu on a request itself offers
-**Duplicate**, which copies the file —
-comments, scripts and examples included — to `Foo copy` directly below the original and opens it.
-Duplicate copies what is on disk, so save an edited tab first.
-
-An environment is made from the last row of the environment picker itself — **New environment…**,
-below the values and a rule — or from the command palette. It is created empty and becomes the
-active one, so the next `{{token}}` you write has somewhere to be set. A name another environment
-already holds is refused rather than resolved to `Foo (2)`: an environment is reached by name, by
-the picker and by `-e` alike, so two files answering to one name would be one of them silently
-ignored. The picker is present in every workspace, including one with no environments yet.
-
-The **Auth** sub-tab picks a type — **No Auth**, **Bearer Token**, **Basic Auth** or **API Key** —
-and then asks for exactly the credentials that type sends, so a `{{token}}` goes in a field named
-Token rather than a row you had to know to add. Its first option, **Inherit from parent**, removes
-the request's own `auth:` block, which is how the format spells inheritance; the pane then names
-the collection or folder your token is coming from and which type it is, and that name is a button
-that opens it. A type preman cannot send says so in the pane instead of at the send. Credentials
-the file carries that the chosen type does not read are kept and shown below, because nothing here
-deletes something you wrote without saying so.
-
-The block also wins over a header you wrote by hand, the way Postman's does. If a request declares
-`bearer` auth and also carries an `Authorization` header, the block is what goes on the wire — so
-the **Headers** sub-tab says which header is being replaced and what it said, above the list, before
-you send. This is the direction Postman takes; the header that used to quietly beat a correct token
-is the reason it changed.
-
-A collection or a folder is a document too — **Edit collection** or **Edit folder** on its context
-menu opens its `.resources/definition.yaml` as a tab, with an **Auth** tab of its own and a
-**YAML** one. There is no Send: a group is not an exchange, and running one is still **Run…**. A
-group that has no definition file yet opens empty, and saving writes it.
-
-A raw HTTP body and a gRPC message can be re-indented from the **Beautify** glyph at the right of
-their toolbar. It rewrites whitespace and nothing else, so a bare `{{token}}`, `1e3`, `1.0` and a
-twenty-digit id all survive byte for byte — a body is bytes that go on the wire, and a formatter that
-reserialises them sends a different request. `Cmd+Z` reverts it, and a body it cannot read says so
-rather than being quietly changed. The response pane's pretty-print toggle is the same gesture on the
-other half of the app; that one does reserialise, because a response has already been sent.
-
-The response header counts up from the moment **Send** is clicked, so the wait is visible rather
-than inferred, and settles on the transport duration once the exchange finishes — the number the
-Timeline tab, the console and `--report` all agree on. The Timeline shows the wall-clock wait beside
-it, which is where the difference between the two goes.
-
-A `text/event-stream` response is read as it arrives. The Body tab becomes a list of events, newest
-first, each with the time it landed and expandable to its full data; the header states how many have
-arrived and how many bytes, and says whether the stream is still open. Nothing about it waits for the
-stream to close, which is the point — a completion stream is worth watching, not worth waiting for.
-**Cancel** closes the socket and keeps every event that had already arrived; a stream the server or
-the network cut short instead says so above the list.
-`preman run` does not stream: it buffers, so `--timeout-request` stays a hard ceiling in CI
-([ADR 052](docs/decisions/052-a-stream-is-a-response-in-parts.md)).
-
-```sh
-bun run desktop          # build the app and launch it
-bun run desktop:inspect  # the same, with the main process's inspector on 127.0.0.1:9229
-bun run desktop:package  # build, then wrap it into packages/desktop/release
-```
-
-The app writes one log — `preman.log` in Electron's `logs` directory, which **Settings ▸
-Diagnostics** will reveal for you — holding process lifecycle, host spawns, exits and crash reasons,
-every failure the engine turned into an error you saw, and everything the engine wrote to its own
-output. Each line is timestamped and carries one of `INFO`, `WARN`, `ERROR` or `FATAL`:
-
-```
-2026-08-31T20:36:35.613Z INFO  preman starting: 43.4.1 (electron 43.4.1, chrome 150.0.7871.224, node 24.18.1)
-2026-08-31T20:36:35.644Z INFO  preman-engine-acquiring-core: engine host started for /Users/you/repos/acquiring-core
-2026-08-31T20:36:45.283Z WARN  preman-engine-acquiring-core: proto not loaded: cannot read /Users/you/repos/acquiring-core/api/proto/refund.proto: ENOENT
-```
-
-There is nothing to turn on and nothing to filter, and it holds no traffic at all: no URL, no
-header, no body, no variable. The engine resolves `{{token}}` before it sends, so a log that
-recorded a request would be a credential file with a different name; the console drawer is where you
-look at a request. It does name files inside your workspace, which means your home directory is in
-it — worth a glance before you attach one to a bug report. See
-[ADR 035](docs/decisions/035-the-log-contains-no-traffic.md) and
-[ADR 036](docs/decisions/036-the-log-says-how-bad-it-was.md).
-
-To debug the engine, set `PREMAN_INSPECT=1` (or `brk`, to stop before it reads the workspace) and
-the host forks with an inspector on an ephemeral port — one host per open workspace, so the port
-cannot be fixed. The `Debugger listening on ws://…` line it prints is forwarded to the terminal
-along with everything else the host says; `.vscode/launch.json`'s **engine** configuration asks for
-that URL, and **preman** attaches to both processes at once.
-
-The console drawer logs every call the app makes, not only what the scripts said: each request
-appears where it happened, with the logs and `pm.sendRequest` calls it caused indented under it, and
-expands to show what was sent and what came back.
-
-Window bounds, open tabs, and unsaved drafts live in Electron's `userData`, never in the workspace,
-so `git status` stays clean while the app is open. Packaging targets are configured for macOS in
-`packages/desktop/electron-builder.yml`.
-
-The window holds no engine: it talks to a separate process over a message port. See
-[the engine protocol](docs/reference.md#engine-protocol) for that contract.
-
-## Development
-
-```sh
-bun run typecheck
-bun run typecheck:core
-bun run test
-bun run test:watch
-bun run build
-bun run lint
-bun run lint:fix
-bun run format
-bun run format:check
-```
-
-The performance budgets in `test/perf.test.ts` run with the normal suite. The ones that need a real
-window launch Electron five times, so they are gated and want a built app:
-
-```sh
-bun run build && PREMAN_PERF=1 bunx vitest run test/renderer/perf.app.test.ts
-```
-
-[`docs/performance.md`](docs/performance.md) is the budget itself, and what each number counts.
-[`docs/decisions/`](docs/decisions/README.md) is why the app is shaped the way it is — three
-processes, a synchronous core, an editor that never reformats your files.
+[MIT](LICENSE)
