@@ -34,6 +34,7 @@ Names read `givenX_whenY_thenZ`. Match the file you are adding to.
 | Desktop main and engine | `test/desktop.store.test.ts`, `test/desktop.hosts.test.ts`, `test/desktop.diagnostics.test.ts`, `test/desktop.protocol.test.ts`, `test/desktop.workspace.test.ts` | The processes that are not the window.                                                                                                                            |
 | Renderer                | `test/renderer/*.test.ts`                                                                                                                                         | Pure modules: stores, appearance, themes, the template language, response formatting. No window, no pixels.                                                       |
 | Performance             | `test/perf.test.ts`, `test/renderer/perf.app.test.ts`                                                                                                             | See below.                                                                                                                                                        |
+| App                     | `test/app/smoke.test.ts`, `test/app/media/readme.media.test.ts`                                                                                                   | Gated behind `PREMAN_APP=1`; launch the built app. See below.                                                                                                     |
 
 ## Fixtures
 
@@ -89,6 +90,50 @@ worst-case assertion would fail on a correct build.
 
 `docs/performance.md` is the budget itself and what each number counts. Read the number there
 rather than from a copy.
+
+## The app suites
+
+`test/app/` launches the built desktop app through Playwright's `_electron` and clicks through it.
+Every file there is behind `PREMAN_APP=1` (`test/app/harness.ts`), so `bun run test` skips them.
+
+```sh
+bun run test:app                                   # build, then the smoke suite on this machine
+bun run test:app:linux                             # the same, in a Linux box under Xvfb
+bun run test:app:linux -- test/app/smoke.test.ts -t palette
+```
+
+- `harness.ts` is the only launcher: `launchApp(root)` seeds a throwaway `--user-data-dir` whose
+  `state.json` reopens `root`, pins the content size to 1200x800, turns the update check off, and
+  waits for a sidebar row. Always pair it with `closeApp` in `afterEach`.
+- `fixtures.ts` `httpWorkspace()` copies `test/fixtures/http-ws` to `<tmp>/admin-api` and points its
+  `QC` environment at an in-process server, because the app has no `--var`.
+- The renderer has no `data-testid`. Select by role and label: rows are `[role="treeitem"]`, open
+  tabs are `[role="tablist"][aria-label="Open requests"] [role="tab"]`, and shortcuts are
+  `ControlOrMeta+…` since the renderer reads `metaKey || ctrlKey`.
+- The root program has no `lib.dom`, so code that runs in the page is a string passed to `evaluate`.
+
+**The Linux box** is `test/app/docker/`: `node:22-bookworm` with Xvfb on `:1`, openbox, ffmpeg, and a
+`fonts.conf` mapping `system-ui` to Liberation Sans and `ui-monospace` to JetBrains Mono so text has
+macOS metrics. `run.ts` calls `docker compose run --rm --build`; `command.ts` turns the arguments
+into the `bash -c` line, and is unit tested in `test/app-box.test.ts`. The repository is bind
+mounted at `/work`, with every `node_modules` in a named volume so the host's macOS binaries are
+never loaded. The box runs as root, so `PREMAN_HEADLESS=1` adds `--no-sandbox`.
+
+**README media.** `test/app/media/readme.media.test.ts` records `docs/media/<scene>.gif`, gated by
+`PREMAN_README_MEDIA` as well (`1` for every scene, `send,palette` for some):
+
+```sh
+bun run readme:media                    # in the box (the default)
+bun run readme:media -- --media=import  # one scene
+bun run readme:media:host               # on this machine; needs ffmpeg on PATH
+```
+
+`recorder.ts` takes frames from the DevTools screencast and encodes them with ffmpeg; `timeline.ts`
+turns frame timestamps into the concat list and is unit tested in `test/readme.test.ts`, which also
+checks that every relative link and image in the README exists. `pace.ts` draws the pointer and the
+shortcut badge, because a screencast shows neither. A failed scene leaves
+`<tmpdir>/preman-readme-<scene>-failure.png`; in the box that is the container's `/tmp`, so rerun on
+the host to see it.
 
 ## Matching CI
 

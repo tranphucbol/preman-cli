@@ -32,12 +32,14 @@ a change works.
 | `packages/desktop/src/main/` or `src/engine/` | The `desktop.*` suites, then launch the app and read the log. See [diagnostics.md](references/diagnostics.md).                              |
 | `packages/desktop/src/renderer/`              | The renderer suites prove the logic; they do not prove the pixels. Finish with [ui-verification.md](references/ui-verification.md).         |
 | Anything on a hot path                        | Both perf gates. See the perf section of [automated-tests.md](references/automated-tests.md).                                               |
+| A flow a user clicks through, or Linux        | `bun run test:app`, or `bun run test:app:linux` in Docker. See the app section of [automated-tests.md](references/automated-tests.md).      |
+| Something a README GIF shows                  | `bun run readme:media` and commit the GIFs. See the app section of [automated-tests.md](references/automated-tests.md).                     |
 
 ## What the suite cannot tell you
 
 The renderer suites are pure-module tests. They import from `packages/desktop/src/renderer/` and
-assert on returned values. No suite asserts what a pane looks like, and none asserts the text of a
-tab. A change to a label, a colour token, a truncation rule or a layout passes a green suite while
+assert on returned values. The app smoke suite (`test/app/`) clicks through a few flows in the built
+app, but no suite asserts what a pane looks like. A change to a label, a colour token, a truncation rule or a layout passes a green suite while
 being visibly wrong, so a renderer change is verified by launching the built app and looking at it.
 [ui-verification.md](references/ui-verification.md) is how, without the two traps that make it
 appear impossible.
@@ -67,7 +69,7 @@ appear impossible.
 - [running.md](references/running.md) - build outputs, launching the app and the CLI, where app
   data lives, isolating and resetting it
 - [automated-tests.md](references/automated-tests.md) - the vitest layout, running one file, the
-  fixtures, and the two performance gates
+  fixtures, the two performance gates, the app smoke suite, the Linux box, and the README GIFs
 - [ui-verification.md](references/ui-verification.md) - driving a built Electron app over CDP to
   see and screenshot a renderer change
 - [diagnostics.md](references/diagnostics.md) - `preman.log`, the engine host output tail,
