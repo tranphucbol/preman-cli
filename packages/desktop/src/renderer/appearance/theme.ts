@@ -112,9 +112,10 @@ export interface Theme {
   readonly colors: Readonly<Record<ColorToken, string>>;
   readonly syntax: Readonly<Record<SyntaxToken, string>>;
   /**
-   * The one elevation in the app. A separate field rather than a colour token because it is a
-   * whole `box-shadow` value: a near-black shadow tuned for a near-black canvas is a smudge on a
-   * light one, so the offset and the alpha move with the palette, not only the hue.
+   * The drag preview's shadow. A separate field rather than a colour token because it is a whole
+   * `box-shadow` value: a near-black shadow tuned for a near-black canvas is a smudge on a light
+   * one, so the offset and the alpha move with the palette, not only the hue. Menus and dialogs do
+   * not use it: their two shadows are `ELEVATION` in `islands.ts`, keyed by `variant` alone.
    */
   readonly shadowFloat: string;
 }

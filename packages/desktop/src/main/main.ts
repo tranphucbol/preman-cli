@@ -253,11 +253,13 @@ function trafficLightPosition(barHeightPx: number): Electron.Point {
  * `backgroundColor` is what Chromium shows before and around the document — behind an overscroll,
  * and for the frame between the window appearing and the first paint. Left at the dark default
  * under a light theme it is a white app in a black frame, which is exactly the flash the
- * synchronous preference read exists to avoid.
+ * synchronous preference read exists to avoid. Under Islands it is the frame rather than the
+ * canvas: the title area and the window's edges are frame there, so a resize that outruns the
+ * renderer has to show frame too (ADR 058). The renderer decides which and sends the colour.
  */
 function applyWindowChrome(chrome: WindowChrome): void {
   if (window === undefined) return;
-  window.setBackgroundColor(chrome.canvas);
+  window.setBackgroundColor(chrome.background);
   if (process.platform === FRAMELESS_PLATFORM) window.setWindowButtonPosition(trafficLightPosition(chrome.barHeightPx));
 }
 
@@ -273,9 +275,10 @@ function createWindow(): BrowserWindow {
     ...(icon === undefined ? {} : { icon }),
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
-    // The stored copy of the theme's canvas, not a constant: this is decided before any script
-    // runs, so it is the one appearance value the main process has to be told rather than shown.
-    backgroundColor: preferences.canvas,
+    // The stored copy of the window's background — the frame under Islands, the canvas under
+    // Classic — not a constant: this is decided before any script runs, so it is the one
+    // appearance value the main process has to be told rather than shown.
+    backgroundColor: preferences.background,
     show: false,
     ...framelessOptions(preferences.barHeightPx),
     webPreferences: {

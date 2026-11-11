@@ -33,7 +33,7 @@ const OVERLAY_CLASS = "scrim-enter fixed inset-0 z-menu bg-black/50";
  * each, and a question about a name is not.
  */
 const CONTENT_CLASS =
-  "modal-enter fixed left-1/2 top-1/4 z-menu w-[32rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line-strong bg-panel p-4 shadow-2xl shadow-black/60";
+  "modal-enter fixed left-1/2 top-1/4 z-menu w-[32rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-dialog border border-line-strong bg-panel p-4 shadow-dialog";
 
 /** The vertical list tier from `docs/design-system.md`: the row height is the token, not a number. */
 const ROW_CLASS =

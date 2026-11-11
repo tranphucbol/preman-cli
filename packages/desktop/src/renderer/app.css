@@ -63,6 +63,21 @@
   --radius-md: 6px;
   --radius-lg: 8px;
 
+  /* The window style's shape (ADR 058): the island, and the floating ladder above it. A ladder
+   * rather than a free choice per component because a dialog that rounds more than the island it
+   * floats over reads as a toy, and a menu that rounds more than its rows reads as a pill. The
+   * island radius and gap come from the density preset; under Classic `apply.ts` writes
+   * `--radius-island: 0px` and the ladder falls back to the 8/6/4 the app drew before it existed.
+   *
+   * The literals are what `apply.ts` writes for the default preferences, Islands at `default`
+   * density, for the same reason as the heights below: the unstyled first frame is the applied one.
+   * test/renderer/appearance.test.ts holds them equal. */
+  --radius-island: 10px;
+  --radius-dialog: 10px;
+  --radius-popover: 8px;
+  --radius-tooltip: 4px;
+  --spacing-island-gap: 5px;
+
   /* Control heights, and the five values below them, are the `default` density preset.
    *
    * TypeScript owns these now: `renderer/appearance/density.ts` holds all three presets and
@@ -93,7 +108,7 @@
    * Unlike the five above it, this one is not part of a density preset, and that is deliberate: a
    * preset moves control heights, the gutter is the room around them, and scaling both compounds —
    * `compact` would lose height and inset at once and land somewhere nobody has looked at. If it
-   * ever should scale, it belongs in `density.ts` with the other eight, not in a second
+   * ever should scale, it belongs in `density.ts` with the others, not in a second
    * mechanism. */
   --spacing-gutter: 12px;
 
@@ -103,35 +118,44 @@
    * the worst background in the app to put text on and, across a 5,000-row tree, visual noise.
    * Tinting it toward the accent instead keeps it at hover luminance, so every ink level stays
    * legible on it, and selection reads as "the accent is here" rather than "this grey is 8% off". */
-  --color-canvas: #111214;
-  --color-panel: #17191c;
-  --color-control: #1d2024;
-  --color-hover: #23262b;
-  --color-selected: #1d2632;
+  --color-canvas: #0e1016;
+  --color-panel: #141721;
+  --color-control: #1a1e2a;
+  --color-hover: #212635;
+  --color-selected: #1b2741;
+
+  /* The frame the islands sit on, and a control raised on it. Not in any theme file: `islands.ts`
+   * derives both from `panel` (stepped away from `canvas` until the two hold 1.2:1, never past where
+   * ink and ink-dim stop reading), so every theme has a frame on the day it is added. The island
+   * edge is `canvas` — no visible outline — unless the frame could not reach 1.2:1, when it is
+   * `line`. These literals are preman-dark's derivation; the appearance test holds them to it. */
+  --color-frame: #20232c;
+  --color-frame-raised: #101219;
+  --color-island-edge: #0e1016;
 
   /* Decorative hairlines. These are 1px dividers and nothing else: never the sole affordance of
    * a control, because at 1.4:1 they cannot be. Anything load-bearing uses --color-glyph. */
-  --color-line: #2a2d32;
-  --color-line-strong: #383c43;
+  --color-line: #252a37;
+  --color-line-strong: #333a4b;
 
   /* Three text tiers, and all three clear WCAG AA (4.5:1) on all five surfaces above. A tool's
    * third tier carries response times, byte counts and file paths, which are exactly the things
    * you squint at, so "faint" here means quieter, never less legible. Verified, not eyeballed. */
-  --color-ink: #d8dade; /* worst case 10.8:1 */
-  --color-ink-dim: #a8adb6; /* worst case  6.7:1 */
-  --color-ink-faint: #8a8f98; /* worst case  4.7:1 */
+  --color-ink: #e2e6f0; /* worst case 11.9:1 */
+  --color-ink-dim: #adb4c4; /* worst case  7.2:1 */
+  --color-ink-faint: #8a91a3; /* worst case  4.7:1 */
 
   /* The non-text tier: chevrons, drag handles, and any border that is a control's only
-   * affordance. WCAG 1.4.11 asks 3:1 for those and this clears it everywhere (worst 3.3:1).
+   * affordance. WCAG 1.4.11 asks 3:1 for those and this clears it everywhere (worst 3.5:1).
    * It is a separate token from --color-ink-faint so that "too low for text" is unmissable. */
-  --color-glyph: #6e7684;
+  --color-glyph: #737b90;
 
   /* One accent, locked. There is no dimmed variant: the one that used to live here read at
    * 2.5:1 and every use of it would have been a contrast bug waiting for a screenshot. */
-  --color-accent: #6aa9ff;
-  --color-ok: #5ec27f;
-  --color-warn: #e0b355;
-  --color-danger: #ff7a6b;
+  --color-accent: #7c9cff;
+  --color-ok: #6fd49b;
+  --color-warn: #f0c674;
+  --color-danger: #ff8080;
 
   /* A search hit, and the one the reader is standing on. Two weights of the same idea, and the
    * same two `ui/editorTheme.ts` already solved for the editor: a band behind four characters is
@@ -182,18 +206,45 @@
   --duration-panel: 180ms;
   --duration-modal: 200ms;
 
-  /* The one elevation in the app, used by the one thing that genuinely floats: the drag preview.
-   * Tinted to the canvas hue rather than pure black, because a black shadow on a near-black
-   * surface reads as a smudge. Everything else groups with a hairline or with space. */
-  --shadow-float: 0 4px 12px rgb(9 10 12 / 0.55);
-
   /* HTTP method colours, keyed by verb so a row cannot invent its own. */
-  --color-method-get: #5ec27f;
-  --color-method-post: #e0b355;
-  --color-method-put: #6aa9ff;
-  --color-method-patch: #b78bff;
-  --color-method-delete: #ff7a6b;
-  --color-method-grpc: #4ec9c0;
+  --color-method-get: #6fd49b;
+  --color-method-post: #f0c674;
+  --color-method-put: #7cb7ff;
+  --color-method-patch: #c3a0ff;
+  --color-method-delete: #ff8080;
+  --color-method-grpc: #5ccfe0;
+}
+
+/*
+ * The shadows, outside `@theme` on purpose. Tailwind parses a `--shadow-*` theme value to thread
+ * `--tw-shadow-color` through it and bakes the result into the utility, so a value `apply.ts` wrote
+ * onto `:root` would never reach `shadow-popover`: every theme would cast preman-dark's shadow. Here
+ * they are plain properties, and the three utilities below read them through `var()`.
+ */
+:root {
+  /* The drag preview's shadow. Tinted to the canvas hue rather than pure black, because a black
+   * shadow on a near-black surface reads as a smudge. Each theme carries its own. */
+  --shadow-float: 0 4px 12px rgb(6 8 14 / 0.55);
+
+  /* What floats over the window, by how far it floats: menus, popups and tooltips, then dialogs
+   * and the palette. Keyed by the theme's variant and not by the window style — the reason for them
+   * is a dark canvas, on which a stock `shadow-lg` barely shows. A soft ambient shadow paired with
+   * a tight contact one, so the edge still reads over a darker island. These are the dark pair;
+   * `islands.ts` holds both. */
+  --shadow-popover: 0 6px 20px -2px rgb(0 0 0 / 0.5), 0 1px 4px rgb(0 0 0 / 0.4);
+  --shadow-dialog: 0 24px 64px -12px rgb(0 0 0 / 0.7), 0 2px 8px rgb(0 0 0 / 0.4);
+}
+
+@utility shadow-float {
+  box-shadow: var(--shadow-float);
+}
+
+@utility shadow-popover {
+  box-shadow: var(--shadow-popover);
+}
+
+@utility shadow-dialog {
+  box-shadow: var(--shadow-dialog);
 }
 
 /*

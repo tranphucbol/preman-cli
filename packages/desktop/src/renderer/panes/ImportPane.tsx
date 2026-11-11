@@ -62,7 +62,7 @@ const OVERLAY_CLASS = "scrim-enter fixed inset-0 z-menu bg-black/50";
  * `overflow-hidden` is what keeps those bands inside the rounded corner.
  */
 const CONTENT_CLASS =
-  "modal-enter fixed left-1/2 top-1/2 z-menu flex max-h-[calc(100vh-6rem)] w-[42rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-line-strong bg-panel shadow-2xl shadow-black/60";
+  "modal-enter fixed left-1/2 top-1/2 z-menu flex max-h-[calc(100vh-6rem)] w-[42rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-dialog border border-line-strong bg-panel shadow-dialog";
 
 /** Tall enough for a wrapped browser copy-as-cURL, short enough to leave the document visible. */
 const BOX_CLASS = "h-32 shrink-0 border-b border-line";
