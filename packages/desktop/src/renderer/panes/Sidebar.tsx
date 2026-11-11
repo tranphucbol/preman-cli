@@ -82,16 +82,30 @@ const OVERSCAN = 8;
 const INDENT_PX = 12;
 
 /**
- * The leading column: a request's verb, or a group's chevron and icon. Sized for `DELETE` beside a
- * caret, reserved on every row so every name in the tree starts at the same x, and right-aligned
- * so that whatever it holds sits against the name.
+ * The leading column: a request's verb, or a group's chevron and icon. Reserved on every row so
+ * every name in the tree starts at the same x, and right-aligned so that whatever it holds sits
+ * against the name.
+ *
+ * Sized in `ch` of the label's own monospace face, to the longest verb a row can show, so it is
+ * exactly as wide as that verb at every density and in any mono font. It used to be a fixed 64px,
+ * which left 20px or more of blank tree on the left of every row - more than an indent level -
+ * for a `DELETE` that needs about 40. The caret and icon of a group, 30px, fit inside it.
  *
  * One column and not two. A fixed chevron column ahead of a verb-width one put a group's caret a
  * whole `DELETE` away from its folder, which reads as the caret belonging to nothing: the caret and
  * the icon are one control - press either to expand - and they have to look like it. Right-aligning
  * the pair is what keeps that true without giving group names a different left edge to requests.
  */
-const LEAD_COLUMN_PX = 64;
+const LONGEST_VERB = "OPTIONS";
+const LEAD_COLUMN_WIDTH = `${LONGEST_VERB.length}ch`;
+
+/**
+ * Smaller than the 16px icon beside it, like every other disclosure caret in the app. Both glyphs
+ * carry their own side bearing, so the column's gap is only 2px: at 4px the bearings added up to
+ * nearly 8px of daylight and the caret read as a separate control, which the comment above says it
+ * must not.
+ */
+const CARET_SIZE = 12;
 
 /** Where a between-rows drop line starts: at the destination's indent, clear of nothing else. */
 const DROP_LINE_INSET_PX = 16;
@@ -552,7 +566,10 @@ function Row({
       style={{ transform: `translateY(${offset}px)`, paddingLeft: node.depth * INDENT_PX }}
     >
       {/* One fixed column for all three, so every name in the tree starts at the same x. */}
-      <span className="flex shrink-0 items-center justify-end gap-1 overflow-hidden" style={{ width: LEAD_COLUMN_PX }}>
+      <span
+        className="flex shrink-0 items-center justify-end gap-0.5 overflow-hidden font-mono text-2xs"
+        style={{ width: LEAD_COLUMN_WIDTH }}
+      >
         {group ? (
           <>
             {/*
@@ -563,6 +580,7 @@ function Row({
               the collapse is a store-level filter, so there is no height here to interpolate.
             */}
             <CaretRightIcon
+              size={CARET_SIZE}
               className={cn(
                 "text-glyph transition-transform duration-(--duration-glyph) ease-out",
                 !collapsed && "rotate-90",

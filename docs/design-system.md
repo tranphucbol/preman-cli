@@ -483,12 +483,14 @@ starts at the same x**, whatever kind of node it is.
 | Constant             | Value | What it is                                                               |
 | -------------------- | ----- | ------------------------------------------------------------------------ |
 | `INDENT_PX`          | 12    | one level of nesting                                                     |
-| `LEAD_COLUMN_PX`     | 64    | one right-aligned column: caret + folder for a group, verb for a request |
+| `LEAD_COLUMN_WIDTH`  | `7ch` | one right-aligned column: caret + folder for a group, verb for a request |
 | `GIT_COLUMN_PX`      | 10    | the unsaved mark or the git letter, on the far right                     |
 | `DROP_LINE_INSET_PX` | 16    | where a drop indicator starts, so it does not span the lead column       |
 
 The lead column is **one** column, right-aligned. It was two — a caret column then a verb column —
-and that is bug four: a group's caret sat a full `DELETE` width from its own folder icon. Anything
+and that is bug four: a group's caret sat a full `DELETE` width from its own folder icon. Its width
+is the longest verb, `OPTIONS`, in `ch` of the label's monospace face, so it follows density and
+the mono font and never leaves blank tree to the left of the widest label. Anything
 that adds a per-row affordance goes inside the existing column or the invariant is gone. The
 unsaved mark below is the case in point: it had nowhere else to go, so it took over the same
 `GIT_COLUMN_PX` slot the git letter already used, rather than opening a fourth column.
