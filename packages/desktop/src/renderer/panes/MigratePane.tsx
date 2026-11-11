@@ -22,7 +22,7 @@ import type { CloudWorkspace, MigrateOutcome, MigrationProgress } from "@preman/
 import { phaseMessage, progressDetail } from "@preman/desktop/renderer/model/migration.js";
 import { migrateFromPostman } from "@preman/desktop/renderer/stores/session.js";
 import { Button } from "@preman/desktop/renderer/ui/Controls.js";
-import { CheckIcon, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { CheckIcon, STATUS_WEIGHT, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Progress } from "@preman/desktop/renderer/ui/Progress.js";
 
@@ -354,7 +354,7 @@ function Failed({
   return (
     <>
       <p className="flex items-start gap-2 text-xs leading-relaxed text-danger" aria-live="polite">
-        <WarningIcon className="mt-0.5 shrink-0" />
+        <WarningIcon weight={STATUS_WEIGHT} className="mt-0.5 shrink-0" />
         <span>{stage.message}</span>
       </p>
       {stage.details.length > NOTHING && (

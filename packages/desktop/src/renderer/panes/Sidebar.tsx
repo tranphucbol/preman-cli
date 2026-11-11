@@ -63,10 +63,9 @@ import {
   CaretRightIcon,
   CollectionIcon,
   CommandIcon,
-  CopyIcon,
   DeleteIcon,
+  DuplicateIcon,
   FolderIcon,
-  FolderOpenIcon,
   ImportIcon,
   NewFolderIcon,
   NewRequestIcon,
@@ -569,7 +568,7 @@ function Row({
                 !collapsed && "rotate-90",
               )}
             />
-            <NodeIcon node={node} collapsed={collapsed} />
+            <NodeIcon node={node} />
           </>
         ) : (
           <MethodLabel node={node} />
@@ -632,11 +631,11 @@ function titleFor(mark: RowMark): string {
  * Groups only. A request row carries its verb instead: an icon repeated on every request row says
  * nothing the tree structure has not already said, and it costs the name the width it takes.
  */
-function NodeIcon({ node, collapsed }: { readonly node: CatalogNode; readonly collapsed: boolean }) {
+function NodeIcon({ node }: { readonly node: CatalogNode }) {
   if (node.kind === "collection") {
     return <CollectionIcon className="text-ink-dim" />;
   }
-  return collapsed ? <FolderIcon className="text-ink-dim" /> : <FolderOpenIcon className="text-ink-dim" />;
+  return <FolderIcon className="text-ink-dim" />;
 }
 
 /** The verb, or what stands in its place. `ui/method.ts` owns both the labels and the colours. */
@@ -746,7 +745,7 @@ function SidebarContextMenu({ targetId, ...props }: { readonly targetId: string 
         thing you are pointing at, not another way to create something in it.
       */}
       {!group && (
-        <ContextItem icon={<CopyIcon />} onSelect={() => props.onDuplicate(node)}>
+        <ContextItem icon={<DuplicateIcon />} onSelect={() => props.onDuplicate(node)}>
           Duplicate
         </ContextItem>
       )}

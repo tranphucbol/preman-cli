@@ -20,6 +20,7 @@ import {
   CheckIcon,
   CollectionIcon,
   GLYPH_CLASS,
+  STATUS_WEIGHT,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { BANNER_MOTION, Banner } from "@preman/desktop/renderer/ui/Banner.js";
@@ -153,7 +154,7 @@ function ConflictBanner({ nodeId, orphaned }: { readonly nodeId: string; readonl
       {...BANNER_MOTION}
       className="flex shrink-0 items-center gap-2 border-b border-warn/40 bg-warn/10 px-gutter py-1.5"
     >
-      <WarningIcon className="shrink-0 text-warn" />
+      <WarningIcon weight={STATUS_WEIGHT} className="shrink-0 text-warn" />
       <span className="text-xs text-ink">{orphaned ? DELETED_ON_DISK : CHANGED_ON_DISK}</span>
       <div className="ml-auto flex gap-1.5">
         {orphaned ? null : (

@@ -67,6 +67,7 @@ The CLI's own design predates the practice.
 | [056](056-the-log-can-be-watched-while-it-is-written.md)            | The log can be watched while it is written                             |
 | [057](057-lint-restates-the-runner-rather-than-running-it.md)       | Lint restates the runner rather than running it                        |
 | [058](058-the-window-is-islands-on-a-frame.md)                      | The window is islands on a frame                                       |
+| [059](059-one-glyph-per-verb-across-both-apps.md)                   | One glyph per verb across both apps                                    |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -437,5 +438,12 @@ deliberately does not follow the radius, because at 12px it already clears it. T
 10px each way of the window, a rounded clip over the virtualized panes that has to be read against
 the perf budgets, and README media that is stale until it is re-recorded. No control moves:
 TableCraft's stripes were drafted and dropped, so the toggles and the environment picker stay put.
+
+059 follows TableCraft again, this time glyph by glyph: every verb the two apps share draws the same
+Phosphor mark, and Send, Run and Cancel take TableCraft's rounded run glyphs. Two swaps fix preman's
+own mistakes on the way — Copy and Duplicate had shared one glyph, and Format wore the braces the
+body is made of. Icons go to 16px in every density and weight starts to mean something: filled
+beside a label or on a status, bold to confirm a copy. A density token for the size was refused
+because no preset varies it; the cost is relearned glyphs and stale README media.
 
 `TEMPLATE.md` is the shape of a new one.

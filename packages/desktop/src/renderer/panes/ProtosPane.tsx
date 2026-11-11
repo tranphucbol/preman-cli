@@ -58,9 +58,10 @@ import {
   AddIcon,
   CloseIcon,
   DeleteIcon,
-  FolderOpenIcon,
+  FolderIcon,
   LinkIcon,
   RefreshIcon,
+  STATUS_WEIGHT,
   WarningIcon,
 } from "@preman/desktop/renderer/ui/icons.js";
 import { AnimatePresence } from "@preman/desktop/renderer/ui/motion.js";
@@ -550,11 +551,11 @@ function PlannedRow({ entry }: { readonly entry: PlannedSpec }) {
     <div className="flex min-h-row flex-col justify-center gap-0.5 border-b border-line px-gutter py-1">
       <div className="flex items-center gap-2">
         {entry.link === undefined ? (
-          <WarningIcon className="shrink-0 text-warn" />
+          <WarningIcon weight={STATUS_WEIGHT} className="shrink-0 text-warn" />
         ) : entry.replaces === undefined ? (
           <AddIcon className="shrink-0 text-glyph" />
         ) : (
-          <FolderOpenIcon className="shrink-0 text-glyph" />
+          <FolderIcon className="shrink-0 text-glyph" />
         )}
         <span
           className={cn(

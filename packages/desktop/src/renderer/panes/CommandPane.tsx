@@ -51,7 +51,14 @@ import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
 import type { Tab } from "@preman/desktop/renderer/stores/tabs.js";
 import { CodeEditor } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
-import { CheckIcon, CloseIcon, CopyIcon, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
+import {
+  CheckIcon,
+  CloseIcon,
+  CONFIRMATION_WEIGHT,
+  CopyIcon,
+  STATUS_WEIGHT,
+  WarningIcon,
+} from "@preman/desktop/renderer/ui/icons.js";
 import { TOKEN_COLOR } from "@preman/desktop/renderer/ui/template.js";
 
 /**
@@ -138,7 +145,7 @@ export function CommandPane({ tab, onDismiss }: CommandPaneProps): React.JSX.Ele
       {preview.kind === "rejected" ? (
         <div className="min-h-0 flex-1 overflow-auto p-gutter">
           <p className="flex items-start gap-2 text-xs leading-relaxed text-danger" aria-live="polite">
-            <WarningIcon className="mt-0.5 shrink-0" />
+            <WarningIcon weight={STATUS_WEIGHT} className="mt-0.5 shrink-0" />
             {preview.message}
           </p>
           {preview.details.length > 0 && (
@@ -265,7 +272,7 @@ function CopyButton({ preview }: { readonly preview: Preview }): React.JSX.Eleme
    */
   return (
     <IconButton label={copied ? COPIED_LABEL : COPY_LABEL} disabled={!canCopy(preview)} onClick={onClick}>
-      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? <CheckIcon weight={CONFIRMATION_WEIGHT} /> : <CopyIcon />}
     </IconButton>
   );
 }

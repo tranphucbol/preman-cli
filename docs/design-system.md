@@ -240,6 +240,13 @@ below AA for anything with words in it. It is for carets, drag handles, the sele
 a border that is a control's only affordance. `GLYPH_CLASS` in `ui/icons.ts` is the same value
 named for that use. If you are about to put `text-glyph` on a string, you want `text-ink-faint`.
 
+**An icon is TableCraft's glyph for the same verb, at 16px, and its weight is a rule.** Decision 59
+is why. Reach for a name in `ui/icons.ts`, never for `@phosphor-icons/react` at a call site, and
+never pass `size` unless the glyph is a mark (the 24px failure mark) or a caret (12px). Leave
+`weight` alone too: `Button` fills its icon because a label sits beside it, `IconButton` stays
+regular, and the only call-site weights are `CONFIRMATION_WEIGHT` on the tick that answers a copy
+and `STATUS_WEIGHT` on a warning that marks one row or notice — not on a heading that names a kind.
+
 `--color-accent` has no dimmed variant, deliberately: the one that used to exist read at 2.5:1.
 The accent is a fill exactly once per pane — the thing you came there to press.
 

@@ -2,8 +2,14 @@
  * The icon set, enumerated.
  *
  * One family, Phosphor, chosen because a request client needs folder, file-code, play, plug, key,
- * terminal and gear glyphs in one consistent hand. Nothing here is hand-drawn: an `svg` with a
- * `path` typed from memory is how an icon set stops being a set.
+ * terminal and gear glyphs in one consistent hand. The glyph for each verb is the one table-craft
+ * draws for the same verb, so the two apps read as one family when they sit side by side; see
+ * `docs/decisions/059`.
+ *
+ * Nothing here is hand-drawn except `runGlyphs.tsx`, which is table-craft's file and not a
+ * drawing made here: three shapes on Phosphor's own `IconBase`, so they take the same size,
+ * colour and context as the rest. An `svg` with a `path` typed from memory is how an icon set
+ * stops being a set.
  *
  * Re-exported by name rather than imported ad hoc at each call site so that this file is the
  * audit. If a component wants a glyph, it appears here first, which makes "how many icons does
@@ -27,7 +33,6 @@ export {
   ArrowsInLineVertical as CollapseAllIcon,
   ArrowsOutLineVertical as ExpandAllIcon,
   ArrowSquareOut as RevealIcon,
-  BracketsCurly as FormatIcon,
   Broom as ClearIcon,
   // The two halves of "go to the next one of these", in the log search. Down and up rather than
   // right and left because the thing being stepped through is a column of lines, and a caret
@@ -35,7 +40,9 @@ export {
   CaretDown as NextMatchIcon,
   CaretRight as CaretRightIcon,
   CaretUp as PreviousMatchIcon,
-  CaretUpDown as PickerIcon,
+  // One caret, the way it opens. The up-down pair is the macOS popup button, and every picker
+  // here is a Radix menu that drops below its trigger rather than one that centres on it.
+  CaretDown as PickerIcon,
   Check as CheckIcon,
   CheckCircle as PassIcon,
   Circle as UnknownIcon,
@@ -47,15 +54,27 @@ export {
   // the two would be one glyph meaning two things. The boxed one is the command aside: at 14px the
   // rectangle is the only part of either that reads, and a box around code is a code *panel*.
   CodeBlock as CommandIcon,
-  Copy as CopyIcon,
+  // Two verbs, two glyphs: the single sheet puts text on the clipboard, the stacked pair makes a
+  // second request in the tree. One glyph for both made "Duplicate" in the sidebar menu read as
+  // "copy this request's path".
+  Copy as DuplicateIcon,
+  CopySimple as CopyIcon,
   Export as ExportIcon,
+  // Deliberately not `Export` mirrored: this Phosphor release has no `Import`, and reusing the
+  // export glyph would make the sidebar header's new button read as a second export. A file taking
+  // an arrow is what an import is here - a cURL, a collection, something that becomes a file.
+  FileArrowDown as ImportIcon,
   FileCode as RequestIcon,
   FilePlus as NewRequestIcon,
   FloppyDisk as SaveIcon,
-  Folder as FolderIcon,
-  FolderOpen as FolderOpenIcon,
-  FolderPlus as NewFolderIcon,
+  // One folder glyph, open or shut. The tree's caret already says which, and an open folder beside
+  // an open caret said it twice in a 16px column that has room for one.
+  FolderSimple as FolderIcon,
+  FolderSimplePlus as NewFolderIcon,
   Funnel as FilterIcon,
+  // A gear, because that is what a desktop app's settings are drawn as; sliders read as a pane
+  // of adjustments to the thing on screen rather than to the app.
+  GearSix as SettingsIcon,
   GitBranch as BranchIcon,
   Globe as EnvironmentIcon,
   Key as AuthIcon,
@@ -64,15 +83,13 @@ export {
   // row the user can see rather than about the filesystem.
   LinkSimple as LinkIcon,
   ListMagnifyingGlass as PaletteIcon,
-  LockSimple as SecureIcon,
-  LockSimpleOpen as InsecureIcon,
+  Lock as SecureIcon,
+  LockOpen as InsecureIcon,
   // A bolt with no label, in a pane whose primary action is Send, reads as "run this"; a wand
   // reads as "make one for me", which is what generating an example does.
   MagicWand as GenerateIcon,
   MagnifyingGlass as SearchIcon,
   PencilSimple as RenameIcon,
-  Play as SendIcon,
-  PlayCircle as RunnerIcon,
   Plus as AddIcon,
   Prohibit as UnsupportedIcon,
   // Watching the log, on the button that starts and stops it. Not `SendIcon`'s triangle and not
@@ -83,19 +100,23 @@ export {
   // The pane itself, drawn as a pane. The toggle is the only thing on screen naming the sidebar
   // while the sidebar is gone, so it has to be the noun and not a direction.
   SidebarSimple as SidebarIcon,
-  Sliders as SettingsIcon,
   Stack as CollectionIcon,
-  Stop as CancelIcon,
   Terminal as ConsoleIcon,
+  // Reformat the body, by indenting it. Not the braces: those are the JSON they act on, and a
+  // toolbar whose button is the content's own glyph reads as a label rather than as a verb.
+  TextIndent as FormatIcon,
   Trash as DeleteIcon,
-  // Deliberately not `Export` mirrored: this Phosphor release has no `Import`, and reusing the
-  // export glyph would make the sidebar header's new button read as a second export. A tray
-  // taking an arrow is the other half of that pair - something arrives and stays.
-  TrayArrowDown as ImportIcon,
   Warning as WarningIcon,
   X as CloseIcon,
   XCircle as FailIcon,
 } from "@phosphor-icons/react";
+
+/**
+ * A request's verbs - send it, run the whole collection, stop - as table-craft draws Run, Run All
+ * and Cancel. Phosphor's `Play` and `Stop` round their corners by 16 of 256 units, which reads as
+ * sharp at 16px; these are solid at every weight, so a filled button and an outlined one agree.
+ */
+export { RunGlyph as SendIcon, RunAllGlyph as RunnerIcon, StopGlyph as CancelIcon } from "./runGlyphs.js";
 
 export { IconContext } from "@phosphor-icons/react";
 
@@ -105,11 +126,23 @@ export type { Icon } from "@phosphor-icons/react";
 /**
  * One size and one weight for the whole app, applied through `IconContext` at the root.
  *
- * 14px against a 13px body size and a 28px row: an icon that matches the cap height of the text
- * beside it reads as punctuation, and an icon a size larger reads as a button. Most of these are
- * punctuation.
+ * 16px, table-craft's size, in every density: the glyph is the same drawing at 24px rows and at
+ * 32px ones, and the controls it sits in are at least 24px, so it keeps four pixels either side
+ * even at its tightest. Regular, the outline, is what an icon-only control and a row draw.
  */
-export const ICON_DEFAULTS = { size: 14, weight: "regular" } as const;
+export const ICON_DEFAULTS = { size: 16, weight: "regular" } as const;
+
+/**
+ * A `Button` that has a label beside its icon fills the icon, table-craft's rule: the outline is
+ * the glyph standing alone, and next to a word it is the word's mark rather than the control.
+ */
+export const LABELLED_ICON = { ...ICON_DEFAULTS, weight: "fill" } as const;
+
+/** A transient confirmation - the tick after a copy - is drawn bold so it reads as the answer. */
+export const CONFIRMATION_WEIGHT = "bold";
+
+/** A status mark at the head of an error or warning line is solid, so it reads before the words. */
+export const STATUS_WEIGHT = "fill";
 
 /** Row affordances (chevrons, handles) sit on `--color-glyph`, which clears 3:1 but not 4.5:1. */
 export const GLYPH_CLASS = "text-glyph";

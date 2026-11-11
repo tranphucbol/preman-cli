@@ -13,7 +13,13 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 
-import { CheckIcon, CopyIcon, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
+import {
+  CheckIcon,
+  CONFIRMATION_WEIGHT,
+  CopyIcon,
+  STATUS_WEIGHT,
+  WarningIcon,
+} from "@preman/desktop/renderer/ui/icons.js";
 import { IconButton } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { m } from "@preman/desktop/renderer/ui/motion.js";
@@ -116,7 +122,7 @@ export function Banner({
       {...BANNER_MOTION}
       className={cn("flex shrink-0 items-start gap-2 border-b px-gutter py-1.5", SURFACE_CLASS[tone])}
     >
-      <WarningIcon className={cn("mt-px shrink-0", ICON_CLASS[tone])} />
+      <WarningIcon weight={STATUS_WEIGHT} className={cn("mt-px shrink-0", ICON_CLASS[tone])} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-xs text-ink">{message}</span>
@@ -191,7 +197,7 @@ function CopyErrorButton({
 
   return (
     <IconButton label={copied ? "Copied" : "Copy error"} onClick={onClick}>
-      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? <CheckIcon weight={CONFIRMATION_WEIGHT} /> : <CopyIcon />}
     </IconButton>
   );
 }
