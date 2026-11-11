@@ -154,6 +154,10 @@ function ImportFlow({
 
   const plan = useCallback(
     async (pasted: string) => {
+      // The editor commits again on blur, and the press on Import is what blurs it. Re-planning
+      // the same text there turned the button back to disabled between mousedown and mouseup,
+      // which swallowed the click, and reset a name the user had typed over.
+      if (pasted === asked.current) return;
       asked.current = pasted;
       if (pasted.trim() === "") {
         setPreview(NO_PREVIEW);
