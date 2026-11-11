@@ -66,6 +66,8 @@ The CLI's own design predates the practice.
 | [055](055-the-update-lives-in-the-title-bar.md)                     | The update lives in the title bar                                      |
 | [056](056-the-log-can-be-watched-while-it-is-written.md)            | The log can be watched while it is written                             |
 | [057](057-lint-restates-the-runner-rather-than-running-it.md)       | Lint restates the runner rather than running it                        |
+| [058](058-the-window-is-islands-on-a-frame.md)                      | The window is islands on a frame                                       |
+| [059](059-the-pane-toggles-move-to-stripes.md)                      | The pane toggles move to stripes, and the environment to the title bar |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -423,5 +425,28 @@ statically and grades them, error against warning, with `--strict` for CI. The c
 duplication, paid down by naming each rule and pinning it to the branch it mirrors; the thing
 deliberately not attempted is variables, because a `{{token}}` a script sets at run time is
 unresolved at rest for good reason.
+
+058 is ported from another app rather than argued from scratch: TableCraft's
+decisions 141 and 150, taken together. The panes become rounded `canvas` islands on a `frame` that
+no theme declares — it is stepped from `panel` until it reaches JetBrains' 1.2:1 against `canvas`,
+stopped early where the chrome's text would fail the audit, with a `line` edge making up whatever
+separation the cap cost. A frame token was refused because 42 of the 43 themes are generated from
+palettes that have no such colour; JetBrains' own frame was refused because it misses its own floor.
+Islands is the default and Classic a setting, density gains a gap and a radius, and every floating
+surface takes its radius from one ladder with two shadows keyed on the colour scheme. The gutter
+deliberately does not follow the radius, because at 12px it already clears it. The cost is about
+10px each way of the window, a rounded clip over the virtualized panes that has to be read against
+the perf budgets, and README media that is stale until it is re-recorded.
+
+059 moves two controls the new chrome made awkward, and keeps the rules that placed them. 034 put
+the sidebar toggle in the footer because the footer already held the console's and because each
+toggle belongs outside its pane, in the corner nearest it; stripes down each side of the window
+satisfy that rule more literally than the footer did, and they are where an open toggle can be
+drawn as a small island instead of an indistinct square on the frame. The environment picker moves
+from the end of the tab row, where it looked like a property of the active tab, to the title bar
+that 055 already made the home of window-wide facts — placed between the update chip and the gear
+so the gear stays pinned and the chip still grows into empty space. The cost is width on both sides
+and the end of 058's promise that Classic is pixel-identical, accepted because a style setting that
+also moved controls would be two layouts behind one switch.
 
 `TEMPLATE.md` is the shape of a new one.
