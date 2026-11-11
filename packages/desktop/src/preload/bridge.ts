@@ -153,7 +153,7 @@ export const TRAFFIC_LIGHT_HEIGHT_PX = 12;
  * painted before the renderer has loaded. A literal because preload may not import the renderer;
  * `test/renderer/islands.test.ts` holds it equal to the derivation.
  */
-export const DEFAULT_BACKGROUND = "#232527";
+export const DEFAULT_BACKGROUND = "#20232c";
 
 /**
  * How tightly the interface is packed. Three presets rather than a scale slider: every row height,

@@ -460,8 +460,8 @@ everything that is a 5xx reads `danger`. `NOT_FOUND` and `404` are therefore the
 because they are the same event. A code name this build does not know reads `danger`, since an
 unrecognised status is no evidence that the caller can fix it.
 
-The filled pairs are audited like every other: `ok` 6.72:1, `warn` 7.52:1, `danger` 5.97:1 on their
-own `/10` tint over `--color-panel`, and `neutral` 7.26:1 on `--color-control` — a grey tint on a
+The filled pairs are audited like every other: `ok` 8.14:1, `warn` 9.04:1, `danger` 6.35:1 on their
+own `/10` tint over `--color-panel`, and `neutral` 8.00:1 on `--color-control` — a grey tint on a
 grey surface is a smudge, not a tag.
 
 What the tag grades is the status. What surrounds it does not: the mark and the report block in
