@@ -25,6 +25,12 @@ const TOOLTIP_DELAY_MS = 400;
 
 /** How long "already explaining things" lasts. Within it, the next tooltip skips the delay. */
 const TOOLTIP_SKIP_DELAY_MS = 300;
+/**
+ * Kept off the window's edge. Radix's default of 0 let the status bar's sidebar toggle open its
+ * tooltip flush against the left edge of the window, over the island's corner, which reads as a
+ * surface that slipped rather than one that floats.
+ */
+const TOOLTIP_COLLISION_PADDING_PX = 6;
 
 /**
  * The transition list is spelled out rather than `transition-colors` plus `transition-transform`,
@@ -148,7 +154,8 @@ export function Tooltip({
         <TooltipPrimitive.Content
           side={side}
           sideOffset={6}
-          className="surface-enter z-tooltip max-w-72 rounded-sm border border-line-strong bg-panel px-2 py-1 text-2xs text-ink shadow-lg shadow-black/40 [transition-duration:var(--duration-tooltip)]"
+          collisionPadding={TOOLTIP_COLLISION_PADDING_PX}
+          className="surface-enter z-tooltip max-w-72 rounded-tooltip border border-line-strong bg-panel px-2 py-1 text-2xs text-ink shadow-popover [transition-duration:var(--duration-tooltip)]"
         >
           {content}
         </TooltipPrimitive.Content>
@@ -392,7 +399,7 @@ const SELECT_TRIGGER_CLASS =
  * not clip `DELETE`, but a wide trigger should not be re-flowed by a narrow list either.
  */
 const SELECT_CONTENT_CLASS =
-  "surface-enter z-menu min-w-[var(--radix-select-trigger-width)] rounded-md border border-line-strong bg-panel p-1 shadow-lg shadow-black/40";
+  "surface-enter z-menu min-w-[var(--radix-select-trigger-width)] rounded-popover border border-line-strong bg-panel p-1 shadow-popover";
 
 const SELECT_VIEWPORT_CLASS = "max-h-[var(--radix-select-content-available-height)]";
 

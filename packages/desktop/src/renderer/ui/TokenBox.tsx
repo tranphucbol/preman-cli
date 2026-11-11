@@ -24,7 +24,7 @@ import type { TokenReporter } from "./template.js";
 
 /** `Menu.tsx`'s surface. There is one kind of floating panel in this app, and this is it. */
 const CONTENT_CLASS =
-  "z-menu flex w-72 flex-col gap-2 rounded-md border border-line-strong bg-panel p-2.5 shadow-lg shadow-black/40";
+  "z-menu flex w-72 flex-col gap-2 rounded-popover border border-line-strong bg-panel p-2.5 shadow-popover";
 
 const NOTE_CLASS = "text-2xs leading-snug text-ink-faint";
 const LABEL_CLASS = "text-2xs text-ink-dim";

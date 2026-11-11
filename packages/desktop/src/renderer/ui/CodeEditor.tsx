@@ -33,6 +33,7 @@ import {
   keymap,
   lineNumbers,
   placeholder as placeholderExtension,
+  tooltips,
 } from "@codemirror/view";
 import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
@@ -127,6 +128,10 @@ function baseExtensions(
       indentWithTab,
     ]),
     EditorView.lineWrapping,
+    // Out of the island: inside it `--color-panel` is the canvas, so a tooltip left in the editor's
+    // DOM would paint the surface it floats over. On the body it is raised in both window styles,
+    // and no island's `overflow: hidden` can clip it.
+    tooltips({ parent: document.body }),
     theme,
     LANGUAGE_EXTENSION[language](unresolved),
     ...(gutter ? [lineNumbers(), highlightActiveLineGutter(), foldGutter()] : []),

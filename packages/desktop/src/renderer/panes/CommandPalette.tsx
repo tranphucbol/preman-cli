@@ -38,7 +38,7 @@ import {
  */
 const OVERLAY_CLASS = "fixed inset-0 z-menu bg-black/50";
 const CONTENT_CLASS =
-  "fixed left-1/2 top-24 z-menu w-[36rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-lg border border-line-strong bg-panel shadow-2xl shadow-black/60";
+  "fixed left-1/2 top-24 z-menu w-[36rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-dialog border border-line-strong bg-panel shadow-dialog";
 
 const OVERSCAN = 6;
 /** The list's own height. Ten rows: enough to choose from, short enough to read at a glance. */

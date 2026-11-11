@@ -197,6 +197,19 @@ Five surfaces, darkest to lightest, and each has one job.
 | `bg-hover`    | pointer hover, and a highlighted menu item                           |
 | `bg-selected` | the selected row — tinted toward the accent, not a lighter grey      |
 
+Two more sit behind them under Islands, and neither is a sixth surface a component reaches for:
+
+| Token                  | What it is                                                             |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `--color-frame`        | the window around the islands, and the title and status bars on it     |
+| `--color-frame-raised` | a hovered or pressed control on the frame — `hover`'s step, from there |
+
+Only the shell's root paints `bg-frame`, behind the islands. The title bar and the status bar wear `FRAME_SURFACE` from `ui/Island.tsx`,
+which re-points `--color-panel` to the frame and `--color-hover` to `frame-raised` on the bar, and
+every button inside inherits that without a variant of its own. Both are derived rather than stored,
+and both are held to the same floors as the five: `ink` and `ink-dim` still read on them. The Islands
+section below says how.
+
 `bg-selected` is a **row** tint and stops there. It sits at hover luminance so that a 5,000-row tree
 does not shimmer, which costs it contrast — about 1.2:1 against the panel — and a row can afford
 that because it is full-width and carries its own text. A band drawn behind four characters cannot:
@@ -260,12 +273,85 @@ audited against the other 36. Decision 25 is why. The pill is opt-in per call si
 `CellField` paint one only where `onToken` is passed, because the search box and the rename dialog
 hold text nothing will ever interpolate.
 
+## Islands
+
+The default window style (ADR 058). The shell's three panes — sidebar, editor, console — are rounded
+cards on a frame, and under Classic they are the edge-to-edge columns they always were. It is one
+setting, and switching it never remounts a pane: `ui/Island.tsx` is the same `<div>` in both styles
+and only its classes change, so the editor keeps its cursor and the tree its scroll.
+
+**The frame is derived, never picked.** 42 of the 43 themes come from upstream palettes with no
+colour for it, so `frameColors()` in `appearance/islands.ts` makes one: `panel`, stepped away from
+`canvas` in the direction the ladder already runs, until it holds 1.2:1 against the island. It stops
+early where `ink` or `ink-dim` would stop meeting the audit's floors on it, because the title bar is
+read on the frame. `frame-raised` steps on by however far `hover` sits from `panel`, and back toward
+the island when going on would cost the text its floor — which in most themes it would.
+
+**An island is canvas, and it says so by re-pointing `--color-panel`.** The sidebar and the console
+paint `bg-panel`; inside an island they draw on canvas without either knowing which style is on. That
+is the whole mechanism, and it is also the one trap: anything that floats and is _not_ portalled out
+paints canvas too, and reads as a hole in the island rather than a surface above it. Every Radix
+surface portals to `body`. CodeMirror's tooltips do not by default, so `CodeEditor.tsx` mounts them
+there with `tooltips({ parent: document.body })`. A new floating thing portals, or it is wrong.
+
+**The edge is a fallback, not a style.** `--color-island-edge` is `canvas`, the island's own colour,
+whenever the frame reached 1.2:1 — no outline at all. Where the readability cap stopped it first
+(`ayu-light`, `fields-of-the-shire-light`, `onedarkpro-light`, `tokyonight-dark`) it is `line`, and
+the island gets a 1px rule because tone alone cannot separate it. The edge is a `border`, not a ring,
+so it moves every row by the same pixel and the sidebar column invariant holds.
+
+| Token                  | compact | default | comfortable | Classic |
+| ---------------------- | ------- | ------- | ----------- | ------- |
+| `--spacing-island-gap` | 4px     | 5px     | 6px         | unused  |
+| `--radius-island`      | 8px     | 10px    | 10px        | 0px     |
+
+The gap and the radius are density tokens, because a 10px corner on a 24px row reads as a toy. The
+island clips its corner with `overflow-hidden`, so focus outlines inside it draw inward
+(`-outline-offset-2`) rather than being cut in half at the edge.
+
+**The space between two islands is still a handle.** `Handle` takes `gutter` on the two boundaries
+that sit between islands, and only those two; under Islands it becomes a transparent strip the width
+of the gap with a 2px bar centred in it — `bg-glyph` under the pointer, `bg-accent` while dragging or
+focused, and nothing at rest, because at rest the gap is the separation. Every other boundary is the
+1px line described under Floating surfaces, in both styles.
+
+**`--spacing-gutter` stays 12px.** It is the inset of every pane, bar and dialog band, it was already
+wider than the largest island radius, and it sits outside the density presets on purpose. Tying it
+to the island would shrink it to 10px or 8px, move all thirty-odd `px-gutter` sites, and change
+Classic, which this style promised not to do.
+
 ## Floating surfaces
 
 Menus, select popups, dialogs and tooltips are one visual family, and they look alike because to
 the user they are alike. `Menu.tsx` holds `CONTENT_CLASS` and `ITEM_CLASS`; `Controls.tsx` mirrors
 them for the select popup. A new floating list copies those two constants rather than inventing a
 surface.
+
+They differ in one thing, how far they float, and that picks a rung of the ladder: a radius and a
+shadow, both tokens, never a Tailwind literal.
+
+| Rung    | Is                                                  | Radius            | Islands      | Classic | Shadow           |
+| ------- | --------------------------------------------------- | ----------------- | ------------ | ------- | ---------------- |
+| dialog  | a dialog, the import and migrate panes, the palette | `rounded-dialog`  | the island's | 8px     | `shadow-dialog`  |
+| popover | a list of choices: menu, select popup, `TokenBox`   | `rounded-popover` | 8px          | 6px     | `shadow-popover` |
+| tooltip | text and nothing else, CodeMirror's included        | `rounded-tooltip` | 4px          | 4px     | `shadow-popover` |
+
+**Corners step down as the surfaces get smaller.** A dialog takes the island's radius so it never
+rounds more than what it floats over; a popover is 8px because its rows are `rounded-sm` inside `p-1`,
+and 4 inset by 4 nests in 8 concentrically. Classic keeps the 8/6/4 that `rounded-lg`, `rounded-md`
+and `rounded-sm` drew before the ladder, so that style did not move a pixel of radius.
+
+**The shadows follow the theme, not the window style.** `ELEVATION` in `appearance/islands.ts` has a
+light pair and a dark pair, each a soft ambient shadow with a tight contact one under it, and a dark
+theme casts three to five times as dark as a light one because a stock black shadow barely reads on a
+dark canvas. A rung keeps its shadow wherever it opens — over the frame, over an island — and both
+styles changed when it arrived, on purpose. Only what floats casts a shadow at all: a pane, a card or
+a control has none. The drag preview is the one exception, and it keeps the theme's own `shadow-float`
+because it is a row, not a surface.
+
+`test/renderer/surfaceRadius.test.ts` holds all of this: it scans the renderer and fails on
+`rounded-lg`, on Tailwind's shadow scale, on a literal `shadow-black/…` and on a `shadow-dialog` that
+is not `rounded-dialog`. `appearance/` is exempt, because it is where the values are written down.
 
 | Layer                         | Token       |
 | ----------------------------- | ----------- |
@@ -283,7 +369,8 @@ Tooltips clear menus because a tooltip explaining a menu item has to. The drag p
 menus because the two are never on screen at once: a drag begins on pointer-down, which closes any
 open menu.
 
-**Every pane boundary is `ui/Handle.tsx`**, and it is one element a pixel across. Reach for it;
+**Every pane boundary is `ui/Handle.tsx`**, and it is one element a pixel across — except the two
+between islands, which the Islands section covers. Reach for it;
 never write a `Separator` at a call site. It paints `bg-line` at rest, `bg-glyph` under the pointer
 and `bg-accent` while being dragged, off `react-resizable-panels`' own `data-separator` attribute
 rather than CSS `:hover` — the library widens the grab to a 9px band and is the only thing that
@@ -437,7 +524,7 @@ the value and CSS receives it.
 
 | Value                     | Owned by                          | Written to CSS by                          |
 | ------------------------- | --------------------------------- | ------------------------------------------ |
-| the eight density tokens  | `appearance/density.ts`           | `appearance/apply.ts`, before React exists |
+| the ten density tokens    | `appearance/density.ts`           | `appearance/apply.ts`, before React exists |
 | 21 colours, 36 syntax     | `appearance/themes/*.ts`          | `appearance/apply.ts`                      |
 | `--editor-font-size`      | `Preferences` in `preload/bridge` | `appearance/apply.ts`                      |
 | `--font-user-{mono,sans}` | `Preferences`                     | `appearance/apply.ts`                      |
@@ -555,7 +642,7 @@ and exactly one in the stylesheet.
   it exists so that a rule drawn across two bands lines their content up. Reach for `px-gutter`
   when the padding is that inset and for the Tailwind scale when it is not — a gap between two
   fields is `gap-3`, not a second gutter. Unlike the heights it sits beside, the gutter does not
-  move with density; `app.css` says why.
+  move with density, nor with the window style; `app.css` says why, and so does the Islands section.
 - **A component library boundary.** shadcn components are vendored and retuned, per decision 9.
   There is no `@preman/ui` package and there should not be one for a single consumer.
 - **A general progress bar.** `ui/Progress.tsx` is drawn in `MigratePane` and nowhere else, because

@@ -28,7 +28,7 @@ const OVERLAY_CLASS = "scrim-enter fixed inset-0 z-menu bg-black/50";
  * bare `scale(0.98)` there would launch the dialog from the centre of the screen.
  */
 const CONTENT_CLASS =
-  "modal-enter fixed left-1/2 top-1/3 z-menu w-96 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line-strong bg-panel p-4 shadow-2xl shadow-black/60";
+  "modal-enter fixed left-1/2 top-1/3 z-menu w-96 -translate-x-1/2 -translate-y-1/2 rounded-dialog border border-line-strong bg-panel p-4 shadow-dialog";
 
 /** A rejected promise is not a sentence, so say the one thing that is always true instead. */
 const UNEXPECTED_FAILURE = "That did not work.";

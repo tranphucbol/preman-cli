@@ -188,6 +188,24 @@ export const THEME_SPEC = {
     fontSize: PANEL_LABEL_SIZE,
     padding: "2px 8px",
   },
+  // The unresolved-variable tooltip is text and nothing else, so it is `Controls.tsx`'s `Tooltip`
+  // rung of the floating ladder rather than CodeMirror's grey box: same surface, radius, hairline,
+  // shadow and layer. `CodeEditor.tsx` mounts it on `document.body`, which is what lets
+  // `--color-panel` here mean the panel and not the canvas an island re-points it to.
+  ".cm-tooltip": {
+    backgroundColor: "var(--color-panel)",
+    border: "1px solid var(--color-line-strong)",
+    borderRadius: "var(--radius-tooltip)",
+    boxShadow: "var(--shadow-popover)",
+    color: "var(--color-ink)",
+    fontFamily: "var(--font-sans)",
+    fontSize: PANEL_LABEL_SIZE,
+    overflow: "hidden",
+    zIndex: "var(--z-index-tooltip)",
+  },
+  ".cm-diagnostic": { padding: "4px 8px" },
+  ".cm-diagnostic-warning": { borderLeft: "2px solid var(--color-warn)" },
+  ".cm-diagnostic-error": { borderLeft: "2px solid var(--color-danger)" },
 };
 
 /**

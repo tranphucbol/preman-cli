@@ -206,6 +206,22 @@
   --duration-panel: 180ms;
   --duration-modal: 200ms;
 
+  /* HTTP method colours, keyed by verb so a row cannot invent its own. */
+  --color-method-get: #5ec27f;
+  --color-method-post: #e0b355;
+  --color-method-put: #6aa9ff;
+  --color-method-patch: #b78bff;
+  --color-method-delete: #ff7a6b;
+  --color-method-grpc: #4ec9c0;
+}
+
+/*
+ * The shadows, outside `@theme` on purpose. Tailwind parses a `--shadow-*` theme value to thread
+ * `--tw-shadow-color` through it and bakes the result into the utility, so a value `apply.ts` wrote
+ * onto `:root` would never reach `shadow-popover`: every theme would cast preman-dark's shadow. Here
+ * they are plain properties, and the three utilities below read them through `var()`.
+ */
+:root {
   /* The drag preview's shadow. Tinted to the canvas hue rather than pure black, because a black
    * shadow on a near-black surface reads as a smudge. Each theme carries its own. */
   --shadow-float: 0 4px 12px rgb(9 10 12 / 0.55);
@@ -217,14 +233,18 @@
    * `islands.ts` holds both. */
   --shadow-popover: 0 6px 20px -2px rgb(0 0 0 / 0.5), 0 1px 4px rgb(0 0 0 / 0.4);
   --shadow-dialog: 0 24px 64px -12px rgb(0 0 0 / 0.7), 0 2px 8px rgb(0 0 0 / 0.4);
+}
 
-  /* HTTP method colours, keyed by verb so a row cannot invent its own. */
-  --color-method-get: #5ec27f;
-  --color-method-post: #e0b355;
-  --color-method-put: #6aa9ff;
-  --color-method-patch: #b78bff;
-  --color-method-delete: #ff7a6b;
-  --color-method-grpc: #4ec9c0;
+@utility shadow-float {
+  box-shadow: var(--shadow-float);
+}
+
+@utility shadow-popover {
+  box-shadow: var(--shadow-popover);
+}
+
+@utility shadow-dialog {
+  box-shadow: var(--shadow-dialog);
 }
 
 /*
