@@ -283,3 +283,11 @@ against a fixture app-data directory; the success path is not, because it requir
 app. That is an untested code path in shipped software, and the reason it is acceptable is that its
 failure is total and immediate rather than subtle — it either returns a token or it raises with
 instructions.
+
+Live Postman 12.36.1 returned collection `auth` as an array of entries, unlike request object auth.
+The explicit migration policy for collections and folders selects `auth[0]`, preserving its
+credentials and unknown fields, and silently discards subsequent entries; empty or absent auth is
+absence. This policy does not establish Postman's runtime semantics for multiple entries. Request
+auth remains an object and is not normalized. Nested gRPC plan/write/load tests cover auth, message,
+metadata, scripts, and folders. Live read-only checks confirmed single-entry collection conversion;
+they do not establish compatibility with 11.58.3 or a complete migration of a real workspace.

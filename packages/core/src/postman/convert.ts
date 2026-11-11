@@ -270,8 +270,12 @@ function requestContents(item: PostmanSourceItem, treePath: string, order: numbe
  * `workspace/collections.ts` derives folder-versus-collection from tree position.
  */
 function definitionContents(detail: unknown, name: string, treePath: string, order: number): string {
-  const parsed: Record<string, unknown> = parseResponse(cloudCollectionSchema, detail, treePath);
-  const shaped = shape({ ...parsed, [KIND_KEY]: COLLECTION_KIND, [NAME_KEY]: name }, DEFINITION_KEY_ORDER);
+  const parsed = parseResponse(cloudCollectionSchema, detail, treePath);
+  // The migration policy selects the first entry, not an inferred active authentication mode.
+  const shaped = shape(
+    { ...parsed, auth: parsed.auth?.[0], [KIND_KEY]: COLLECTION_KIND, [NAME_KEY]: name },
+    DEFINITION_KEY_ORDER,
+  );
   return stringify({ ...(shaped as Record<string, unknown>), [ORDER_KEY]: order }, YAML_OPTIONS);
 }
 

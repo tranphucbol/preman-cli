@@ -2,9 +2,11 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { type PremanError, EXIT } from "@preman/core";
 import { migrateThroughProxy } from "@preman/core/api/migrate.js";
 import { fetchCloudWorkspace, fetchWorkspaceList } from "@preman/core/postman/fetch.js";
+import { planWorkspace } from "@preman/core/postman/convert.js";
 import { postmanProxy } from "@preman/core/postman/proxy.js";
 import { harvestToken } from "@preman/core/postman/session.js";
 import type { MigrationProgress } from "@preman/core";
@@ -59,6 +61,20 @@ describe("fetchCloudWorkspace", () => {
     const grpc = source.collections[1]!;
     expect(grpc.items.map((item) => item.kind)).toEqual(["grpc-request"]);
     expect(source.environments).toHaveLength(1);
+  });
+
+  it("givenCollectionAuthArrays_whenFetchedThenPlanned_thenRawArraysSurviveUntilDefinitionWriting", async () => {
+    const source = await fetchCloudWorkspace(proxy, WORKSPACE_ID);
+    const collection = source.collections.find((entry) => entry.id === GRPC_COLLECTION_ID)!;
+    const auth = (collection.detail as { auth: unknown[] }).auth;
+    expect(Array.isArray(auth)).toBe(true);
+    expect(auth).toHaveLength(1);
+    const plan = planWorkspace(source);
+    const definition = plan.files.find(
+      (file) => file.relativePath === "postman/collections/gRpc - Exchange/.resources/definition.yaml",
+    )!;
+    expect((parse(definition.contents) as { auth: unknown }).auth).toEqual(auth[0]);
+    expect((collection.detail as { auth: unknown }).auth).toEqual(auth);
   });
 
   it("givenANestedTree_whenFetched_thenChildrenKeepPostmanOrder", async () => {

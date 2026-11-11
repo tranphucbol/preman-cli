@@ -142,11 +142,7 @@ const collectionScriptSchema = z
   })
   .passthrough();
 
-const collectionAuthSchema = z
-  .object({
-    type: z.string(),
-  })
-  .passthrough();
+const collectionAuthSchema = z.object({ type: z.string() }).passthrough();
 
 /**
  * A child reference: an id, and what the id is.
@@ -172,7 +168,7 @@ export const cloudCollectionSchema = z
   .object({
     name: z.string(),
     description: z.string().optional(),
-    auth: collectionAuthSchema.optional(),
+    auth: z.array(collectionAuthSchema).optional(),
     scripts: z.array(collectionScriptSchema).optional(),
     variables: z.array(collectionVariableSchema).optional(),
     items: z.array(cloudItemStubSchema).optional().default([]),
