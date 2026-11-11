@@ -35,6 +35,8 @@ export const DESTINATION_LABEL = "In";
 export const DROPPED_TITLE = "Not imported";
 export const WARNINGS_TITLE = "Warnings";
 export const CLOSE_LABEL = "Close import";
+/** Beside the commit while the engine reads the box, where the summary of its answer will sit. */
+export const PLANNING_HINT = "Reading the command…";
 /** Shown in the empty box. A command, so the shape of what belongs there needs no prose. */
 export const PASTE_PLACEHOLDER = "curl 'https://api.example.com/orders' -H 'accept: application/json'";
 /**

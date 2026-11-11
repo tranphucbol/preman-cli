@@ -8,8 +8,8 @@
  * nothing else on screen competing for the keystroke, which is the one gesture the feature is for.
  *
  * The one gesture being a paste is why the box is the first thing in it. Everything below the box is
- * downstream of that text and appears only once the engine has read it: the summary, the name, the
- * destination, the flags that did not survive, and the document itself.
+ * downstream of that text and appears only once the engine has read it: the name, the destination,
+ * the flags that did not survive, the document itself, and the summary beside Import.
  *
  * Plan-then-apply, like the protos pane, for a sharper reason. A shell command is a word list
  * whose meaning depends on a table of flags nobody has memorised, and the interesting half of an
@@ -40,6 +40,7 @@ import {
   PASTE_LABEL,
   PASTE_PLACEHOLDER,
   pastedCommand,
+  PLANNING_HINT,
   previewLabel,
   previewTarget,
   previewVerb,
@@ -64,8 +65,17 @@ const OVERLAY_CLASS = "scrim-enter fixed inset-0 z-menu bg-black/50";
 const CONTENT_CLASS =
   "modal-enter fixed left-1/2 top-1/2 z-menu flex max-h-[calc(100vh-6rem)] w-[42rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-dialog border border-line-strong bg-panel shadow-dialog";
 
-/** Tall enough for a wrapped browser copy-as-cURL, short enough to leave the document visible. */
-const BOX_CLASS = "h-32 shrink-0 border-b border-line";
+/**
+ * Tall enough for a wrapped browser copy-as-cURL - eight lines - and short enough to leave the
+ * document visible under it. The height sits on a wrapper because `CodeEditor` is `flex-1`, whose
+ * zero basis beats any height given to it directly in this column and folded the box to one line.
+ */
+const BOX_CLASS = "flex h-44 shrink-0 flex-col border-b border-line";
+/** The YAML preview, held to a height the same way and for the same reason as the box. */
+const DOCUMENT_CLASS = "flex h-56 shrink-0 flex-col overflow-hidden rounded-sm border border-line";
+/** A label over a short list, at the size of a label and in sentence case like every other one. */
+const NOTE_TITLE_CLASS = "flex items-center gap-1.5 text-xs font-medium text-warn";
+const NOTE_LIST_CLASS = "mt-1 flex flex-col gap-0.5 pl-5 text-xs text-ink-dim";
 const NAME_FIELD_ID = "import-name";
 const DESTINATION_FIELD_ID = "import-destination";
 
@@ -247,18 +257,19 @@ function ImportFlow({
 
       {failure !== null && <Banner tone="danger" message={failure.message} details={failure.details} />}
 
-      <CodeEditor
-        value={text}
-        language="text"
-        gutter={false}
-        autoFocus
-        placeholder={PASTE_PLACEHOLDER}
-        className={BOX_CLASS}
-        onCommit={(next) => {
-          setText(next);
-          void plan(next);
-        }}
-      />
+      <div className={BOX_CLASS}>
+        <CodeEditor
+          value={text}
+          language="text"
+          gutter={false}
+          autoFocus
+          placeholder={PASTE_PLACEHOLDER}
+          onCommit={(next) => {
+            setText(next);
+            void plan(next);
+          }}
+        />
+      </div>
 
       {targets.length === 0 ? (
         <p className="p-gutter text-xs text-ink-faint">{NO_GROUPS_HINT}</p>
@@ -266,12 +277,12 @@ function ImportFlow({
         <div className="min-h-0 flex-1 overflow-auto">
           {preview.kind === "rejected" && (
             <div className="p-gutter">
-              <p className="flex items-start gap-2 text-xs leading-relaxed text-danger" aria-live="polite">
+              <p className="flex items-start gap-1.5 text-xs leading-relaxed text-danger" aria-live="polite">
                 <WarningIcon weight={STATUS_WEIGHT} className="mt-0.5 shrink-0" />
                 {preview.message}
               </p>
               {preview.details.length > 0 && (
-                <ul className="mt-2 flex flex-col gap-0.5 text-2xs text-ink-dim">
+                <ul className={NOTE_LIST_CLASS}>
                   {preview.details.map((detail) => (
                     <li key={detail}>{detail}</li>
                   ))}
@@ -299,9 +310,21 @@ function ImportFlow({
         The one control here that writes a file, so it is the one that says so in words and sits
         where a dialog's commit belongs. It is rendered even with nothing planned, disabled, rather
         than appearing once the preview arrives: a button that materialises under the pointer is a
-        button that gets clicked by accident.
+        button that gets clicked by accident. The request it would write is read out beside it, so
+        the commit and the thing committed are one line rather than a band apart.
       */}
-      <div className="flex h-bar shrink-0 items-center justify-end border-t border-line px-gutter">
+      <div className="flex h-bar shrink-0 items-center gap-3 border-t border-line px-gutter">
+        <p className="flex min-w-0 flex-1 items-baseline gap-2 text-xs" aria-live="polite">
+          {preview.kind === "planning" && <span className="text-ink-faint">{PLANNING_HINT}</span>}
+          {preview.kind === "planned" && (
+            <>
+              <span className={cn("shrink-0 font-mono font-medium", methodClass(previewVerb(preview.plan)))}>
+                {previewLabel(preview.plan)}
+              </span>
+              <span className="truncate font-mono text-ink-dim">{previewTarget(preview.plan)}</span>
+            </>
+          )}
+        </p>
         <Button variant="primary" disabled={!canImport(preview, target, importing)} onClick={() => void runImport()}>
           {IMPORT_LABEL}
         </Button>
@@ -327,13 +350,8 @@ function Planned({
   readonly onTarget: (id: string) => void;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-3 p-gutter">
-      <p className="flex items-baseline gap-2 text-xs">
-        <span className={cn("font-mono font-medium", methodClass(previewVerb(plan)))}>{previewLabel(plan)}</span>
-        <span className="truncate font-mono text-ink-dim">{previewTarget(plan)}</span>
-      </p>
-
-      <div className="flex items-start gap-3">
+    <div className="flex flex-col gap-4 p-gutter">
+      <div className="grid grid-cols-2 gap-3">
         <Labelled label={NAME_LABEL} htmlFor={NAME_FIELD_ID}>
           <Field
             id={NAME_FIELD_ID}
@@ -345,7 +363,7 @@ function Planned({
           />
         </Labelled>
         <Labelled label={DESTINATION_LABEL} htmlFor={DESTINATION_FIELD_ID}>
-          <Select id={DESTINATION_FIELD_ID} aria-label={DESTINATION_LABEL} value={target} onValueChange={onTarget}>
+          <Select id={DESTINATION_FIELD_ID} aria-label={DESTINATION_LABEL} value={target} onValueChange={onTarget} full>
             {targets.map((option) => (
               <SelectOption key={option.id} value={option.id}>
                 {option.label}
@@ -357,11 +375,11 @@ function Planned({
 
       {plan.dropped.length > 0 && (
         <div>
-          <p className="flex items-center gap-2 text-2xs font-medium tracking-wide text-warn uppercase">
+          <p className={NOTE_TITLE_CLASS}>
             <WarningIcon />
             {DROPPED_TITLE}
           </p>
-          <ul className="mt-1 flex flex-col gap-0.5 text-2xs text-ink-dim">
+          <ul className={NOTE_LIST_CLASS}>
             {plan.dropped.map((item) => (
               <li key={item.flag}>
                 <span className="font-mono">{item.flag}</span> — {item.reason}
@@ -373,11 +391,11 @@ function Planned({
 
       {plan.warnings.length > 0 && (
         <div>
-          <p className="flex items-center gap-2 text-2xs font-medium tracking-wide text-warn uppercase">
+          <p className={NOTE_TITLE_CLASS}>
             <WarningIcon />
             {WARNINGS_TITLE}
           </p>
-          <ul className="mt-1 flex flex-col gap-0.5 text-2xs text-ink-dim">
+          <ul className={NOTE_LIST_CLASS}>
             {plan.warnings.map((warning) => (
               <li key={warning}>{warning}</li>
             ))}
@@ -385,7 +403,9 @@ function Planned({
         </div>
       )}
 
-      <CodeEditor value={plan.contents} language="yaml" readOnly gutter={false} className="h-48 shrink-0" />
+      <div className={DOCUMENT_CLASS}>
+        <CodeEditor value={plan.contents} language="yaml" readOnly gutter={false} />
+      </div>
     </div>
   );
 }
