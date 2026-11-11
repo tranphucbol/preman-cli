@@ -24,6 +24,7 @@ import {
   TooltipProvider,
 } from "@preman/desktop/renderer/ui/Controls.js";
 import { Handle } from "@preman/desktop/renderer/ui/Handle.js";
+import { FRAME_SURFACE, Island } from "@preman/desktop/renderer/ui/Island.js";
 import {
   DropdownContent,
   DropdownItem,
@@ -112,6 +113,7 @@ import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
 import { useSearchStore } from "@preman/desktop/renderer/stores/search.js";
 import { useLogStore } from "@preman/desktop/renderer/stores/log.js";
 import { selectStatus, useUpdateStore } from "@preman/desktop/renderer/stores/update.js";
+import { useIslands } from "@preman/desktop/renderer/stores/appearance.js";
 
 const SIDEBAR_ID = "sidebar";
 const EDITOR_ID = "editor";
@@ -163,6 +165,25 @@ const RESPONSE_MIN = "15";
  */
 const COMMAND_DEFAULT = "32";
 const COMMAND_MIN = "18";
+/**
+ * Where the islands' outer gaps come from. The shell pads only its top and right; the left gap is
+ * the sidebar's and the bottom one the console's, each a margin inside its own panel, so it shrinks
+ * away with that pane. Padded on all four sides, a collapsed sidebar would leave the padding and its
+ * gutter side by side — a double gap — and the editor would jump a gap's width as the slide ended.
+ * With the gap inside the panel, the gutter handle left behind is the one gap that edge needs, and
+ * it is still the handle that drags the pane back open. Decision 58.
+ */
+const SHELL_ISLANDS_PADDING = "pt-island-gap pr-island-gap";
+const SIDEBAR_ISLAND_GAP = "ml-island-gap";
+const CONSOLE_ISLAND_GAP = "mb-island-gap ml-island-gap";
+/**
+ * A collapsed pane's island is hidden, not unmounted. At zero width its border alone would be a
+ * 2px rounded sliver against the window edge; `invisible` rather than `hidden` because `display:
+ * none` throws away the tree's scroll position, which keeping the pane mounted exists to preserve.
+ */
+const COLLAPSED_ISLAND = "invisible";
+/** The library's inner element scrolls by default; a pane mid-slide must clip, not grow a scrollbar. */
+const SHELL_PANEL_STYLE = { overflow: "hidden" } as const;
 /**
  * The explicit "none" the engine now accepts, which is not the same as nobody having chosen.
  *
@@ -258,6 +279,7 @@ const CREATE_ENVIRONMENT_ASK = {
 
 export function App(): React.JSX.Element {
   useEffect(connect, []);
+  const islands = useIslands();
   useEffect(() => {
     void refreshWorkspaces();
   }, []);
@@ -450,64 +472,77 @@ export function App(): React.JSX.Element {
          * both presence surfaces are within it and neither Radix nor a pane has to know it is
          * there. Decision 26. */}
         <MotionRoot>
-          <div className="flex h-full flex-col">
+          <div className={cn("flex h-full flex-col", islands && "bg-frame")}>
             <TitleBar onCreateWorkspace={showCreateWorkspace} />
             <HostBanner />
             <DegradedBanner />
             <FailureBanner failure={failure} onDismiss={dismissFailure} />
-            <Group
-              orientation="vertical"
-              className="min-h-0 flex-1"
-              defaultLayout={shell.defaultLayout}
-              onLayoutChanged={shell.onLayoutChanged}
-            >
-              <Panel id={WORKSPACE_ID} className="flex min-h-0 flex-col">
-                <Group
-                  orientation="horizontal"
-                  className="min-h-0 flex-1"
-                  defaultLayout={layout.defaultLayout}
-                  onLayoutChanged={layout.onLayoutChanged}
-                >
-                  <Panel
-                    id={SIDEBAR_ID}
-                    collapsible
-                    collapsedSize={SIDEBAR_COLLAPSED}
-                    defaultSize={SIDEBAR_OPEN}
-                    minSize={SIDEBAR_MIN}
-                    maxSize={SIDEBAR_MAX}
-                    className="flex min-w-0 flex-col bg-panel"
-                    // Lands on the library's own sized element, which is the parent of `className`
-                    // and the only node whose `flex-grow` is the pane's width. `app.css` reads it.
-                    data-sliding={sliding || undefined}
-                    onResize={(size) => {
-                      setSidebarOpen(size.inPixels > SIDEBAR_COLLAPSED);
-                    }}
-                    panelRef={setSidebarPanel}
-                  >
-                    <WorkspaceTree onAsk={setAsk} onFail={setFailure} onImport={showImport} />
-                  </Panel>
-                  <Handle axis="vertical" />
-                  <Panel id={EDITOR_ID} className="flex min-w-0 flex-col">
-                    <EditorPane onAsk={setAsk} onFail={setFailure} />
-                  </Panel>
-                </Group>
-              </Panel>
-              <Handle axis="horizontal" />
-              <Panel
-                id={CONSOLE_ID}
-                collapsible
-                collapsedSize={CONSOLE_COLLAPSED}
-                defaultSize={CONSOLE_COLLAPSED}
-                minSize={CONSOLE_MIN}
-                className="flex min-h-0 flex-col"
-                onResize={(size) => {
-                  setConsoleOpen(size.inPixels > CONSOLE_COLLAPSED);
-                }}
-                panelRef={setConsolePanel}
+            <div className={cn("flex min-h-0 flex-1 flex-col", islands && SHELL_ISLANDS_PADDING)}>
+              <Group
+                orientation="vertical"
+                className="min-h-0 flex-1"
+                defaultLayout={shell.defaultLayout}
+                onLayoutChanged={shell.onLayoutChanged}
               >
-                <ConsoleDrawer onClose={toggleConsole} />
-              </Panel>
-            </Group>
+                <Panel id={WORKSPACE_ID} className="flex min-h-0 flex-col">
+                  <Group
+                    orientation="horizontal"
+                    className="min-h-0 flex-1"
+                    defaultLayout={layout.defaultLayout}
+                    onLayoutChanged={layout.onLayoutChanged}
+                  >
+                    <Panel
+                      id={SIDEBAR_ID}
+                      collapsible
+                      collapsedSize={SIDEBAR_COLLAPSED}
+                      defaultSize={SIDEBAR_OPEN}
+                      minSize={SIDEBAR_MIN}
+                      maxSize={SIDEBAR_MAX}
+                      // The island paints the pane under Islands; this would fill its gap and corners.
+                      className={cn("flex min-w-0 flex-col", !islands && "bg-panel")}
+                      style={SHELL_PANEL_STYLE}
+                      // Lands on the library's own sized element, which is the parent of `className`
+                      // and the only node whose `flex-grow` is the pane's width. `app.css` reads it.
+                      data-sliding={sliding || undefined}
+                      onResize={(size) => {
+                        setSidebarOpen(size.inPixels > SIDEBAR_COLLAPSED);
+                      }}
+                      panelRef={setSidebarPanel}
+                    >
+                      <Island
+                        className={islands ? cn(SIDEBAR_ISLAND_GAP, !sidebarOpen && COLLAPSED_ISLAND) : undefined}
+                      >
+                        <WorkspaceTree onAsk={setAsk} onFail={setFailure} onImport={showImport} />
+                      </Island>
+                    </Panel>
+                    <Handle axis="vertical" gutter />
+                    <Panel id={EDITOR_ID} className="flex min-w-0 flex-col">
+                      <Island>
+                        <EditorPane onAsk={setAsk} onFail={setFailure} />
+                      </Island>
+                    </Panel>
+                  </Group>
+                </Panel>
+                <Handle axis="horizontal" gutter />
+                <Panel
+                  id={CONSOLE_ID}
+                  collapsible
+                  collapsedSize={CONSOLE_COLLAPSED}
+                  defaultSize={CONSOLE_COLLAPSED}
+                  minSize={CONSOLE_MIN}
+                  className="flex min-h-0 flex-col"
+                  style={SHELL_PANEL_STYLE}
+                  onResize={(size) => {
+                    setConsoleOpen(size.inPixels > CONSOLE_COLLAPSED);
+                  }}
+                  panelRef={setConsolePanel}
+                >
+                  <Island className={islands ? cn(CONSOLE_ISLAND_GAP, !consoleOpen && COLLAPSED_ISLAND) : undefined}>
+                    <ConsoleDrawer onClose={toggleConsole} />
+                  </Island>
+                </Panel>
+              </Group>
+            </div>
             <StatusBar
               consoleOpen={consoleOpen}
               onToggleConsole={toggleConsole}
@@ -689,9 +724,14 @@ function Palette({
  */
 function TitleBar({ onCreateWorkspace }: { readonly onCreateWorkspace: () => void }): React.JSX.Element {
   const gutter = window.preman.titleBarGutter;
+  const islands = useIslands();
   return (
     <header
-      className="flex h-bar shrink-0 items-center gap-2 border-b border-line bg-canvas px-2 drag-region"
+      className={cn(
+        "flex h-bar shrink-0 items-center gap-2 px-2 drag-region",
+        // Under Islands the row is the frame and the gap below it is the boundary, so no rule.
+        islands ? FRAME_SURFACE : "border-b border-line bg-canvas",
+      )}
       // Unset on a framed platform, so the class's own padding stands rather than being zeroed.
       style={gutter > 0 ? { paddingLeft: gutter } : undefined}
     >
@@ -1216,8 +1256,14 @@ function StatusBar({
 }): React.JSX.Element {
   const lines = useRunsStore((state) => state.console.length + state.sideRequests.length);
   const branch = useCatalogStore((state) => state.branch);
+  const islands = useIslands();
   return (
-    <div className="flex h-tab shrink-0 items-center gap-2 border-t border-line bg-panel px-2">
+    <div
+      className={cn(
+        "flex h-tab shrink-0 items-center gap-2 px-2",
+        islands ? FRAME_SURFACE : "border-t border-line bg-panel",
+      )}
+    >
       <IconButton
         label={sidebarOpen ? SIDEBAR_HIDE_LABEL : SIDEBAR_SHOW_LABEL}
         active={sidebarOpen}
