@@ -104,6 +104,12 @@ change for the reason TableCraft found: Tailwind's `shadow-lg` with a black tint
 dark canvas, which is the default scheme here, and a shadow keyed on the colour scheme can be
 stronger where it needs to be and gentler where it does not.
 
+**No control moves.** TableCraft pairs its islands with stripes down each side of the window that
+hold the tool-window toggles. That was drafted here too: the sidebar and console toggles would move
+to stripes, and the environment picker to the title bar. It was dropped before it shipped. Islands
+changes how the window looks, not where anything is. The toggles stay in the status bar, the picker
+stays at the end of the tab row, and nobody's muscle memory pays for a new look.
+
 ## Consequences
 
 **Every existing user gets Islands on update.** Nobody has a stored `windowStyle` yet, so "a saved
