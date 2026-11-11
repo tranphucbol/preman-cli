@@ -24,6 +24,9 @@ import { StatusTag } from "@preman/desktop/renderer/ui/StatusTag.js";
 
 /** The heading's mark, not a control's, so it is sized well above `ICON_DEFAULTS`. */
 const MARK_SIZE = 24;
+
+/** A disclosure caret, at the size every other one in the app is drawn. */
+const CARET_SIZE = 12;
 const NO_ROWS = 0;
 const SINGLE_ROW = 1;
 
@@ -109,7 +112,7 @@ function Trailers({ trailers }: { readonly trailers: HeaderPairs }): ReactElemen
   return (
     <details className="group mt-3 w-full border-t border-line pt-2">
       <summary className="mx-auto flex w-fit cursor-default list-none items-center gap-1 text-2xs text-ink-faint hover:text-ink-dim [&::-webkit-details-marker]:hidden">
-        <CaretRightIcon className="shrink-0 text-glyph group-open:rotate-90" />
+        <CaretRightIcon size={CARET_SIZE} className="shrink-0 text-glyph group-open:rotate-90" />
         {label}
       </summary>
       <dl className="mt-1.5 text-2xs">

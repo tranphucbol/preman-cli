@@ -54,6 +54,7 @@ import { switchWorkspace, useSessionStore } from "@preman/desktop/renderer/store
 import { selectStatus, useUpdateStore } from "@preman/desktop/renderer/stores/update.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { Button, Field, IconButton, Labelled } from "@preman/desktop/renderer/ui/Controls.js";
+import { isUnclaimedEscape } from "@preman/desktop/renderer/ui/escape.js";
 import {
   ClearIcon,
   CloseIcon,
@@ -133,8 +134,6 @@ const SHARED_ROOT_NOTE =
   "Workspaces always record the default. Overriding it only moves where this machine looks, and re-opens the workspace.";
 const NO_OVERRIDE = null;
 
-const ESCAPE = "Escape";
-
 const SETTINGS_TABS = ["appearance", "protos", "diagnostics", "resources"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
 
@@ -157,15 +156,13 @@ export function SettingsPane({ onDismiss }: { readonly onDismiss: () => void }):
 
   /*
    * Escape leaves. Bound while this pane is mounted rather than at the window, because the runner
-   * and the variable manager have work in them that a stray Escape should not throw away, and this
-   * pane has nothing that is not already saved.
-   *
-   * `defaultPrevented` is the check that keeps a Radix layer above this one — the palette, a
-   * dropdown — from closing the pane behind it as well as itself.
+   * has work in it that a stray Escape should not throw away, and this pane has nothing that is not
+   * already saved. Not `useEscapeToDismiss`: that blurs the focused field first so the field saves,
+   * and the shared-root field here saves by re-opening the workspace, which Escape should not do.
    */
   useEffect(() => {
     function onKeyDown(pressed: KeyboardEvent): void {
-      if (pressed.key === ESCAPE && !pressed.defaultPrevented) onDismiss();
+      if (isUnclaimedEscape(pressed)) onDismiss();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => {

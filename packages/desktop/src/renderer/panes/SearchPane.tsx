@@ -22,6 +22,7 @@ import { useNode } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSearchStore, type SearchState } from "@preman/desktop/renderer/stores/search.js";
 import { Field } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { isUnclaimedEscape } from "@preman/desktop/renderer/ui/escape.js";
 
 const OVERSCAN = 6;
 
@@ -51,7 +52,17 @@ export function SearchPane({ onOpen }: SearchPaneProps): React.JSX.Element {
   }, []);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    // Escape anywhere in the pane, not at the window: the sidebar is beside the editor rather than
+    // over it, and an Escape meant for the editor must not take the results away. Claimed, so a
+    // variable manager open on the right does not close on the same press.
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={(event) => {
+        if (!isUnclaimedEscape(event)) return;
+        event.preventDefault();
+        useSearchStore.getState().dismiss();
+      }}
+    >
       <div className="shrink-0 border-b border-line p-2">
         <Field
           // Keyed on the committed query so `Cmd+Shift+F` with a query already in flight leaves

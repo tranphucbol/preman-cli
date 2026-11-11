@@ -240,6 +240,13 @@ below AA for anything with words in it. It is for carets, drag handles, the sele
 a border that is a control's only affordance. `GLYPH_CLASS` in `ui/icons.ts` is the same value
 named for that use. If you are about to put `text-glyph` on a string, you want `text-ink-faint`.
 
+**An icon is TableCraft's glyph for the same verb, at 16px, and its weight is a rule.** Decision 59
+is why. Reach for a name in `ui/icons.ts`, never for `@phosphor-icons/react` at a call site, and
+never pass `size` unless the glyph is a mark (the 24px failure mark) or a caret (12px). Leave
+`weight` alone too: `Button` fills its icon because a label sits beside it, `IconButton` stays
+regular, and the only call-site weights are `CONFIRMATION_WEIGHT` on the tick that answers a copy
+and `STATUS_WEIGHT` on a warning that marks one row or notice — not on a heading that names a kind.
+
 `--color-accent` has no dimmed variant, deliberately: the one that used to exist read at 2.5:1.
 The accent is a fill exactly once per pane — the thing you came there to press.
 
@@ -476,12 +483,14 @@ starts at the same x**, whatever kind of node it is.
 | Constant             | Value | What it is                                                               |
 | -------------------- | ----- | ------------------------------------------------------------------------ |
 | `INDENT_PX`          | 12    | one level of nesting                                                     |
-| `LEAD_COLUMN_PX`     | 64    | one right-aligned column: caret + folder for a group, verb for a request |
+| `LEAD_COLUMN_WIDTH`  | `7ch` | one right-aligned column: caret + folder for a group, verb for a request |
 | `GIT_COLUMN_PX`      | 10    | the unsaved mark or the git letter, on the far right                     |
 | `DROP_LINE_INSET_PX` | 16    | where a drop indicator starts, so it does not span the lead column       |
 
 The lead column is **one** column, right-aligned. It was two — a caret column then a verb column —
-and that is bug four: a group's caret sat a full `DELETE` width from its own folder icon. Anything
+and that is bug four: a group's caret sat a full `DELETE` width from its own folder icon. Its width
+is the longest verb, `OPTIONS`, in `ch` of the label's monospace face, so it follows density and
+the mono font and never leaves blank tree to the left of the widest label. Anything
 that adds a per-row affordance goes inside the existing column or the invariant is gone. The
 unsaved mark below is the case in point: it had nowhere else to go, so it took over the same
 `GIT_COLUMN_PX` slot the git letter already used, rather than opening a fourth column.

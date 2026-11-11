@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, type ComponentProps, type FocusEvent, t
 import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
 
 import { cn } from "./cn.js";
-import { CheckIcon, GLYPH_CLASS, PickerIcon } from "./icons.js";
+import { CheckIcon, GLYPH_CLASS, IconContext, LABELLED_ICON, PickerIcon } from "./icons.js";
 import { initialText, TokenOverlay, useTokenPills } from "./TokenOverlay.js";
 import type { TokenReporter } from "./template.js";
 
@@ -89,13 +89,16 @@ export interface ButtonProps extends Omit<ComponentProps<"button">, "className">
   readonly ref?: Ref<HTMLButtonElement>;
 }
 
-export function Button({ variant = "neutral", tier, type = "button", ...rest }: ButtonProps) {
+/** A `Button` carries a label, so any glyph inside it is filled; `IconButton` keeps the outline. */
+export function Button({ variant = "neutral", tier, type = "button", children, ...rest }: ButtonProps) {
   return (
     <button
       type={type}
       className={cn(BASE_CONTROL, VARIANT_CLASS[variant], TIER_CLASS[tier ?? DEFAULT_TIER[variant]])}
       {...rest}
-    />
+    >
+      <IconContext.Provider value={LABELLED_ICON}>{children}</IconContext.Provider>
+    </button>
   );
 }
 

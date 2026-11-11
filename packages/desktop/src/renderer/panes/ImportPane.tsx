@@ -51,7 +51,7 @@ import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { CodeEditor } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import { Button, Field, IconButton, Labelled, Select, SelectOption } from "@preman/desktop/renderer/ui/Controls.js";
-import { CloseIcon, PasteIcon, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { CloseIcon, PasteIcon, STATUS_WEIGHT, WarningIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { methodClass } from "@preman/desktop/renderer/ui/method.js";
 
 const OVERLAY_CLASS = "scrim-enter fixed inset-0 z-menu bg-black/50";
@@ -267,7 +267,7 @@ function ImportFlow({
           {preview.kind === "rejected" && (
             <div className="p-gutter">
               <p className="flex items-start gap-2 text-xs leading-relaxed text-danger" aria-live="polite">
-                <WarningIcon className="mt-0.5 shrink-0" />
+                <WarningIcon weight={STATUS_WEIGHT} className="mt-0.5 shrink-0" />
                 {preview.message}
               </p>
               {preview.details.length > 0 && (
