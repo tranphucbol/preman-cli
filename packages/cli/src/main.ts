@@ -9,6 +9,7 @@ import {
   pastedText,
   resolveDestination,
 } from "@preman/cli/import.js";
+import { openInApp } from "@preman/cli/desktop.js";
 import { interactiveSelection } from "@preman/cli/prompt.js";
 import { defaultPostmanAppData } from "@preman/cli/postman.js";
 import { progressWriter } from "@preman/cli/progress.js";
@@ -71,6 +72,7 @@ ${pc.bold("usage")}
   preman migrate --list               list the cloud workspaces Postman can see
   preman migrate --workspace <id|name> --out <dir> [--dry-run]
                                       copy a Postman cloud workspace to disk
+  preman open [<dir>]                 open the workspace in the desktop app (macOS)
 
 ${pc.bold("options")}
   -d, --dir <path>      workspace to use (default: search upwards from cwd)
@@ -193,6 +195,14 @@ ${pc.bold("migrate")}
   borrows that window's own session and never asks for a password. gRPC requests
   arrive descriptor-only — they run, but editing one against a .proto means
   adding the file and a localResources.specs entry by hand.
+
+${pc.bold("open")}
+  Hands the workspace to preman.app: it starts the app if it is not running, and
+  switches the open window to the workspace if it is. Searches upwards from
+  <dir>, or --dir, or the current directory, like every other command.
+
+    preman open
+    preman open ~/src/payments
 
 ${pc.bold("scripts")}
   beforeInvoke and prerequest run before the call; onMessage (gRPC) and
@@ -558,6 +568,12 @@ export async function main(argv: string[]): Promise<ExitCode> {
         }
       }
       return run.exitCode;
+    }
+
+    case "open": {
+      const root = openInApp(rest[0] ?? dir);
+      process.stdout.write(`opened ${root} in preman\n`);
+      return EXIT.OK;
     }
 
     default:

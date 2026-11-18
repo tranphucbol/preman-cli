@@ -14,6 +14,7 @@ preman import --into <collection> -- <pasted command>
 preman copy <collection/request>    print that request as a curl or grpcurl command
 preman migrate --list               list the Postman cloud workspaces in reach
 preman migrate --workspace <id|name> --out <dir>
+preman open [<dir>]                 open the workspace in the desktop app (macOS)
 ```
 
 `preman` searches upward from the current directory for `.postman/resources.yaml` or a

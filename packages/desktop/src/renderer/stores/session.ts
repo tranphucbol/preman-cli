@@ -374,6 +374,9 @@ export function connect(): () => void {
     session.setClient(client, client.root);
     // The hint has been superseded by the thing it was a hint about.
     session.setReopening(null);
+    // A workspace the main process opened unasked - from Finder, the dock or `preman open` - has no
+    // caller here to refresh Recents after it, so every port does.
+    void refreshWorkspaces();
     // Re-parked on every port: a reader that answered for the previous host would report the
     // timings of a workspace nobody is looking at.
     publishPhaseReader(() => client.send("phases", {}));

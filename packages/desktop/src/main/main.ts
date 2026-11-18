@@ -25,6 +25,7 @@ import { PremanError } from "@preman/core/errors.js";
 import type * as MigrationApi from "@preman/core/api/migrate.js";
 import { createDiagnostics, type Diagnostics } from "@preman/desktop/main/diagnostics.js";
 import { createHostRegistry, SERVICE_NAME_PREFIX, type HostRegistry } from "@preman/desktop/main/hosts.js";
+import { workspaceArgument } from "@preman/desktop/main/launch.js";
 import { createLogStream, type LogStream } from "@preman/desktop/main/logstream.js";
 import { createResourceSampler, type ResourceSampler } from "@preman/desktop/main/resources.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
@@ -70,6 +71,7 @@ const ENGINE_FILE = "../engine/entry.js";
 const ICON_FILE = "icon.png";
 const WORKSPACE_MARKERS = [join(".postman", "resources.yaml"), join("postman", "collections")];
 const DIALOG_TITLE = "Open a Postman workspace";
+const NOT_A_WORKSPACE_MESSAGE = "That directory is not a Postman workspace";
 const DATA_DIALOG_TITLE = "Choose iteration data";
 const DATA_FILTER_NAME = "Iteration data";
 /** What core's `loadIterationData` reads. Offering more would only produce a refusal later. */
@@ -173,6 +175,23 @@ function requireDiagnostics(): Diagnostics {
  */
 let reopening: string | null = null;
 
+/**
+ * A folder macOS handed over before `start()` could act on it. `open-file` for the folder that
+ * launched the app arrives before `whenReady`, when there is no store, no registry and no window;
+ * `start()` reads this in place of the workspace it would otherwise reopen.
+ */
+let launchRequest: string | null = null;
+
+/**
+ * The workspace whose port the current document holds, or `null` when it holds none.
+ *
+ * Not `activeRoot`: that is persisted, so it survives a reload and a relaunch that this does not.
+ * Asked by `showWorkspace` alone, so that `preman open` naming the workspace already on screen
+ * brings the window forward instead of re-attaching it — a new port empties every store the
+ * renderer has, including runs still in flight.
+ */
+let attached: string | null = null;
+
 /** Resolved against the built `dist/main/`, so dev and packaged agree on layout. */
 function distPath(relative: string): string {
   return join(import.meta.dirname, relative);
@@ -226,6 +245,15 @@ function bundlePath(): string {
  */
 function looksLikeWorkspace(root: string): boolean {
   return WORKSPACE_MARKERS.some((marker) => existsSync(join(root, marker)));
+}
+
+/** One refusal, whether the directory came from the dialog or from outside the app. */
+function notAWorkspace(root: string): Electron.MessageBoxOptions {
+  return {
+    type: "warning",
+    message: NOT_A_WORKSPACE_MESSAGE,
+    detail: `Expected ${WORKSPACE_MARKERS.join(" or ")} inside:\n${root}`,
+  };
 }
 
 /**
@@ -312,6 +340,10 @@ function createWindow(): BrowserWindow {
   });
   created.webContents.on("render-process-gone", (_event, details) => {
     note("fatal", `the renderer process is gone: ${details.reason}`);
+  });
+  // A reload, from the View menu or anywhere else, starts a document with no port in it.
+  created.webContents.on("did-start-loading", () => {
+    attached = null;
   });
 
   created.on("close", () => {
@@ -454,11 +486,7 @@ async function openWorkspaceDialog(): Promise<string | null> {
   if (picked.canceled || root === undefined) return null;
 
   if (!looksLikeWorkspace(root)) {
-    await dialog.showMessageBox(parent, {
-      type: "warning",
-      message: "That directory is not a Postman workspace",
-      detail: `Expected ${WORKSPACE_MARKERS.join(" or ")} inside:\n${root}`,
-    });
+    await dialog.showMessageBox(parent, notAWorkspace(root));
     return null;
   }
   return root;
@@ -612,6 +640,48 @@ function openWorkspace(root: string): void {
     workspace.lastOpenedAt = Date.now();
   });
   requireHosts().open(root, contents);
+  attached = root;
+}
+
+/**
+ * Bring a folder the operating system handed over onto the screen: `open-file` from Finder, the
+ * dock or `preman open`, while the app is already running.
+ *
+ * Refused here, the way the dialog refuses it, rather than in the engine host: a folder from
+ * outside the app was picked by nobody looking at the window, so it is no likelier to be a
+ * workspace than one picked in the dialog.
+ */
+function showWorkspace(root: string): void {
+  if (!looksLikeWorkspace(root)) {
+    refuseLaunch(root);
+    return;
+  }
+  // On macOS the app outlives its window, so a folder can arrive with nothing to show it in.
+  if (window === undefined || window.isDestroyed()) window = createWindow();
+  const target = window;
+  const contents = target.webContents;
+  if (contents.isLoading()) {
+    // The same wait `start()` makes: a port sent to a document that has not run its script yet is
+    // a port nobody is listening on. `ready-to-show` shows the window when it is ready.
+    contents.once("did-finish-load", () => {
+      openWorkspace(root);
+    });
+    return;
+  }
+  if (attached !== root) openWorkspace(root);
+  if (target.isMinimized()) target.restore();
+  target.show();
+  target.focus();
+}
+
+/** Said, not thrown: nothing is waiting on an `open-file` for an answer. */
+function refuseLaunch(root: string): void {
+  note("warn", `asked to open a directory that is not a Postman workspace: ${root}`);
+  const options = notAWorkspace(root);
+  const parent = window;
+  void (parent === undefined || parent.isDestroyed()
+    ? dialog.showMessageBox(options)
+    : dialog.showMessageBox(parent, options));
 }
 
 /**
@@ -880,7 +950,11 @@ function start(): void {
   );
   hosts = createHostRegistry({
     entryFile: distPath(ENGINE_FILE),
-    onFailure: (failure) => window?.webContents.send(CHANNELS.hostFailure, failure),
+    onFailure: (failure) => {
+      // A host that gave up holds nothing worth focusing; naming it again should start it again.
+      if (failure.root === attached) attached = null;
+      window?.webContents.send(CHANNELS.hostFailure, failure);
+    },
     write: note,
     writeReport: (report) => requireDiagnostics().writeReport(report),
   });
@@ -942,12 +1016,24 @@ function start(): void {
   // Above `createWindow` and not below it: reading the icon, constructing the BrowserWindow and
   // `loadFile` measured 400-520ms on a cold start, and every one of those milliseconds was the
   // engine not yet reading its own bundle off the same disk. Nothing here touches the window.
+  //
+  // A folder the launch was asked for wins over the one the last session left open: it is the
+  // reason this launch happened. One that is not a workspace is refused and the last one reopened,
+  // so a mistyped path costs a dialog rather than an empty window.
+  const requested = launchRequest ?? workspaceArgument(process.argv, process.cwd(), process.defaultApp);
+  const launched = requested !== null && looksLikeWorkspace(requested) ? requested : null;
   const last = requireStore().read().activeRoot;
-  reopening = last !== null && looksLikeWorkspace(last) ? last : null;
+  reopening = launched ?? (last !== null && looksLikeWorkspace(last) ? last : null);
   if (reopening !== null) requireHosts().prewarm(reopening);
   markPhase(PHASES.mainPrewarm);
 
   window = createWindow();
+  // After the window's own `ready-to-show` listener, so the sheet has a visible window to hang from.
+  if (requested !== null && launched === null) {
+    window.once("ready-to-show", () => {
+      refuseLaunch(requested);
+    });
+  }
 
   window.webContents.once("did-finish-load", () => {
     if (reopening !== null) openWorkspace(reopening);
@@ -994,6 +1080,20 @@ process.on("unhandledRejection", (cause) => {
     "error",
     `unhandled rejection in the main process: ${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}`,
   );
+});
+
+/**
+ * A folder from Finder, the dock, or `preman open` — which is `open -b` underneath, so LaunchServices
+ * delivers it to the running app rather than starting a second one. Registered at module scope,
+ * not in `start()`: for the folder that launched the app this fires before `whenReady`.
+ */
+app.on("open-file", (event, path) => {
+  event.preventDefault();
+  if (store === undefined) {
+    launchRequest = path;
+    return;
+  }
+  showWorkspace(path);
 });
 
 app.on("window-all-closed", () => {
