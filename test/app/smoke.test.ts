@@ -27,6 +27,9 @@ const EDITOR_SELECTOR = ".cm-content";
 /** What an import names a request with no name of its own: the URL's last path segment. */
 const IMPORTED_NAME = "echo";
 const POLL_MS = 100;
+/** Only macOS keeps the app alive with no window, so only there can `activate` bring one back. */
+const SURVIVES_LAST_WINDOW = process.platform === "darwin";
+const REOPENS = 2;
 
 let launched: LaunchedApp | undefined;
 let workspace: HttpWorkspace | undefined;
@@ -115,6 +118,29 @@ describe.runIf(APP_TESTS_ENABLED)("the desktop app", () => {
       const tab = page.locator(OPEN_TAB_SELECTOR, { hasText: IMPORTED_NAME });
       await tab.waitFor({ timeout: LAUNCH_TIMEOUT_MS });
       await expect(tab.getAttribute("aria-selected")).resolves.toBe("true");
+    },
+    APP_TEST_TIMEOUT_MS,
+  );
+
+  it.runIf(SURVIVES_LAST_WINDOW)(
+    "givenAWindowReopenedByActivate_whenItIsClosed_thenActivateOpensAnother",
+    async () => {
+      launched = await launchApp(FIXTURE_WS);
+      const { app } = launched;
+      const windowCount = (): Promise<number> =>
+        app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+
+      // The second round is the one that failed: only the window `start()` made knew to forget itself.
+      for (let round = 0; round < REOPENS; round += 1) {
+        await app.evaluate(({ BrowserWindow }) => {
+          BrowserWindow.getAllWindows()[0]?.close();
+        });
+        await waitUntil(async () => (await windowCount()) === 0);
+        await app.evaluate(({ app: electronApp }) => {
+          electronApp.emit("activate");
+        });
+        await waitUntil(async () => (await windowCount()) === 1);
+      }
     },
     APP_TEST_TIMEOUT_MS,
   );

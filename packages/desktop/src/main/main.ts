@@ -353,6 +353,22 @@ function createWindow(): BrowserWindow {
     });
   });
 
+  // Here rather than in `start()`, for the reason the updater's check above is: a window `activate`
+  // made would otherwise leave `window` pointing at it once closed, and `activate` would never make
+  // another. The guard keeps a late `closed` from forgetting a window made after it.
+  created.on("closed", () => {
+    if (window === created) window = undefined;
+    // Nobody sent a `watchResources(false)`, because the renderer that would have sent it is gone.
+    // On macOS the app survives this, so an unstopped timer would sample a closed app until quit.
+    sampler?.stop();
+    // Same reason, one timer along: a check nobody can be shown the answer to is a request nobody
+    // asked for, and a staged 317MB bundle nobody chose to install is not worth keeping either.
+    updater?.stop();
+    // And the tee, which is the one of the three that would otherwise keep *collecting*: a flush
+    // timer whose window is gone would go on batching lines for a reader that no longer exists.
+    logStream?.stop();
+  });
+
   const devServer = process.env[DEV_SERVER_ENV_VAR];
   if (devServer === undefined) void created.loadFile(distPath(RENDERER_FILE));
   else void created.loadURL(devServer);
@@ -1037,19 +1053,6 @@ function start(): void {
 
   window.webContents.once("did-finish-load", () => {
     if (reopening !== null) openWorkspace(reopening);
-  });
-
-  window.on("closed", () => {
-    window = undefined;
-    // Nobody sent a `watchResources(false)`, because the renderer that would have sent it is gone.
-    // On macOS the app survives this, so an unstopped timer would sample a closed app until quit.
-    sampler?.stop();
-    // Same reason, one timer along: a check nobody can be shown the answer to is a request nobody
-    // asked for, and a staged 317MB bundle nobody chose to install is not worth keeping either.
-    updater?.stop();
-    // And the tee, which is the one of the three that would otherwise keep *collecting*: a flush
-    // timer whose window is gone would go on batching lines for a reader that no longer exists.
-    logStream?.stop();
   });
 }
 
