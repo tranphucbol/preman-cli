@@ -55,7 +55,7 @@ const NOTHING = "";
 /** `note`, from its `function` line to the first close at column zero. */
 const NOTE = /function note\(level: LogLevel, line: string\): void \{[\s\S]*?\n\}\n/;
 /** The window's teardown, which stops the three things in main that would outlive it. */
-const ON_CLOSED = /window\.on\("closed"[\s\S]*?\n {2}\}\);/;
+const ON_CLOSED = /created\.on\("closed"[\s\S]*?\n {2}\}\);/;
 
 const A_MINUTE_MS = 60_000;
 const NONE = 0;

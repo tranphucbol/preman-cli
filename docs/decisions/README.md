@@ -68,6 +68,7 @@ The CLI's own design predates the practice.
 | [057](057-lint-restates-the-runner-rather-than-running-it.md)       | Lint restates the runner rather than running it                        |
 | [058](058-the-window-is-islands-on-a-frame.md)                      | The window is islands on a frame                                       |
 | [059](059-one-glyph-per-verb-across-both-apps.md)                   | One glyph per verb across both apps                                    |
+| [060](060-the-cli-hands-the-app-a-folder.md)                        | The CLI hands the app a folder                                         |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -445,5 +446,12 @@ own mistakes on the way — Copy and Duplicate had shared one glyph, and Format 
 body is made of. Icons go to 16px in every density and weight starts to mean something: filled
 beside a label or on a status, bold to confirm a copy. A density token for the size was refused
 because no preset varies it; the cost is relearned glyphs and stale README media.
+
+060 lets the terminal open a workspace in the window. `preman open` asks LaunchServices for the app
+by bundle identifier, which starts it or hands the running one an `open-file`; the app also reads a
+folder off argv. A single-instance lock was refused because on macOS it adds nothing and would
+make `bun run desktop` defer to the installed build, and a URL scheme because `open-file` is
+already the operating system's message for the same thing. The cost is a macOS-only command and a
+bundle identifier spelled in two places.
 
 `TEMPLATE.md` is the shape of a new one.

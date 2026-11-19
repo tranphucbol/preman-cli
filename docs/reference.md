@@ -26,6 +26,7 @@ preman import [curl|grpcurl] --into <group> -- <pasted command…>
 preman copy <collection/request>
 preman migrate --list
 preman migrate --workspace <id|name> --out <dir> [--dry-run]
+preman open [<dir>]
 ```
 
 | Option                           | Behavior                                                                                                                                                             |

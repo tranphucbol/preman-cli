@@ -131,7 +131,8 @@ target localhost:9095 [plaintext] (request url) · schema proto-file
 2. `preman run <collection>` runs every request in a collection or folder in Postman order;
    `-e <name>` picks the environment.
 3. If a gRPC request cannot find its schema, `preman protos` names the link that is missing.
-4. In the app, **Open workspace…** on the same repository shows the same requests.
+4. In the app, **Open workspace…** on the same repository shows the same requests; `preman open`
+   opens it there from the terminal.
 
 ## How it works
 

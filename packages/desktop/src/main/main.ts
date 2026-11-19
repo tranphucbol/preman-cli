@@ -25,6 +25,7 @@ import { PremanError } from "@preman/core/errors.js";
 import type * as MigrationApi from "@preman/core/api/migrate.js";
 import { createDiagnostics, type Diagnostics } from "@preman/desktop/main/diagnostics.js";
 import { createHostRegistry, SERVICE_NAME_PREFIX, type HostRegistry } from "@preman/desktop/main/hosts.js";
+import { workspaceArgument } from "@preman/desktop/main/launch.js";
 import { createLogStream, type LogStream } from "@preman/desktop/main/logstream.js";
 import { createResourceSampler, type ResourceSampler } from "@preman/desktop/main/resources.js";
 import { createAppStore, type AppStore } from "@preman/desktop/main/store.js";
@@ -70,6 +71,7 @@ const ENGINE_FILE = "../engine/entry.js";
 const ICON_FILE = "icon.png";
 const WORKSPACE_MARKERS = [join(".postman", "resources.yaml"), join("postman", "collections")];
 const DIALOG_TITLE = "Open a Postman workspace";
+const NOT_A_WORKSPACE_MESSAGE = "That directory is not a Postman workspace";
 const DATA_DIALOG_TITLE = "Choose iteration data";
 const DATA_FILTER_NAME = "Iteration data";
 /** What core's `loadIterationData` reads. Offering more would only produce a refusal later. */
@@ -124,9 +126,9 @@ let diagnostics: Diagnostics | undefined;
  */
 let sampler: ResourceSampler | undefined;
 /**
- * The other thing in this process that holds a timer, and the reason `window.on("closed")` stops
- * two things rather than one: on macOS the app survives a closed window, and an unstopped interval
- * would go on asking GitHub about a window nobody can see the answer in.
+ * The other thing in this process that holds a timer, and the reason a window's `closed` handler
+ * stops two things rather than one: on macOS the app survives a closed window, and an unstopped
+ * interval would go on asking GitHub about a window nobody can see the answer in.
  */
 let updater: Updater | undefined;
 /**
@@ -172,6 +174,23 @@ function requireDiagnostics(): Diagnostics {
  * to nobody.
  */
 let reopening: string | null = null;
+
+/**
+ * A folder macOS handed over before `start()` could act on it. `open-file` for the folder that
+ * launched the app arrives before `whenReady`, when there is no store, no registry and no window;
+ * `start()` reads this in place of the workspace it would otherwise reopen.
+ */
+let launchRequest: string | null = null;
+
+/**
+ * The workspace whose port the current document holds, or `null` when it holds none.
+ *
+ * Not `activeRoot`: that is persisted, so it survives a reload and a relaunch that this does not.
+ * Asked by `showWorkspace` alone, so that `preman open` naming the workspace already on screen
+ * brings the window forward instead of re-attaching it — a new port empties every store the
+ * renderer has, including runs still in flight.
+ */
+let attached: string | null = null;
 
 /** Resolved against the built `dist/main/`, so dev and packaged agree on layout. */
 function distPath(relative: string): string {
@@ -226,6 +245,15 @@ function bundlePath(): string {
  */
 function looksLikeWorkspace(root: string): boolean {
   return WORKSPACE_MARKERS.some((marker) => existsSync(join(root, marker)));
+}
+
+/** One refusal, whether the directory came from the dialog or from outside the app. */
+function notAWorkspace(root: string): Electron.MessageBoxOptions {
+  return {
+    type: "warning",
+    message: NOT_A_WORKSPACE_MESSAGE,
+    detail: `Expected ${WORKSPACE_MARKERS.join(" or ")} inside:\n${root}`,
+  };
 }
 
 /**
@@ -297,7 +325,7 @@ function createWindow(): BrowserWindow {
   });
 
   // Here rather than in `start()`, so a window closed and reopened through `activate` re-arms the
-  // check that `window.on("closed")` disarmed. Behind `did-finish-load` and the updater's own
+  // check that the `closed` handler below disarmed. Behind `did-finish-load` and the updater's own
   // delay: the first check must stay off the first-paint path decision 022 keeps synchronous, and
   // off the quarter second after it that the engine's fork is overlapping with Chromium's start.
   created.webContents.once("did-finish-load", () => {
@@ -313,12 +341,32 @@ function createWindow(): BrowserWindow {
   created.webContents.on("render-process-gone", (_event, details) => {
     note("fatal", `the renderer process is gone: ${details.reason}`);
   });
+  // A reload, from the View menu or anywhere else, starts a document with no port in it.
+  created.webContents.on("did-start-loading", () => {
+    attached = null;
+  });
 
   created.on("close", () => {
     const bounds = created.getBounds();
     requireStore().update((state) => {
       state.window = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
     });
+  });
+
+  // Here rather than in `start()`, for the reason the updater's check above is: a window `activate`
+  // made would otherwise leave `window` pointing at it once closed, and `activate` would never make
+  // another. The guard keeps a late `closed` from forgetting a window made after it.
+  created.on("closed", () => {
+    if (window === created) window = undefined;
+    // Nobody sent a `watchResources(false)`, because the renderer that would have sent it is gone.
+    // On macOS the app survives this, so an unstopped timer would sample a closed app until quit.
+    sampler?.stop();
+    // Same reason, one timer along: a check nobody can be shown the answer to is a request nobody
+    // asked for, and a staged 317MB bundle nobody chose to install is not worth keeping either.
+    updater?.stop();
+    // And the tee, which is the one of the three that would otherwise keep *collecting*: a flush
+    // timer whose window is gone would go on batching lines for a reader that no longer exists.
+    logStream?.stop();
   });
 
   const devServer = process.env[DEV_SERVER_ENV_VAR];
@@ -454,11 +502,7 @@ async function openWorkspaceDialog(): Promise<string | null> {
   if (picked.canceled || root === undefined) return null;
 
   if (!looksLikeWorkspace(root)) {
-    await dialog.showMessageBox(parent, {
-      type: "warning",
-      message: "That directory is not a Postman workspace",
-      detail: `Expected ${WORKSPACE_MARKERS.join(" or ")} inside:\n${root}`,
-    });
+    await dialog.showMessageBox(parent, notAWorkspace(root));
     return null;
   }
   return root;
@@ -612,6 +656,48 @@ function openWorkspace(root: string): void {
     workspace.lastOpenedAt = Date.now();
   });
   requireHosts().open(root, contents);
+  attached = root;
+}
+
+/**
+ * Bring a folder the operating system handed over onto the screen: `open-file` from Finder, the
+ * dock or `preman open`, while the app is already running.
+ *
+ * Refused here, the way the dialog refuses it, rather than in the engine host: a folder from
+ * outside the app was picked by nobody looking at the window, so it is no likelier to be a
+ * workspace than one picked in the dialog.
+ */
+function showWorkspace(root: string): void {
+  if (!looksLikeWorkspace(root)) {
+    refuseLaunch(root);
+    return;
+  }
+  // On macOS the app outlives its window, so a folder can arrive with nothing to show it in.
+  if (window === undefined || window.isDestroyed()) window = createWindow();
+  const target = window;
+  const contents = target.webContents;
+  if (contents.isLoading()) {
+    // The same wait `start()` makes: a port sent to a document that has not run its script yet is
+    // a port nobody is listening on. `ready-to-show` shows the window when it is ready.
+    contents.once("did-finish-load", () => {
+      openWorkspace(root);
+    });
+    return;
+  }
+  if (attached !== root) openWorkspace(root);
+  if (target.isMinimized()) target.restore();
+  target.show();
+  target.focus();
+}
+
+/** Said, not thrown: nothing is waiting on an `open-file` for an answer. */
+function refuseLaunch(root: string): void {
+  note("warn", `asked to open a directory that is not a Postman workspace: ${root}`);
+  const options = notAWorkspace(root);
+  const parent = window;
+  void (parent === undefined || parent.isDestroyed()
+    ? dialog.showMessageBox(options)
+    : dialog.showMessageBox(parent, options));
 }
 
 /**
@@ -880,7 +966,11 @@ function start(): void {
   );
   hosts = createHostRegistry({
     entryFile: distPath(ENGINE_FILE),
-    onFailure: (failure) => window?.webContents.send(CHANNELS.hostFailure, failure),
+    onFailure: (failure) => {
+      // A host that gave up holds nothing worth focusing; naming it again should start it again.
+      if (failure.root === attached) attached = null;
+      window?.webContents.send(CHANNELS.hostFailure, failure);
+    },
     write: note,
     writeReport: (report) => requireDiagnostics().writeReport(report),
   });
@@ -942,28 +1032,27 @@ function start(): void {
   // Above `createWindow` and not below it: reading the icon, constructing the BrowserWindow and
   // `loadFile` measured 400-520ms on a cold start, and every one of those milliseconds was the
   // engine not yet reading its own bundle off the same disk. Nothing here touches the window.
+  //
+  // A folder the launch was asked for wins over the one the last session left open: it is the
+  // reason this launch happened. One that is not a workspace is refused and the last one reopened,
+  // so a mistyped path costs a dialog rather than an empty window.
+  const requested = launchRequest ?? workspaceArgument(process.argv, process.cwd(), process.defaultApp);
+  const launched = requested !== null && looksLikeWorkspace(requested) ? requested : null;
   const last = requireStore().read().activeRoot;
-  reopening = last !== null && looksLikeWorkspace(last) ? last : null;
+  reopening = launched ?? (last !== null && looksLikeWorkspace(last) ? last : null);
   if (reopening !== null) requireHosts().prewarm(reopening);
   markPhase(PHASES.mainPrewarm);
 
   window = createWindow();
+  // After the window's own `ready-to-show` listener, so the sheet has a visible window to hang from.
+  if (requested !== null && launched === null) {
+    window.once("ready-to-show", () => {
+      refuseLaunch(requested);
+    });
+  }
 
   window.webContents.once("did-finish-load", () => {
     if (reopening !== null) openWorkspace(reopening);
-  });
-
-  window.on("closed", () => {
-    window = undefined;
-    // Nobody sent a `watchResources(false)`, because the renderer that would have sent it is gone.
-    // On macOS the app survives this, so an unstopped timer would sample a closed app until quit.
-    sampler?.stop();
-    // Same reason, one timer along: a check nobody can be shown the answer to is a request nobody
-    // asked for, and a staged 317MB bundle nobody chose to install is not worth keeping either.
-    updater?.stop();
-    // And the tee, which is the one of the three that would otherwise keep *collecting*: a flush
-    // timer whose window is gone would go on batching lines for a reader that no longer exists.
-    logStream?.stop();
   });
 }
 
@@ -994,6 +1083,20 @@ process.on("unhandledRejection", (cause) => {
     "error",
     `unhandled rejection in the main process: ${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}`,
   );
+});
+
+/**
+ * A folder from Finder, the dock, or `preman open` — which is `open -b` underneath, so LaunchServices
+ * delivers it to the running app rather than starting a second one. Registered at module scope,
+ * not in `start()`: for the folder that launched the app this fires before `whenReady`.
+ */
+app.on("open-file", (event, path) => {
+  event.preventDefault();
+  if (store === undefined) {
+    launchRequest = path;
+    return;
+  }
+  showWorkspace(path);
 });
 
 app.on("window-all-closed", () => {

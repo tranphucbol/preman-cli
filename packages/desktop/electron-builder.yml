@@ -34,3 +34,13 @@ mac:
   # This is also what rules out Squirrel.Mac: it validates a downloaded bundle against the
   # designated requirement of the installed one, and two ad-hoc builds never share one.
   identity: null
+  # A folder is a document this app can open, so Finder's Open With, a drop on the dock icon and
+  # `preman open` all arrive as `open-file`. `Alternate`, so no folder ever opens in preman unless
+  # someone asked for preman by name. See `docs/decisions/060`.
+  extendInfo:
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: Folder
+        CFBundleTypeRole: Viewer
+        LSHandlerRank: Alternate
+        LSItemContentTypes:
+          - public.folder
