@@ -126,9 +126,9 @@ let diagnostics: Diagnostics | undefined;
  */
 let sampler: ResourceSampler | undefined;
 /**
- * The other thing in this process that holds a timer, and the reason `window.on("closed")` stops
- * two things rather than one: on macOS the app survives a closed window, and an unstopped interval
- * would go on asking GitHub about a window nobody can see the answer in.
+ * The other thing in this process that holds a timer, and the reason a window's `closed` handler
+ * stops two things rather than one: on macOS the app survives a closed window, and an unstopped
+ * interval would go on asking GitHub about a window nobody can see the answer in.
  */
 let updater: Updater | undefined;
 /**
@@ -325,7 +325,7 @@ function createWindow(): BrowserWindow {
   });
 
   // Here rather than in `start()`, so a window closed and reopened through `activate` re-arms the
-  // check that `window.on("closed")` disarmed. Behind `did-finish-load` and the updater's own
+  // check that the `closed` handler below disarmed. Behind `did-finish-load` and the updater's own
   // delay: the first check must stay off the first-paint path decision 022 keeps synchronous, and
   // off the quarter second after it that the engine's fork is overlapping with Chromium's start.
   created.webContents.once("did-finish-load", () => {
