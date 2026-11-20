@@ -17,9 +17,9 @@ import type { Extension } from "@codemirror/state";
 import type { Variant } from "@preman/desktop/renderer/appearance/theme.js";
 
 /**
- * The document's size is a reading preference the settings pane writes; the find panel's is not.
- * A find panel that grew to 20px because someone wanted a bigger document would be a control
- * sized by the wrong question, so it stays on the density scale like every other control.
+ * The document's size is a reading preference the settings pane writes; the find bar's is not.
+ * A find bar that grew to 20px because someone wanted a bigger document would be a control
+ * sized by the wrong question, so its panel stays on the density scale like every other control.
  */
 const FONT_SIZE = "var(--editor-font-size)";
 const PANEL_FONT_SIZE = "var(--text-xs)";
@@ -78,6 +78,12 @@ const SELECTION_FILL = "color-mix(in oklab, var(--color-accent) 30%, transparent
  */
 const SELECTION_MATCH_FILL = "color-mix(in oklab, var(--color-accent) 14%, transparent)";
 
+/**
+ * A find hit's edge. The fill alone is the selection-match weight, and a find hit has to stand out
+ * from the occurrences of whatever word the caret happens to sit on.
+ */
+const SEARCH_MATCH_OUTLINE = "color-mix(in oklab, var(--color-accent) 55%, transparent)";
+
 /** Set on `.cm-editor` while any range is non-empty; read by the `.cm-activeLine` rule below. */
 export const SELECTING_CLASS = "pm-selecting";
 
@@ -94,9 +100,9 @@ const NO_ATTRIBUTES: Record<string, string> = {};
  * precedence orders the stylesheet, it does not order the cascade. Matching the shape exactly puts
  * the two at five apiece, and a tie goes to the module mounted later, which is this one.
  *
- * A read-only editor never carries `.cm-focused` at all — `EditorView.editable.of(false)` leaves
- * `.cm-content` unfocusable — so the bare first selector is what a response body actually paints
- * with, and both have to name the same fill.
+ * A read-only editor carries `.cm-focused` only while its content holds focus, which it can since
+ * `CodeEditor.tsx` gave it a `tabindex`; the rest of the time the bare first selector is what a
+ * response body paints with, so both have to name the same fill.
  */
 const SELECTION_SELECTOR =
   ".cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground";
@@ -154,7 +160,7 @@ export const THEME_SPEC = {
     borderRadius: "var(--radius-xs)",
   },
   [SELECTION_SELECTOR]: { backgroundColor: SELECTION_FILL },
-  // The find panel's field, and nothing else: `drawSelection` hides the native highlight inside
+  // The find bar's fields, and nothing else: `drawSelection` hides the native highlight inside
   // `.cm-line` with `!important`, so on the document itself this rule is dead and the band above
   // is the whole of what anyone sees.
   "::selection": { backgroundColor: SELECTION_FILL },
@@ -165,29 +171,24 @@ export const THEME_SPEC = {
   },
   ".cm-selectionMatch": { backgroundColor: SELECTION_MATCH_FILL },
   ".cm-placeholder": { color: "var(--color-ink-faint)" },
-  // The find widget ships as a browser-styled form. Retuned here for the same reason
-  // Radix is retuned: a stock panel in a dense tool reads as somebody else's software.
-  ".cm-panels": { backgroundColor: "var(--color-panel)", color: "var(--color-ink)" },
-  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--color-line)" },
-  ".cm-search": { display: "flex", alignItems: "center", gap: "6px", padding: "5px 8px" },
-  ".cm-search label": { display: "inline-flex", alignItems: "center", gap: "4px", fontSize: PANEL_LABEL_SIZE },
-  ".cm-textfield": {
-    backgroundColor: "var(--color-control)",
-    border: "1px solid var(--color-line-strong)",
-    borderRadius: "var(--radius-sm)",
+  // The panels hold `FindBar`, which is built from `Controls.tsx` and draws its own border. They
+  // only need to stop inheriting the document's font, and to stop CodeMirror's grey and hairline.
+  ".cm-panels": {
+    backgroundColor: "var(--color-panel)",
     color: "var(--color-ink)",
+    fontFamily: "var(--font-sans)",
     fontSize: PANEL_FONT_SIZE,
-    padding: "2px 6px",
   },
-  ".cm-button": {
-    backgroundColor: "var(--color-control)",
-    backgroundImage: "none",
-    border: "1px solid var(--color-line-strong)",
-    borderRadius: "var(--radius-sm)",
-    color: "var(--color-ink)",
-    fontSize: PANEL_LABEL_SIZE,
-    padding: "2px 8px",
+  ".cm-panels.cm-panels-top": { borderBottom: "none" },
+  // Every hit is the selection-match weight; the current one is the band itself, so stepping reads
+  // as the selection moving. The search package paints both through `&light`/`&dark`, two classes
+  // like these, so these win the tie by being mounted later - and the current hit names both of
+  // its classes so it beats the plain hit without relying on order.
+  ".cm-searchMatch": {
+    backgroundColor: SELECTION_MATCH_FILL,
+    outline: `1px solid ${SEARCH_MATCH_OUTLINE}`,
   },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: SELECTION_FILL },
   // The unresolved-variable tooltip is text and nothing else, so it is `Controls.tsx`'s `Tooltip`
   // rung of the floating ladder rather than CodeMirror's grey box: same surface, radius, hairline,
   // shadow and layer. `CodeEditor.tsx` mounts it on `document.body`, which is what lets

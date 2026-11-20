@@ -118,7 +118,7 @@ export function IconButton({ label, children, active = false, type = "button", .
         aria-label={label}
         aria-pressed={active}
         className={cn(
-          "inline-flex size-control shrink-0 items-center justify-center rounded-sm transition-[color,background-color,transform] duration-(--duration-press) ease-out hover:bg-hover active:scale-[0.97] disabled:text-ink-faint disabled:hover:bg-transparent disabled:active:scale-100",
+          "inline-flex size-control shrink-0 items-center justify-center rounded-sm transition-[color,background-color,transform] duration-(--duration-press) ease-out hover:bg-hover active:scale-[0.97] disabled:text-ink-faint disabled:hover:bg-transparent disabled:active:scale-100 aria-disabled:text-ink-faint aria-disabled:hover:bg-transparent aria-disabled:active:scale-100",
           active ? "bg-selected text-accent" : "text-ink-dim hover:text-ink",
         )}
         {...rest}

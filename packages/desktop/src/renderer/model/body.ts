@@ -169,6 +169,80 @@ export function offsetForMatch(match: BodyMatch): number {
 }
 
 /**
+ * How many engine hits the find bar asks for. The engine's own default, restated so the bar can
+ * ask for one more and learn from the answer whether there were more than it will count.
+ */
+export const REMOTE_FIND_CAP = 500;
+
+/** Where the find bar's hits come from: the document on screen, or the engine's copy of the body. */
+export type FindSource = "local" | "remote";
+
+/**
+ * The document is the body when it is the whole of it or its pretty-printed form; only a window
+ * into a larger raw body has to ask the engine. A pretty-printed body is searched where it is
+ * read, because the engine's offsets point into the raw bytes and would land nowhere on screen.
+ */
+export function findSource(view: BodyView, pretty: boolean): FindSource {
+  return pretty || isWhole(view) ? "local" : "remote";
+}
+
+const ONE_BYTE_LIMIT = 0x80;
+const TWO_BYTE_LIMIT = 0x800;
+const THREE_BYTE_LIMIT = 0x10000;
+const SURROGATE_PAIR_UNITS = 2;
+
+function utf8Width(codePoint: number): number {
+  if (codePoint < ONE_BYTE_LIMIT) return 1;
+  if (codePoint < TWO_BYTE_LIMIT) return 2;
+  return codePoint < THREE_BYTE_LIMIT ? 3 : 4;
+}
+
+/** How many bytes `text` is as UTF-8: the length of an engine hit on it, which matches bytes. */
+export function utf8Length(text: string): number {
+  let bytes = 0;
+  for (const character of text) bytes += utf8Width(character.codePointAt(0) ?? 0);
+  return bytes;
+}
+
+/** The document position of a byte offset, or `null` when no retained chunk holds it. */
+function charOffset(view: BodyView, byte: number): number | null {
+  let before = 0;
+  for (const chunk of view.chunks) {
+    if (byte >= chunk.offset && byte <= chunk.nextOffset) {
+      let at = chunk.offset;
+      let index = 0;
+      while (at < byte && index < chunk.text.length) {
+        const codePoint = chunk.text.codePointAt(index) ?? 0;
+        at += utf8Width(codePoint);
+        index += codePoint >= THREE_BYTE_LIMIT ? SURROGATE_PAIR_UNITS : 1;
+      }
+      return before + index;
+    }
+    before += chunk.text.length;
+  }
+  return null;
+}
+
+/**
+ * Where an engine hit sits in the document on screen, or `null` when its window is not loaded.
+ *
+ * The one place rule 2 bends, and only inside a chunk: the chunk's own start offset is the
+ * engine's, so counting the UTF-8 width of its characters from there finds the hit exactly for
+ * any body that decodes cleanly. A body with invalid bytes decodes them to U+FFFD, three bytes
+ * wide where the original was one, and a hit after one lands a little late - on text nobody could
+ * read anyway.
+ */
+export function charRange(
+  view: BodyView,
+  byteOffset: number,
+  byteLength: number,
+): { readonly from: number; readonly to: number } | null {
+  const from = charOffset(view, byteOffset);
+  const to = charOffset(view, byteOffset + byteLength);
+  return from === null || to === null ? null : { from, to };
+}
+
+/**
  * Above the format limit the viewer drops to plain monospace text: a syntax tree over
  * 50MB is what actually freezes a renderer, not the bytes.
  */

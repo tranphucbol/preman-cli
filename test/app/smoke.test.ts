@@ -19,6 +19,12 @@ const OPEN_TAB_SELECTOR = '[role="tablist"][aria-label="Open requests"] [role="t
 const PALETTE_INPUT_LABEL = "Go to a request, switch environment, run a command";
 const SEND_SHORTCUT = "ControlOrMeta+Enter";
 const PALETTE_SHORTCUT = "ControlOrMeta+K";
+const FIND_SHORTCUT = "ControlOrMeta+F";
+const BODY_FIND_LABEL = "Find (⌘F)";
+const FIND_LABEL = "Find";
+/** `/login` answers with one token, so the counter has exactly one hit to show. */
+const FOUND_ONCE = "token";
+const ONE_OF_ONE = "1/1";
 /** The committed `ws` fixture's runnable requests, as the sidebar names them. */
 const FIXTURE_REQUESTS = ["Ping", "Echo", "Descriptor Only"];
 const OK_STATUS = "200";
@@ -75,6 +81,34 @@ describe.runIf(APP_TESTS_ENABLED)("the desktop app", () => {
 
       await page.getByText(OK_STATUS, { exact: true }).first().waitFor({ timeout: RESPONSE_TIMEOUT_MS });
       expect(workspace.server.received.map((request) => `${request.method} ${request.url}`)).toEqual(["POST /login"]);
+    },
+    APP_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "givenResponseBody_whenFindIsClosedAndModFPressed_thenTheFindBarReopensOnTheBody",
+    async () => {
+      workspace = await httpWorkspace();
+      launched = await launchApp(workspace.root);
+      const { page } = launched;
+
+      await chooseEnvironment(page, HTTP_ENVIRONMENT);
+      await page.locator(REQUEST_ROW_SELECTOR, { hasText: "Login" }).first().click();
+      await page.getByRole("button", { name: "Send", exact: true }).waitFor({ timeout: LAUNCH_TIMEOUT_MS });
+      await page.keyboard.press(SEND_SHORTCUT);
+      await page.getByText(OK_STATUS, { exact: true }).first().waitFor({ timeout: RESPONSE_TIMEOUT_MS });
+
+      await page.getByRole("button", { name: BODY_FIND_LABEL }).click();
+      const bar = page.getByRole("search", { name: FIND_LABEL });
+      await page.keyboard.type(FOUND_ONCE);
+      await bar.getByText(ONE_OF_ONE, { exact: true }).waitFor({ timeout: RESPONSE_TIMEOUT_MS });
+
+      // Escape hands focus back to the read-only body; Cmd+F only fires if the body can hold it.
+      await page.keyboard.press("Escape");
+      await waitUntil(async () => (await bar.count()) === 0);
+      await page.keyboard.press(FIND_SHORTCUT);
+      await bar.getByText(ONE_OF_ONE, { exact: true }).waitFor({ timeout: RESPONSE_TIMEOUT_MS });
+      await expect(bar.getByRole("textbox", { name: FIND_LABEL }).inputValue()).resolves.toBe(FOUND_ONCE);
     },
     APP_TEST_TIMEOUT_MS,
   );
