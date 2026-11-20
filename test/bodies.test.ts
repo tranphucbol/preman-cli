@@ -6,6 +6,11 @@ const PREVIEW_BYTES = 256 * 1024;
 const FORMAT_LIMIT_BYTES = 2 * 1024 * 1024;
 const BODY_RETENTION = 20;
 const JSON_TYPE = "application/json";
+const SEARCH_LIMIT = 500;
+const SEARCH_PREVIEW_CHARS = 200;
+const MINIFIED_BODY_BYTES = 50 * 1024 * 1024;
+const NEEDLE = "needle";
+const MINIFIED_FILL = `{"${NEEDLE}":1},`;
 
 /** Three bytes in UTF-8, so any window boundary inside one is a split codepoint. */
 const SNOWMAN = "\u2603";
@@ -128,6 +133,29 @@ describe("BodyStore.search", () => {
     const handle = store.put(textBody("x".repeat(50)), null);
 
     expect(store.search(handle, "x", 5)).toHaveLength(5);
+  });
+
+  it("givenMinifiedBody_whenSearching_thenEachPreviewIsBoundedAndShowsItsHit", () => {
+    const store = new BodyStore();
+    // One line of 50MB: a preview that read to the line's ends decoded all of it per hit.
+    const handle = store.put(Buffer.alloc(MINIFIED_BODY_BYTES, MINIFIED_FILL), JSON_TYPE);
+
+    const matches = store.search(handle, NEEDLE, SEARCH_LIMIT);
+    expect(matches).toHaveLength(SEARCH_LIMIT);
+    for (const match of matches) {
+      expect(match.line).toBe(1);
+      expect(match.preview.length).toBeLessThanOrEqual(SEARCH_PREVIEW_CHARS);
+      expect(match.preview).toContain(NEEDLE);
+    }
+  });
+
+  it("givenHitFarIntoALongLine_whenSearching_thenThePreviewStartsJustBeforeIt", () => {
+    const store = new BodyStore();
+    const handle = store.put(textBody(`first\n${"a".repeat(5000)}${NEEDLE}`), null);
+
+    const match = store.search(handle, NEEDLE)[0];
+    expect(match?.line).toBe(2);
+    expect(match?.preview.endsWith(NEEDLE)).toBe(true);
   });
 
   it("givenEmptyQuery_whenSearching_thenNoMatches", () => {
