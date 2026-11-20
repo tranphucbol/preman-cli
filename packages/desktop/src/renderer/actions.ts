@@ -361,14 +361,16 @@ export async function bodyFormat(handle: string): Promise<Result<string>> {
 /**
  * Search a body in the engine.
  *
- * This is what `Cmd+F` in the body viewer does instead of searching the document, because the
- * document is one window and searching what you can already see is not searching.
+ * This is where the find bar's hits come from while the body viewer holds one window of a larger
+ * raw body, because searching what you can already see is not searching. `limit` caps the hits;
+ * the engine's default applies without it.
  */
-export async function bodySearch(handle: string, query: string): Promise<Result<BodyMatch[]>> {
+export async function bodySearch(handle: string, query: string, limit?: number): Promise<Result<BodyMatch[]>> {
   const engine = client();
   if (engine === null) return { ok: false, failure: DISCONNECTED };
   try {
-    return { ok: true, value: await engine.send("body-search", { handle, query }) };
+    const request = limit === undefined ? { handle, query } : { handle, query, limit };
+    return { ok: true, value: await engine.send("body-search", request) };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }

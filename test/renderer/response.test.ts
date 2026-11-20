@@ -21,7 +21,9 @@ import type { RunEvent } from "@preman/core/api/events.js";
 import { BODY_WINDOW_BYTES, EXIT_CODES } from "@preman/desktop/engine/protocol.js";
 import {
   VIEWER_RETAINED_BYTES,
+  charRange,
   extendView,
+  findSource,
   formatAvailability,
   isEmpty,
   isHighlightable,
@@ -31,6 +33,7 @@ import {
   requestOffset,
   retainedBytes,
   seedView,
+  utf8Length,
   viewEnd,
   viewText,
   viewerLanguage,
@@ -82,6 +85,16 @@ const PING_ID = "postman/collections/payment/Ping.request.yaml";
 const FIRST_ITERATION = 1;
 const ASSERTION_COUNT = 30;
 const ONE_REQUEST = 1;
+const SEARCHED_ASCII = '"name"';
+const SEARCHED_MULTI_BYTE = 'café"}';
+/**
+ * Searched bodies break lines: a hit's preview decodes the line it sits on, so a single-line
+ * body costs its whole length per hit. Larger than the viewer retains, so it is windowed.
+ */
+const LINED_BODY_BYTES = 2 * MEGABYTE;
+const LINED_FILL = `${ITEM},\n`;
+/** Far enough in that the window does not start at the body's first byte. */
+const LATER_HIT = 300;
 
 /** A fixed epoch so a click can be asserted exactly rather than within a window. */
 const CLICKED_AT = 1_700_000_000_000;
@@ -213,6 +226,57 @@ describe("the windowed body viewer", () => {
     expect(offset).toBeLessThanOrEqual(match.offset);
     expect(window.offset).toBeLessThanOrEqual(match.offset);
     expect(window.nextOffset).toBeGreaterThan(match.offset);
+  });
+});
+
+describe("finding in a body the renderer holds a window of", () => {
+  /** Jump to a hit the way the find bar does, and say where it landed on screen. */
+  function landOn(query: string, hit: number) {
+    const store = new BodyStore();
+    const publication = store.publish(Buffer.alloc(LINED_BODY_BYTES, LINED_FILL), JSON_TYPE);
+    const match = store.search(publication.handle, query, hit + ONE_REQUEST)[hit];
+    if (match === undefined) throw new Error(`no hit ${String(hit)} for ${query}`);
+    const view = extendView(
+      seedView(publication),
+      store.window(publication.handle, offsetForMatch(match), BODY_WINDOW_BYTES),
+    );
+    return { view, match, range: charRange(view, match.offset, utf8Length(query)) };
+  }
+
+  it("givenAsciiHit_whenMappedOntoTheWindow_thenTheRangeCoversTheQuery", () => {
+    const { view, range } = landOn(SEARCHED_ASCII, LATER_HIT);
+
+    expect(range).not.toBeNull();
+    expect(viewText(view).slice(range?.from, range?.to)).toBe(SEARCHED_ASCII);
+  });
+
+  it("givenHitAfterMultiByteText_whenMappedOntoTheWindow_thenBytesAndCharactersDoNotDrift", () => {
+    // Every item before the hit, and the hit itself, carries an `é`: two bytes, one character.
+    // A mapping that took bytes for characters would land one character late per item.
+    const { view, range } = landOn(SEARCHED_MULTI_BYTE, LATER_HIT);
+
+    expect(viewText(view).slice(range?.from, range?.to)).toBe(SEARCHED_MULTI_BYTE);
+  });
+
+  it("givenHitOutsideTheRetainedWindow_whenMapped_thenThereIsNoRange", () => {
+    const { view } = landOn(SEARCHED_ASCII, LATER_HIT);
+
+    expect(charRange(view, LINED_BODY_BYTES - ONE_REQUEST, ONE_REQUEST)).toBeNull();
+  });
+
+  it("givenPrettyPrintedBody_whenChoosingWhereToFind_thenTheDocumentOnScreenIsSearched", () => {
+    const { view } = landOn(SEARCHED_ASCII, LATER_HIT);
+
+    // The engine's offsets point into the raw bytes; the pretty text on screen has none of them.
+    expect(findSource(view, true)).toBe("local");
+  });
+
+  it("givenWindowedRawBody_whenChoosingWhereToFind_thenTheEngineIsSearched", () => {
+    const { view } = landOn(SEARCHED_ASCII, LATER_HIT);
+    const { publication } = bodyFrom(SMALL_BODY, JSON_TYPE);
+
+    expect(findSource(view, false)).toBe("remote");
+    expect(findSource(seedView(publication), false)).toBe("local");
   });
 });
 

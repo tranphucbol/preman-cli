@@ -77,6 +77,14 @@ than inferred, and settles on the transport duration once the exchange finishes 
 Timeline tab, the console and `--report` all agree on. The Timeline shows the wall-clock wait beside
 it, which is where the difference between the two goes.
 
+`Cmd+F` opens the same find bar in every editor: a request body, a script, the YAML tab and the
+response body. It counts as you type (`3/12`), steps with `Enter` and `Shift+Enter`, and has
+toggles for match case, whole word and regex; an editable editor adds a replace row on `Cmd+Option+F`.
+A response body too large to hold in the window is searched by the engine instead, across the whole
+body and exactly as typed, so the toggles are off there and stepping loads the part of the body each
+hit is in ([ADR 013](../decisions/013-response-bodies-stay-in-the-engine.md),
+[ADR 014](../decisions/014-codemirror-everywhere.md)).
+
 A `text/event-stream` response is read as it arrives. The Body tab becomes a list of events, newest
 first, each with the time it landed and expandable to its full data; the header states how many have
 arrived and how many bytes, and says whether the stream is still open. Nothing about it waits for the

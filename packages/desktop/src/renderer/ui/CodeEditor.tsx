@@ -1,7 +1,8 @@
 /**
  * The one text editor in the app: request bodies, scripts, raw YAML, and the response
  * viewer (decision 16). One keymap, one theme, one find widget, so a shortcut learned in a
- * body works in a script.
+ * body works in a script. The find widget is `FindBar`, portaled into the panel CodeMirror
+ * mounts; plan 023 says why it replaced the stock one.
  *
  * The theme reads the same CSS variables as the rest of the app rather than restating
  * hex values, so retuning a token retunes the editor with it. That is the whole reason
@@ -15,7 +16,8 @@
  * doing it on every render would fight the cursor.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
@@ -35,10 +37,20 @@ import {
   placeholder as placeholderExtension,
   tooltips,
 } from "@codemirror/view";
+import type { RemoteFind } from "@preman/desktop/renderer/model/find.js";
 import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { SELECTING_ATTRIBUTE, THEMES } from "@preman/desktop/renderer/ui/editorTheme.js";
+import { FindBar } from "@preman/desktop/renderer/ui/FindBar.js";
+import {
+  editability,
+  findKeymap,
+  findPanel,
+  findPanelField,
+  openFind,
+  type FindHost,
+} from "@preman/desktop/renderer/ui/findPanel.js";
 import { HIGHLIGHT_STYLE } from "@preman/desktop/renderer/ui/highlight.js";
 import { shellCommand } from "@preman/desktop/renderer/ui/shell.js";
 import {
@@ -82,6 +94,8 @@ const LANGUAGE_EXTENSION: Record<CodeLanguage, (unresolved?: StateField<Unresolv
  */
 const EDGE_THRESHOLD_PX = 200;
 const SCROLL_TOP = 0;
+/** `findRequest` before anyone has asked for the bar. */
+const NO_FIND_REQUEST = 0;
 
 /**
  * How long the document can sit unchanged before it commits on its own.
@@ -95,13 +109,20 @@ const IDLE_COMMIT_MS = 300;
 /** Which end of the document the reader has reached. */
 export type ScrollEdge = "top" | "bottom";
 
+/** Where an engine-located hit lands in the document on screen. `serial` makes a repeat land again. */
+export interface EditorReveal {
+  readonly from: number;
+  readonly to: number;
+  readonly serial: number;
+}
+
 /** Recreated per mount rather than shared, so two open editors cannot fight over one compartment. */
 function baseExtensions(
   language: CodeLanguage,
   readOnly: boolean,
   gutter: boolean,
   hint: string,
-  engineFind: boolean,
+  onFindHost: (host: FindHost | null) => void,
   unresolved: StateField<UnresolvedNames> | undefined,
   theme: Extension,
 ): Extension[] {
@@ -115,14 +136,16 @@ function baseExtensions(
     SELECTING_ATTRIBUTE,
     highlightSelectionMatches(),
     syntaxHighlighting(HIGHLIGHT_STYLE, { fallback: true }),
-    // An editor showing one window of a much larger document must not offer to search it:
-    // the panel would report "no matches" for text that is certainly there. Dropping the
-    // extension and the keymap together is what makes that impossible rather than unlikely.
-    ...(engineFind ? [] : [search({ top: false })]),
+    // CodeMirror keeps the query and the highlighting; the bar drawn into its panel is ours, the
+    // same one in every editor. `literal` because a bar that offers a regex toggle should not
+    // also expand `\n` in a plain search.
+    search({ top: true, literal: true, createPanel: findPanel(onFindHost) }),
+    findPanelField,
     keymap.of([
       ...closeBracketsKeymap,
       ...defaultKeymap,
-      ...(engineFind ? [] : searchKeymap),
+      ...findKeymap(!readOnly),
+      ...searchKeymap,
       ...historyKeymap,
       ...foldKeymap,
       indentWithTab,
@@ -136,8 +159,7 @@ function baseExtensions(
     LANGUAGE_EXTENSION[language](unresolved),
     ...(gutter ? [lineNumbers(), highlightActiveLineGutter(), foldGutter()] : []),
     ...(hint === "" ? [] : [placeholderExtension(hint)]),
-    EditorState.readOnly.of(readOnly),
-    EditorView.editable.of(!readOnly),
+    ...editability(readOnly),
   ];
 }
 
@@ -156,10 +178,15 @@ export interface CodeEditorProps {
   readonly className?: string;
   readonly onCommit?: (value: string) => void;
   /**
-   * Take over `Cmd+F`. Supplying this also removes CodeMirror's own search, so the editor
-   * cannot answer a search question about a document it only partly holds.
+   * Where the find bar's hits come from when the document is one window of a larger body. The
+   * bar is the same; it counts the engine's hits rather than the document's, so it cannot answer
+   * a search question about text it only partly holds.
    */
-  readonly onFind?: () => void;
+  readonly remoteFind?: RemoteFind;
+  /** Select and scroll to a range the caller located, such as an engine hit once its window loaded. */
+  readonly reveal?: EditorReveal | null;
+  /** Open the find bar whenever this changes. A counter, so the same request can be made twice. */
+  readonly findRequest?: number;
   /**
    * Called while the reader is within `EDGE_THRESHOLD_PX` of either end. Fires on every
    * scroll event, so a caller that loads on it must guard against re-entry itself.
@@ -187,7 +214,9 @@ export function CodeEditor({
   autoFocus = false,
   className,
   onCommit,
-  onFind,
+  remoteFind,
+  reveal = null,
+  findRequest = NO_FIND_REQUEST,
   onEdge,
   unresolved,
   onToken,
@@ -198,6 +227,8 @@ export function CodeEditor({
   const variant$ = useRef<Compartment | null>(null);
   /** The linter's field, when this editor has one. Read by the effect that pushes an answer in. */
   const unresolved$ = useRef<StateField<UnresolvedNames> | null>(null);
+  /** The panel CodeMirror mounted while the find bar is open; the bar is portaled into it. */
+  const [findHost, setFindHost] = useState<FindHost | null>(null);
 
   const variant = useAppearanceStore((state) => state.theme.variant);
   const editorFontSize = useAppearanceStore((state) => state.preferences.editorFontSize);
@@ -205,7 +236,6 @@ export function CodeEditor({
   // The callbacks are read through refs so a new closure on every render does not tear down
   // and rebuild the editor, which would drop the undo history mid-edit.
   const commit = useRef(onCommit);
-  const find = useRef(onFind);
   const edge = useRef(onEdge);
   const token = useRef(onToken);
   // Synced in an effect rather than assigned during render. Writing a ref during render is a
@@ -213,20 +243,16 @@ export function CodeEditor({
   // behind. An effect runs only for the render that committed.
   useEffect(() => {
     commit.current = onCommit;
-    find.current = onFind;
     edge.current = onEdge;
     token.current = onToken;
-  }, [onCommit, onFind, onEdge, onToken]);
+  }, [onCommit, onEdge, onToken]);
 
-  // Whether the editor was built without its own search. A boolean rather than the callback
-  // itself, so passing a fresh arrow every render does not rebuild the editor.
-  const engineFind = onFind !== undefined;
-
-  // Same reason, for the token gesture: a pane that renders a fresh handler every keystroke must
-  // not be able to rebuild the view and drop the undo history.
+  // Whether the token gesture is installed. A boolean rather than the callback itself: a pane that
+  // renders a fresh handler every keystroke must not be able to rebuild the view and drop the undo
+  // history.
   const clicksTokens = onToken !== undefined;
 
-  // Whether this editor lints. A boolean for the same reason `engineFind` is one: the answer
+  // Whether this editor lints. A boolean for the same reason `clicksTokens` is one: the answer
   // itself changes on every preview, and rebuilding the view on it would drop the undo history
   // mid-edit. The answer is pushed in as an effect instead, by the effect below.
   //
@@ -278,23 +304,10 @@ export function CodeEditor({
             readOnly,
             gutter,
             placeholder,
-            engineFind,
+            setFindHost,
             unresolvedNames,
             theme$.of(THEMES[useAppearanceStore.getState().theme.variant]),
           ),
-          ...(engineFind
-            ? [
-                keymap.of([
-                  {
-                    key: "Mod-f",
-                    run: () => {
-                      find.current?.();
-                      return true;
-                    },
-                  },
-                ]),
-              ]
-            : []),
           // Honest-while-typing (decision 7 in 016): a document sitting idle for
           // `IDLE_COMMIT_MS` commits itself, so the Save button's `disabled` state and the
           // sidebar's unsaved mark do not lag an unblurred editor by however long the caret
@@ -347,7 +360,7 @@ export function CodeEditor({
     // `value` is the initial document only. Later changes are handled by the effect below,
     // which is why it is deliberately absent from these dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, readOnly, gutter, placeholder, autoFocus, engineFind, lints, clicksTokens]);
+  }, [language, readOnly, gutter, placeholder, autoFocus, lints, clicksTokens]);
 
   /** The answer, pushed into a live editor. A reconfigure would rebuild the lint state for nothing. */
   useEffect(() => {
@@ -395,5 +408,37 @@ export function CodeEditor({
     instance.scrollDOM.scrollTop = SCROLL_TOP;
   }, [value]);
 
-  return <div ref={host} className={cn("min-h-0 flex-1 overflow-hidden", className)} />;
+  // After the document effect, so a hit in a window that just replaced the document is selected
+  // in the new text and not the old. Once per serial: the caller recomputes the range as windows
+  // append, and landing on it again would pull a reader who scrolled on back to the hit.
+  const revealed = useRef<number | null>(null);
+  useEffect(() => {
+    const instance = view.current;
+    if (instance === null || reveal === null || reveal.serial === revealed.current) return;
+    revealed.current = reveal.serial;
+    const length = instance.state.doc.length;
+    const from = Math.min(reveal.from, length);
+    const to = Math.min(reveal.to, length);
+    instance.dispatch({
+      selection: { anchor: from, head: to },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+  }, [reveal]);
+
+  useEffect(() => {
+    const instance = view.current;
+    if (instance === null || findRequest === NO_FIND_REQUEST) return;
+    openFind(instance);
+  }, [findRequest]);
+
+  // A sibling rather than a child of `host`: that element's children are CodeMirror's, and React
+  // must not be asked to reconcile DOM it did not create.
+  return (
+    <>
+      <div ref={host} className={cn("min-h-0 flex-1 overflow-hidden", className)} />
+      {findHost === null
+        ? null
+        : createPortal(<FindBar host={findHost} readOnly={readOnly} remote={remoteFind ?? null} />, findHost.dom)}
+    </>
+  );
 }

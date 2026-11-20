@@ -14,6 +14,10 @@ const BODY_RETENTION = 20;
 const SEARCH_MATCH_LIMIT = 500;
 /** How much of a matching line comes back with a search hit. */
 const SEARCH_PREVIEW_CHARS = 200;
+/** The most bytes `SEARCH_PREVIEW_CHARS` can take: four per codepoint, two UTF-16 units each. */
+const SEARCH_PREVIEW_BYTES = SEARCH_PREVIEW_CHARS * 4;
+/** Context kept ahead of a hit whose line starts further back than a preview reaches. */
+const SEARCH_PREVIEW_LEAD_BYTES = 80;
 
 const HANDLE_PREFIX = "body-";
 const FIRST_HANDLE = 1;
@@ -205,11 +209,22 @@ export class BodyStore {
     this.entries.delete(handle);
   }
 
+  /**
+   * The line a hit sits on, as much of it as a preview shows.
+   *
+   * Both scans stop a preview's width from the hit. A minified body is one line, and
+   * finding its ends for every hit would read and decode the whole body once per hit.
+   * A line that starts out of reach is shown from just before the hit instead, which
+   * is also the only way the hit itself makes it into the preview.
+   */
   private lineAt(bytes: Buffer, at: number): string {
-    const before = bytes.lastIndexOf(LINE_FEED, at);
-    const start = before === NOT_FOUND ? 0 : before + 1;
-    const after = bytes.indexOf(LINE_FEED, at);
-    const end = after === NOT_FOUND ? bytes.length : after;
+    const floor = Math.max(at - SEARCH_PREVIEW_BYTES, 0);
+    const before = bytes.subarray(floor, at).lastIndexOf(LINE_FEED);
+    let start = floor + before + 1;
+    if (before === NOT_FOUND && floor > 0) start = alignStart(bytes, at - SEARCH_PREVIEW_LEAD_BYTES);
+    const ceiling = Math.min(start + SEARCH_PREVIEW_BYTES, bytes.length);
+    const after = bytes.subarray(start, ceiling).indexOf(LINE_FEED);
+    const end = after === NOT_FOUND ? alignEnd(bytes, ceiling) : start + after;
     return bytes.subarray(start, end).toString(ENCODING).slice(0, SEARCH_PREVIEW_CHARS);
   }
 
