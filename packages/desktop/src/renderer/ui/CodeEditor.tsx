@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { xml } from "@codemirror/lang-xml";
@@ -41,6 +41,7 @@ import type { RemoteFind } from "@preman/desktop/renderer/model/find.js";
 import { clearFlush, registerFlush } from "@preman/desktop/renderer/pending.js";
 import { useAppearanceStore } from "@preman/desktop/renderer/stores/appearance.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { EDITOR_KEYMAP } from "@preman/desktop/renderer/ui/editorKeymap.js";
 import { SELECTING_ATTRIBUTE, THEMES } from "@preman/desktop/renderer/ui/editorTheme.js";
 import { FindBar } from "@preman/desktop/renderer/ui/FindBar.js";
 import {
@@ -143,7 +144,7 @@ function baseExtensions(
     findPanelField,
     keymap.of([
       ...closeBracketsKeymap,
-      ...defaultKeymap,
+      ...EDITOR_KEYMAP,
       ...findKeymap(!readOnly),
       ...searchKeymap,
       ...historyKeymap,
