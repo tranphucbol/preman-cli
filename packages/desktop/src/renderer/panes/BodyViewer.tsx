@@ -23,6 +23,7 @@ import type { BodyMatch } from "@preman/desktop/engine/protocol.js";
 import { bodyFormat, bodySearch, bodyWindow, type Failure } from "@preman/desktop/renderer/actions.js";
 import {
   charRange,
+  copySource,
   extendView,
   findSource,
   formatAvailability,
@@ -45,6 +46,7 @@ import type { RemoteFind } from "@preman/desktop/renderer/model/find.js";
 import type { ResponseBody } from "@preman/desktop/renderer/model/response.js";
 import { CodeEditor, type EditorReveal, type ScrollEdge } from "@preman/desktop/renderer/ui/CodeEditor.js";
 import { Button, IconButton } from "@preman/desktop/renderer/ui/Controls.js";
+import { CopyButton } from "@preman/desktop/renderer/ui/CopyButton.js";
 import { FormatIcon, SearchIcon } from "@preman/desktop/renderer/ui/icons.js";
 
 const START_OF_BODY = 0;
@@ -53,6 +55,7 @@ const SEARCH_HINT = "Find (⌘F)";
 const FORMAT_HINT = "Pretty-print";
 /* The toggle is lit before the reader has touched it, so it has to say what pressing it does. */
 const RAW_HINT = "Show the raw body";
+const COPY_HINT = "Copy response body";
 const FIRST_SERIAL = 1;
 
 /** An engine hit the reader stepped to, in bytes; it becomes a document range once its window is in. */
@@ -204,6 +207,21 @@ export function BodyViewer({ body }: { readonly body: ResponseBody }) {
     else setFailure(result.failure);
   }
 
+  // What the reader sees, whole: the pretty-printed text when it is lit, and every raw byte
+  // otherwise - never just the window that happens to be on screen.
+  const copy = useMemo(() => copySource(view, formatted), [view, formatted]);
+  const readCopy = useCallback(async (): Promise<string | null> => {
+    if (copy.kind === "held") return copy.text;
+    if (copy.kind === "refused") return null;
+    const result = await bodyWindow(handle, START_OF_BODY, copy.length);
+    if (result.ok) return result.value.text;
+    setFailure(result.failure);
+    return null;
+  }, [copy, handle]);
+  const copyFailed = useCallback((message: string) => {
+    setFailure({ message, details: [] });
+  }, []);
+
   function move(to: BodyMove): void {
     const offset = requestOffset(latest.current, to);
     if (offset !== null) void load(offset);
@@ -235,6 +253,12 @@ export function BodyViewer({ body }: { readonly body: ResponseBody }) {
         >
           <SearchIcon />
         </IconButton>
+        <CopyButton
+          label={COPY_HINT}
+          read={readCopy}
+          refusal={copy.kind === "refused" ? copy.reason : undefined}
+          onFail={copyFailed}
+        />
       </div>
 
       {failure !== null && (

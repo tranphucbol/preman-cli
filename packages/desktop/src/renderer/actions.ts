@@ -332,12 +332,16 @@ export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok
 
 const DISCONNECTED: Failure = { message: "The workspace engine is not connected.", details: [] };
 
-/** One window of a response body. The viewer asks for these as the reader moves. */
-export async function bodyWindow(handle: string, offset: number): Promise<Result<BodyWindow>> {
+/**
+ * One window of a response body. The viewer asks for these as the reader moves; Copy asks for
+ * one as long as the body, which is why `length` is open here rather than only in the protocol.
+ */
+export async function bodyWindow(handle: string, offset: number, length?: number): Promise<Result<BodyWindow>> {
   const engine = client();
   if (engine === null) return { ok: false, failure: DISCONNECTED };
   try {
-    return { ok: true, value: await engine.send("body-window", { handle, offset }) };
+    const request = length === undefined ? { handle, offset } : { handle, offset, length };
+    return { ok: true, value: await engine.send("body-window", request) };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }

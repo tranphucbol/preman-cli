@@ -322,6 +322,39 @@ export function formatAvailability(view: BodyView, sample: string): FormatAvaila
   return ALLOWED;
 }
 
+/**
+ * The largest body Copy will fetch whole. The viewer's refusal to hold a body is about
+ * keeping it held; a copy holds it for one clipboard write and lets go. Past this the
+ * clipboard is the wrong tool - the reader wants a file, and a frozen paste target is the
+ * cost of pretending otherwise.
+ */
+export const BODY_COPY_LIMIT_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Where the text Copy writes comes from.
+ *
+ * `held` is the text already in the editor: the pretty-printed body, or a raw body small
+ * enough to be in one view. Either way it is exactly what the reader sees. `fetch` is a raw
+ * body the viewer only holds a window of; the copy asks the engine for every byte instead
+ * of writing the window and calling it the body. `refused` says why, as the tooltip.
+ */
+export type CopySource =
+  | { readonly kind: "held"; readonly text: string }
+  | { readonly kind: "fetch"; readonly length: number }
+  | { readonly kind: "refused"; readonly reason: string };
+
+export function copySource(view: BodyView, formatted: string | null): CopySource {
+  if (formatted !== null) return { kind: "held", text: formatted };
+  if (isWhole(view)) return { kind: "held", text: viewText(view) };
+  if (view.byteLength > BODY_COPY_LIMIT_BYTES) {
+    return {
+      kind: "refused",
+      reason: `Too large to copy (${formatBytes(view.byteLength)}). The limit is ${formatBytes(BODY_COPY_LIMIT_BYTES)}.`,
+    };
+  }
+  return { kind: "fetch", length: view.byteLength };
+}
+
 const BYTE_UNITS = ["B", "KB", "MB", "GB"] as const;
 const BYTES_PER_UNIT = 1024;
 const BYTE_PRECISION = 1;

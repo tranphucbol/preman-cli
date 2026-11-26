@@ -101,6 +101,7 @@ import {
   Tooltip,
 } from "@preman/desktop/renderer/ui/Controls.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
+import { CopyButton } from "@preman/desktop/renderer/ui/CopyButton.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import {
   CancelIcon,
@@ -1135,6 +1136,35 @@ function BeautifyButton({
   );
 }
 
+const COPY_BODY_LABEL = "Copy request body";
+const COPY_MESSAGE_LABEL = "Copy message";
+
+/**
+ * Copy the text one of these editors is holding, as authored: `{{tokens}}` stay tokens even in
+ * `Preview`, because what gets pasted is usually pasted back into a request, and a resolved
+ * token is a credential on the clipboard.
+ *
+ * It reads the store the way `BeautifyButton` does, after the same flush, so the last keystrokes
+ * are in what is copied.
+ */
+function CopyBodyButton({
+  nodeId,
+  path,
+  label,
+}: {
+  readonly nodeId: string;
+  readonly path: readonly string[];
+  readonly label: string;
+}) {
+  const read = useCallback(() => {
+    flushPending();
+    const tab = useTabsStore.getState().tabs.get(nodeId);
+    if (tab === undefined) return null;
+    return readText(project(tab.saved?.data, tab.edits), path);
+  }, [nodeId, path]);
+  return <CopyButton label={label} read={read} />;
+}
+
 const MESSAGE_HINT = "The request message, as JSON. {{tokens}} interpolate before the call.";
 const GENERATE_LABEL = "Generate example";
 /** A span rather than the glyph's tooltip: a disabled button never opens one. */
@@ -1211,6 +1241,7 @@ function MessagePane({
             <GenerateIcon />
           </IconButton>
           {view !== "preview" && <BeautifyButton nodeId={nodeId} path={FIELD.message} onFail={onFail} />}
+          <CopyBodyButton nodeId={nodeId} path={FIELD.message} label={COPY_MESSAGE_LABEL} />
         </div>
       </div>
       <TemplateEditor
@@ -1242,7 +1273,8 @@ function BodyPane({
   const previewable = PREVIEWABLE_BODY_TYPES.has(type);
   // Raw only. `graphql`'s toolbar sits above two editors, so one button here could not say which
   // of them it formats; the pair grids have no whitespace to fix.
-  const beautifiable = type === RAW_BODY && view !== "preview";
+  const raw = type === RAW_BODY;
+  const beautifiable = raw && view !== "preview";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1263,9 +1295,10 @@ function BodyPane({
           ))}
         </Select>
         {previewable && <ViewSwitch nodeId={nodeId} view={view} />}
-        {beautifiable && (
+        {raw && (
           <div className={ACTION_GROUP_CLASS}>
-            <BeautifyButton nodeId={nodeId} path={FIELD.bodyContent} onFail={onFail} />
+            {beautifiable && <BeautifyButton nodeId={nodeId} path={FIELD.bodyContent} onFail={onFail} />}
+            <CopyBodyButton nodeId={nodeId} path={FIELD.bodyContent} label={COPY_BODY_LABEL} />
           </div>
         )}
       </div>
