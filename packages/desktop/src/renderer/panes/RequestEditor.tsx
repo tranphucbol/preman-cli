@@ -549,6 +549,10 @@ function TlsToggle({ data, apply }: { readonly data: unknown; readonly apply: Ap
   );
 }
 
+function methodChoiceId(choice: MethodChoice): string {
+  return `${choice.spec}#${choice.methodPath}`;
+}
+
 /**
  * The gRPC method picker.
  *
@@ -592,7 +596,9 @@ function useMethodPicker(nodeId: string, apply: Apply, onFail: (failure: Failure
     () =>
       choices.map((choice) => ({
         kind: "method",
-        id: choice.methodPath,
+        // The same service is often declared in more than one proto, so the path alone collides:
+        // the palette keys its rows by id, and choosing would write the first spec's location.
+        id: methodChoiceId(choice),
         label: choice.methodPath,
         // Streaming is offered and refused on send: a method missing from the picker reads as a
         // broken index, and "unary only" is a sentence the app can say when it matters.
@@ -603,7 +609,7 @@ function useMethodPicker(nodeId: string, apply: Apply, onFail: (failure: Failure
 
   const choose = useCallback(
     (item: PaletteItem) => {
-      const choice = choices.find((candidate) => candidate.methodPath === item.id);
+      const choice = choices.find((candidate) => methodChoiceId(candidate) === item.id);
       if (choice === undefined) return;
       apply([
         edit(FIELD.methodPath, choice.methodPath),
