@@ -30,6 +30,7 @@ import { loadTab, toEngineError, useSessionStore } from "@preman/desktop/rendere
 import { isDirty, useTabsStore, type Tab } from "@preman/desktop/renderer/stores/tabs.js";
 import { ancestorsOf, useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useRunsStore } from "@preman/desktop/renderer/stores/runs.js";
+import { useSearchStore } from "@preman/desktop/renderer/stores/search.js";
 // The shape a naming dialog waits on. Imported rather than restated, so an action that answers one
 // cannot drift from what the dialog reads; the dependency is a type and points at no component.
 import type { AskOutcome } from "@preman/desktop/renderer/ui/Dialog.js";
@@ -443,6 +444,47 @@ export async function searchWorkspace(query: string): Promise<Result<GrepResult>
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }
+}
+
+/**
+ * Commit a content search and show its results in the sidebar.
+ *
+ * Enter in either box explicitly commits a search; switching modes does not.
+ */
+export function runWorkspaceSearch(query: string): void {
+  const store = useSearchStore.getState();
+  store.setQuery(query);
+  store.show();
+  if (query.trim().length === 0) {
+    store.settled({ matches: [], truncated: false, warnings: [] });
+    return;
+  }
+  store.started();
+  void searchWorkspace(query).then((result) => {
+    if (result.ok) store.settled(result.value);
+    else store.failed(result.failure.message);
+  });
+}
+
+/**
+ * `Cmd+Shift+F`: move to the content search box.
+ *
+ * Preserve its own draft and results without committing another search.
+ */
+export function goToWorkspaceSearch(): void {
+  const store = useSearchStore.getState();
+  store.show();
+  store.requestFocus("search");
+}
+
+/**
+ * `Cmd+F`: move to the name filter box above the tree, leaving the search results if they are
+ * showing, preserving the filter's own text.
+ */
+export function goToTreeFilter(): void {
+  const store = useSearchStore.getState();
+  store.dismiss();
+  store.requestFocus("filter");
 }
 
 /**

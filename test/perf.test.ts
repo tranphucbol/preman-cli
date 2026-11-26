@@ -28,6 +28,7 @@ import { buildCatalog } from "@preman/core/api/catalog.js";
 import { FAKER_MODULE } from "@preman/core/scripts/module-names.js";
 import { createEngineHost, type EngineHost } from "@preman/desktop/engine/host.js";
 import { mergeConsole } from "@preman/desktop/renderer/model/response.js";
+import { filterTree } from "@preman/desktop/renderer/model/treeFilter.js";
 import { writeBigWorkspace, type GeneratedWorkspace } from "./support/big-workspace.js";
 
 /** The workspace that drove the plan: 43 requests across nine collections. */
@@ -50,6 +51,10 @@ const FIRST_ID = 1;
 const MERGE_ROWS = 5000;
 const MERGE_STREAMS = 3;
 const MERGE_BUDGET_MS = 10;
+/** Half the keystroke-to-paint budget: the filter runs before React paints anything. */
+const TREE_FILTER_BUDGET_MS = 4;
+/** One character, so nearly every name matches and every node pays for its chain. */
+const TREE_FILTER_TEXT = "e";
 const NODE_ID = "postman/collections/payment/Ping.request.yaml";
 const RUN_ID = "run-1";
 /** The three stream shapes, taken off the function rather than restated beside it. */
@@ -146,6 +151,23 @@ describe.skipIf(CLOCK_SKIPPED)("console merge budget", () => {
 
     const elapsed = await best(() => Promise.resolve(mergeConsole(lines, sideRequests, calls)));
     expect(elapsed).toBeLessThanOrEqual(MERGE_BUDGET_MS);
+  });
+});
+
+/**
+ * The sidebar's name filter runs in the renderer on every keystroke in the box, over every node
+ * in the catalog. It is one pass with a stack of open ancestors; this is the case that fails if
+ * it becomes a lookup-and-walk up `parentId` for every match, paid again for each keystroke.
+ */
+describe.skipIf(CLOCK_SKIPPED)("tree filter budget", () => {
+  it("givenThousandRequestWorkspace_whenFilteredByName_thenItStaysWithinBudget", async () => {
+    generated = writeBigWorkspace(BIG_WORKSPACE_REQUESTS);
+    const catalog = await buildCatalog(generated.root);
+
+    expect(filterTree(catalog.nodes, TREE_FILTER_TEXT)?.ids.length).toBeGreaterThan(0);
+
+    const elapsed = await best(() => Promise.resolve(filterTree(catalog.nodes, TREE_FILTER_TEXT)));
+    expect(elapsed).toBeLessThanOrEqual(TREE_FILTER_BUDGET_MS);
   });
 });
 

@@ -10,11 +10,11 @@
  * box that punishes typing. `Cmd+Shift+F` is the same commitment made by a shortcut.
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import type { GrepMatch } from "@preman/desktop/engine/protocol.js";
 
-import { searchWorkspace } from "@preman/desktop/renderer/actions.js";
+import { runWorkspaceSearch } from "@preman/desktop/renderer/actions.js";
 import { searchRowHeight } from "@preman/desktop/renderer/appearance/density.js";
 import { describeFieldPath } from "@preman/desktop/renderer/model/search.js";
 import { useDensity, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
@@ -28,6 +28,7 @@ const OVERSCAN = 6;
 
 const selectMatches = (state: SearchState) => state.matches;
 const selectQuery = (state: SearchState) => state.query;
+const selectFocusWanted = (state: SearchState): boolean => state.focusRequest === "search";
 
 export interface SearchPaneProps {
   /** Open the file the match is in, on the section the match is in. */
@@ -36,20 +37,16 @@ export interface SearchPaneProps {
 
 export function SearchPane({ onOpen }: SearchPaneProps): React.JSX.Element {
   const query = useSearchStore(selectQuery);
+  const box = useRef<HTMLInputElement>(null);
+  const focusWanted = useSearchStore(selectFocusWanted);
 
-  const run = useCallback((next: string) => {
-    const store = useSearchStore.getState();
-    store.setQuery(next);
-    if (next.trim().length === 0) {
-      store.settled({ matches: [], truncated: false, warnings: [] });
-      return;
-    }
-    store.started();
-    void searchWorkspace(next).then((result) => {
-      if (result.ok) store.settled(result.value);
-      else store.failed(result.failure.message);
-    });
-  }, []);
+  useEffect(() => {
+    if (!focusWanted || box.current === null) return;
+    // Selected, so `Cmd+Shift+F` while the results are already up is a fresh query on one keystroke.
+    box.current.focus();
+    box.current.select();
+    useSearchStore.getState().focusHandled();
+  }, [focusWanted]);
 
   return (
     // Escape anywhere in the pane, not at the window: the sidebar is beside the editor rather than
@@ -68,12 +65,16 @@ export function SearchPane({ onOpen }: SearchPaneProps): React.JSX.Element {
           // Keyed on the committed query so `Cmd+Shift+F` with a query already in flight leaves
           // the box showing what was actually searched for.
           key={query}
-          defaultValue={query}
+          ref={box}
+          defaultValue={useSearchStore.getState().searchText}
+          onChange={(event) => {
+            useSearchStore.getState().setSearchText(event.currentTarget.value);
+          }}
           autoFocus
           placeholder="Search requests, then Enter"
           aria-label="Search the workspace"
           onKeyDown={(event) => {
-            if (event.key === "Enter") run(event.currentTarget.value);
+            if (event.key === "Enter") runWorkspaceSearch(event.currentTarget.value);
           }}
         />
       </div>

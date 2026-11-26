@@ -145,12 +145,13 @@ function preview(text: string, counter: LineCounter, hit: Hit): { line: number; 
 
 function searchFile(
   root: string,
-  file: string,
+  node: CatalogNode,
   needle: string,
   limit: number,
   matches: GrepMatch[],
   warnings: string[],
 ): void {
+  const file = fileOf(node);
   let text: string;
   try {
     text = readFileSync(file, "utf8");
@@ -170,7 +171,9 @@ function searchFile(
   const hits: Hit[] = [];
   walk(text, needle, document.contents, [], hits);
 
-  const nodeId = nodeIdFor(root, file);
+  // The node's own id, not one derived from the file: a group's file is its
+  // `.resources/definition.yaml`, whose path is no id the tree knows.
+  const nodeId = node.id;
   const seen = new Set<string>();
   for (const hit of hits) {
     if (matches.length >= limit) return;
@@ -201,7 +204,7 @@ export function grepWorkspace(catalog: Catalog, query: string, options: { limit?
 
   for (const node of catalog.nodes) {
     if (matches.length >= limit) break;
-    searchFile(catalog.root, fileOf(node), needle, limit, matches, warnings);
+    searchFile(catalog.root, node, needle, limit, matches, warnings);
   }
 
   // Truncation is reported rather than implied, because "200 results" and "the first 200
