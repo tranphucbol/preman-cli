@@ -86,7 +86,8 @@ packages/desktop/                @preman/desktop - the Electron app, private, th
     model/                       pure, no React: request fields, drop plans, body windows, responses
     ui/                          cn, icons, Menu, Controls, Banner, Dialog, CodeEditor, highlight,
                                  editorTheme (the editor's chrome, reaching nothing so it is
-                                 testable), template (the {{token}}-aware JSON language)
+                                 testable), editorKeymap (the defaults less the Send key),
+                                 template (the {{token}}-aware JSON language)
     panes/                       Sidebar, TabStrip, RequestEditor, KeyValueGrid, ResponsePane,
                                  BodyViewer, StreamViewer (the Body tab when the response is a
                                  stream), ResponseFailure, ConsoleDrawer, SettingsPane, ProtosPane
