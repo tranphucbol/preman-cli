@@ -69,6 +69,7 @@ import { SearchPane } from "@preman/desktop/renderer/panes/SearchPane.js";
 import { SettingsPane } from "@preman/desktop/renderer/panes/SettingsPane.js";
 import { Sidebar } from "@preman/desktop/renderer/panes/Sidebar.js";
 import { TabStrip } from "@preman/desktop/renderer/panes/TabStrip.js";
+import { TreeFilterBox } from "@preman/desktop/renderer/panes/TreeFilterBox.js";
 import { VariablesPane } from "@preman/desktop/renderer/panes/VariablesPane.js";
 import {
   defaultDestination,
@@ -78,6 +79,7 @@ import {
 import { paletteItems, type PaletteItem } from "@preman/desktop/renderer/model/palette.js";
 import { skeletonWidths } from "@preman/desktop/renderer/model/opening.js";
 import { sectionFor } from "@preman/desktop/renderer/model/search.js";
+import { findTargetsTree } from "@preman/desktop/renderer/model/treeFilter.js";
 import { updateChip } from "@preman/desktop/renderer/model/update.js";
 import { SkeletonBlock } from "@preman/desktop/renderer/ui/Skeleton.js";
 import {
@@ -89,6 +91,8 @@ import {
   deleteNode,
   discardAndClose,
   duplicateNode,
+  goToTreeFilter,
+  goToWorkspaceSearch,
   mutate,
   openNode,
   saveTab,
@@ -184,6 +188,8 @@ const CONSOLE_ISLAND_GAP = "mb-island-gap ml-island-gap";
 const COLLAPSED_ISLAND = "invisible";
 /** The library's inner element scrolls by default; a pane mid-slide must clip, not grow a scrollbar. */
 const SHELL_PANEL_STYLE = { overflow: "hidden" } as const;
+// Cmd+F inside a code editor belongs to that editor's own find bar.
+const CODE_EDITOR_SELECTOR = ".cm-editor";
 /**
  * The explicit "none" the engine now accepts, which is not the same as nobody having chosen.
  *
@@ -412,8 +418,12 @@ export function App(): React.JSX.Element {
     if (sidebarPanel.isCollapsed()) sidebarPanel.resize(SIDEBAR_OPEN);
     else sidebarPanel.collapse();
   }, [sidebarPanel]);
+  // The find shortcuts open the sidebar but never close it, which a toggle would on a second press.
+  const revealSidebar = useCallback(() => {
+    if (sidebarPanel?.isCollapsed() === true) toggleSidebar();
+  }, [sidebarPanel, toggleSidebar]);
 
-  useShortcuts(setFailure, setPaletteOpen, toggleSidebar);
+  useShortcuts(setFailure, setPaletteOpen, toggleSidebar, revealSidebar);
 
   const runCommand = useCallback(
     (id: string) => {
@@ -583,6 +593,7 @@ function useShortcuts(
   onFail: (failure: Failure | null) => void,
   onPalette: (open: boolean) => void,
   onToggleSidebar: () => void,
+  onRevealSidebar: () => void,
 ): void {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -600,7 +611,21 @@ function useShortcuts(
       }
       if (event.shiftKey && key === "f") {
         event.preventDefault();
-        useSearchStore.getState().show();
+        onRevealSidebar();
+        goToWorkspaceSearch();
+        return;
+      }
+      if (key === "f") {
+        const active = document.activeElement;
+        const claims = findTargetsTree({
+          inEditor: active instanceof Element && active.closest(CODE_EDITOR_SELECTOR) !== null,
+          claimed: event.defaultPrevented,
+        });
+        // Left alone otherwise, so an editor's own find bar still opens on the same chord.
+        if (!claims) return;
+        event.preventDefault();
+        onRevealSidebar();
+        goToTreeFilter();
         return;
       }
       // `Cmd+B` is the sidebar toggle in every editor this app's users already have open, and it
@@ -637,7 +662,7 @@ function useShortcuts(
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [onFail, onPalette, onToggleSidebar]);
+  }, [onFail, onPalette, onToggleSidebar, onRevealSidebar]);
 }
 
 /**
@@ -1135,66 +1160,70 @@ function WorkspaceTree({
       {searching ? (
         <SearchPane onOpen={openMatch} />
       ) : (
-        <Sidebar
-          onOpen={open}
-          onSend={(node) => {
-            open(node);
-            void sendNode(node.id).then(onFail);
-          }}
-          onRun={(node) => {
-            useCatalogStore.getState().select(node.id);
-            useOverlayStore.getState().showRunner(node.id);
-          }}
-          onCreateRequest={(parentId, kind) => {
-            askName(kind === "grpc-request" ? "New gRPC request" : "New HTTP request", "Create", "", (name) => {
-              void mutate({ op: "create-request", parentId, name, kind }, { open: true }).then(onFail);
-            });
-          }}
-          onCreateFolder={(parentId) => {
-            askName("New folder", "Create", "", (name) => {
-              void mutate({ op: "create-folder", parentId, name }).then(onFail);
-            });
-          }}
-          onImport={(parentId) => {
-            useCatalogStore.getState().select(parentId);
-            onImport(parentId);
-          }}
-          onCopyAsCommand={(node) => {
-            // Opened first, then the aside. The aside is about the active tab, so a row that
-            // asked for it without opening the row would show the command for whatever was
-            // already up — the wrong request, confidently.
-            open(node);
-            useAsideStore.getState().showCommand();
-          }}
-          onDuplicate={(node) => {
-            // The file is copied, not the draft. Under decision 010 a draft is not the request
-            // yet, so a dirty tab has nothing this could honestly copy — and a modal saying so on
-            // every duplicate would tax the common case, where nothing is dirty.
-            void duplicateNode(node.id).then(onFail);
-          }}
-          onRename={(node) => {
-            askName(`Rename ${node.name}`, "Rename", node.name, (name) => {
-              void mutate({ op: "rename", targetId: node.id, name }).then(onFail);
-            });
-          }}
-          onDelete={(node) => {
-            onAsk({
-              kind: "confirm",
-              title: `Delete ${node.name}?`,
-              body: deleteWarning(node),
-              submit: "Delete",
-              onConfirm: () => {
-                void deleteNode(node.id).then(onFail);
-              },
-            });
-          }}
-          onReveal={(node) => {
-            void window.preman.revealInFileManager(node.file);
-          }}
-          onDrop={(ops) => {
-            void applyPlan(ops).then(onFail);
-          }}
-        />
+        <>
+          {/* Keyed on the workspace: switching clears the store, and the box reads it only on mount. */}
+          {root !== null && <TreeFilterBox key={root} />}
+          <Sidebar
+            onOpen={open}
+            onSend={(node) => {
+              open(node);
+              void sendNode(node.id).then(onFail);
+            }}
+            onRun={(node) => {
+              useCatalogStore.getState().select(node.id);
+              useOverlayStore.getState().showRunner(node.id);
+            }}
+            onCreateRequest={(parentId, kind) => {
+              askName(kind === "grpc-request" ? "New gRPC request" : "New HTTP request", "Create", "", (name) => {
+                void mutate({ op: "create-request", parentId, name, kind }, { open: true }).then(onFail);
+              });
+            }}
+            onCreateFolder={(parentId) => {
+              askName("New folder", "Create", "", (name) => {
+                void mutate({ op: "create-folder", parentId, name }).then(onFail);
+              });
+            }}
+            onImport={(parentId) => {
+              useCatalogStore.getState().select(parentId);
+              onImport(parentId);
+            }}
+            onCopyAsCommand={(node) => {
+              // Opened first, then the aside. The aside is about the active tab, so a row that
+              // asked for it without opening the row would show the command for whatever was
+              // already up — the wrong request, confidently.
+              open(node);
+              useAsideStore.getState().showCommand();
+            }}
+            onDuplicate={(node) => {
+              // The file is copied, not the draft. Under decision 010 a draft is not the request
+              // yet, so a dirty tab has nothing this could honestly copy — and a modal saying so on
+              // every duplicate would tax the common case, where nothing is dirty.
+              void duplicateNode(node.id).then(onFail);
+            }}
+            onRename={(node) => {
+              askName(`Rename ${node.name}`, "Rename", node.name, (name) => {
+                void mutate({ op: "rename", targetId: node.id, name }).then(onFail);
+              });
+            }}
+            onDelete={(node) => {
+              onAsk({
+                kind: "confirm",
+                title: `Delete ${node.name}?`,
+                body: deleteWarning(node),
+                submit: "Delete",
+                onConfirm: () => {
+                  void deleteNode(node.id).then(onFail);
+                },
+              });
+            }}
+            onReveal={(node) => {
+              void window.preman.revealInFileManager(node.file);
+            }}
+            onDrop={(ops) => {
+              void applyPlan(ops).then(onFail);
+            }}
+          />
+        </>
       )}
     </>
   );

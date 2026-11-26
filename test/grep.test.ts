@@ -59,6 +59,22 @@ describe("grep", () => {
     expect(text[(match?.line ?? 1) - 1]).toContain("pm.environment.set");
   });
 
+  it("givenMatchInFolderDefinition_whenGrep_thenNodeIdIsTheFoldersTreeId", async () => {
+    const catalog = await buildCatalog(FIXTURE_WS);
+    const folder = catalog.nodes.find((node) => node.kind === "folder" && node.name === "nested");
+    expect(folder).toBeDefined();
+
+    const found = grepWorkspace(catalog, "from-nested-folder");
+
+    const match = found.matches.find((candidate) =>
+      candidate.file.endsWith(join("nested", ".resources", "definition.yaml")),
+    );
+    // The id the tree knows the folder by, not the definition file's path: a result row
+    // resolves its name and opens its tab through this id.
+    expect(match?.nodeId).toBe(folder?.id);
+    expect(match?.fieldPath).toEqual(["scripts", 0, "code"]);
+  });
+
   it("givenQueryMatchingNothing_whenGrep_thenNoMatchesAndNoWarnings", async () => {
     const catalog = await buildCatalog(FIXTURE_WS);
     const found = grepWorkspace(catalog, "there-is-no-such-string-here");

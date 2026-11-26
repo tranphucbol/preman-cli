@@ -30,7 +30,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { CatalogNode, MutateOp, RequestKind } from "@preman/desktop/engine/protocol.js";
 
@@ -38,6 +38,7 @@ import { resolveMark, type GitDecoration, type RowMark } from "@preman/desktop/r
 import { markRowsPainted } from "@preman/desktop/renderer/phases.js";
 import { resolveDrop, type DropSide } from "@preman/desktop/renderer/model/order.js";
 import { skeletonRowCount } from "@preman/desktop/renderer/model/opening.js";
+import { filterTree, splitName } from "@preman/desktop/renderer/model/treeFilter.js";
 import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import {
   useCatalogStore,
@@ -47,6 +48,7 @@ import {
   useNode,
   type CatalogState,
 } from "@preman/desktop/renderer/stores/catalog.js";
+import { useSearchStore, type SearchState } from "@preman/desktop/renderer/stores/search.js";
 import { useOpening } from "@preman/desktop/renderer/stores/session.js";
 import { useUnsavedMark } from "@preman/desktop/renderer/stores/tabs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
@@ -177,6 +179,8 @@ const UNSAVED_TITLE = "Unsaved changes";
 
 const selectVisible = (state: CatalogState) => state.visibleIds;
 const selectRoot = (state: CatalogState) => state.root;
+const selectNodes = (state: CatalogState) => state.nodes;
+const selectFilter = (state: SearchState) => state.filter;
 
 /**
  * Where the drop line goes, in pixels down the virtual list.
@@ -213,17 +217,25 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const visibleIds = useCatalogStore(selectVisible);
+  const treeIds = useCatalogStore(selectVisible);
   const root = useCatalogStore(selectRoot);
+  const nodes = useCatalogStore(selectNodes);
+  const filter = useSearchStore(selectFilter);
   const opening = useOpening();
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Derived here rather than stored beside `visibleIds`: the filter is a lens over the tree, and
+  // the catalog store's collapse state has to come back untouched when the box is cleared.
+  const filtered = useMemo(() => filterTree(nodes, filter), [nodes, filter]);
+  const filtering = filtered !== null;
+  const visibleIds = filtered?.ids ?? treeIds;
 
   // The last phase of a workspace open: rows exist, so the wait the user was actually having is
   // over. `markRowsPainted` is once-only and defers itself a frame, which is why this pane can
   // report a performance boundary without holding any state for it.
   useEffect(() => {
-    if (visibleIds.length > 0) markRowsPainted();
-  }, [visibleIds.length]);
+    if (treeIds.length > 0) markRowsPainted();
+  }, [treeIds.length]);
 
   /**
    * The single context target. Radix opens on the trigger, which is the whole viewport, so the
@@ -343,8 +355,12 @@ export function Sidebar(props: SidebarProps) {
     }
   }
 
-  if (visibleIds.length === 0) {
+  if (treeIds.length === 0) {
     return <EmptyPane message="This workspace has no requests yet." hint="Right-click to add a collection." />;
+  }
+
+  if (visibleIds.length === 0) {
+    return <EmptyPane message="No requests match" hint="Press Enter to search inside requests." />;
   }
 
   return (
@@ -380,6 +396,7 @@ export function Sidebar(props: SidebarProps) {
                   key={item.key}
                   nodeId={visibleIds[item.index] ?? ""}
                   offset={item.index * rowHeight}
+                  filter={filtering ? filter : null}
                   onOpen={props.onOpen}
                 />
               ))}
@@ -495,22 +512,34 @@ function DragPill({ nodeId, refused }: { readonly nodeId: string; readonly refus
 function Row({
   nodeId,
   offset,
+  filter,
   onOpen,
 }: {
   readonly nodeId: string;
   readonly offset: number;
+  /** The name filter in force, or `null` for the plain tree. */
+  readonly filter: string | null;
   readonly onOpen: (node: CatalogNode) => void;
 }) {
   const node = useNode(nodeId);
   const selected = useIsSelected(nodeId);
-  const collapsed = useIsCollapsed(nodeId);
+  const filtering = filter !== null;
+  // A filtered tree is shown open whatever the user had folded, so the caret says so too.
+  const collapsed = useIsCollapsed(nodeId) && !filtering;
   const git = useGitDecoration(nodeId);
   const unsaved = useUnsavedMark(nodeId);
 
   // Both, on the same element and the same id: a row is a thing you can pick up and a place you can
   // put one, and the pair is what lets `pointerWithin` name a row without a separate hit target.
-  const { attributes, listeners, isDragging, setNodeRef: setDragRef } = useDraggable({ id: nodeId });
-  const { setNodeRef: setDropRef } = useDroppable({ id: nodeId });
+  // Off while filtering: the rows on screen are not the rows between which a drop would land, so a
+  // line drawn between two of them would be a promise about neighbours that are hidden.
+  const {
+    attributes,
+    listeners,
+    isDragging,
+    setNodeRef: setDragRef,
+  } = useDraggable({ id: nodeId, disabled: filtering });
+  const { setNodeRef: setDropRef } = useDroppable({ id: nodeId, disabled: filtering });
   const setRef = useCallback(
     (element: HTMLElement | null) => {
       setDragRef(element);
@@ -529,7 +558,9 @@ function Row({
   const activate = () => {
     useCatalogStore.getState().select(nodeId);
     if (group) {
-      useCatalogStore.getState().toggle(nodeId);
+      // A fold while filtering would change nothing on screen and still rewrite the tree the user
+      // gets back when the box is cleared.
+      if (!filtering) useCatalogStore.getState().toggle(nodeId);
       return;
     }
     onOpen(node);
@@ -600,11 +631,24 @@ function Row({
           unsupported ? "text-ink-faint" : "text-ink",
         )}
       >
-        {node.name}
+        <NodeName name={node.name} filter={filter} />
       </span>
 
       <NodeMark decoration={git} unsaved={unsaved} />
     </div>
+  );
+}
+
+/** The name, with the run the filter matched set in bold so the eye finds why the row stayed. */
+function NodeName({ name, filter }: { readonly name: string; readonly filter: string | null }) {
+  const parts = filter === null ? null : splitName(name, filter);
+  if (parts === null) return <>{name}</>;
+  return (
+    <>
+      {parts.before}
+      <strong className="font-bold">{parts.match}</strong>
+      {parts.after}
+    </>
   );
 }
 
