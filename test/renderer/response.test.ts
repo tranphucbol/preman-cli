@@ -20,8 +20,10 @@ import { BodyStore, FORMAT_LIMIT_BYTES } from "@preman/core/api/bodies.js";
 import type { RunEvent } from "@preman/core/api/events.js";
 import { BODY_WINDOW_BYTES, EXIT_CODES } from "@preman/desktop/engine/protocol.js";
 import {
+  BODY_COPY_LIMIT_BYTES,
   VIEWER_RETAINED_BYTES,
   charRange,
+  copySource,
   extendView,
   findSource,
   formatAvailability,
@@ -62,6 +64,8 @@ import { itemKeyFor, useRunsStore } from "@preman/desktop/renderer/stores/runs.j
 
 const MEGABYTE = 1024 * 1024;
 const HUGE_BODY_BYTES = 50 * MEGABYTE;
+/** Many windows long, and well under the copy limit. */
+const COPIED_BODY_BYTES = 2 * MEGABYTE;
 /** Multi-byte on purpose: a window that split a codepoint would decode to replacement characters. */
 const ITEM = '{"id":1,"name":"café"}';
 const FILL = `${ITEM},`;
@@ -277,6 +281,47 @@ describe("finding in a body the renderer holds a window of", () => {
 
     expect(findSource(view, false)).toBe("remote");
     expect(findSource(seedView(publication), false)).toBe("local");
+  });
+});
+
+describe("copying a response body", () => {
+  it("givenWholeRawBody_whenCopied_thenTheHeldTextIsTheBody", () => {
+    const { publication } = bodyFrom(SMALL_BODY, JSON_TYPE);
+
+    expect(copySource(seedView(publication), null)).toEqual({ kind: "held", text: SMALL_BODY });
+  });
+
+  it("givenPrettyPrintedBody_whenCopied_thenWhatIsOnScreenIsCopied", () => {
+    const { store, publication } = bodyFrom(SMALL_BODY, JSON_TYPE);
+    const pretty = store.format(publication.handle);
+
+    expect(copySource(seedView(publication), pretty)).toEqual({ kind: "held", text: pretty });
+  });
+
+  it("givenWindowedBody_whenCopied_thenEveryByteIsFetchedAndNotJustTheWindow", () => {
+    const bytes = COPIED_BODY_BYTES;
+    const { store, publication } = bodyOf(bytes, TEXT_TYPE);
+    const view = extendView(seedView(publication), store.window(publication.handle, START, BODY_WINDOW_BYTES));
+    expect(isWhole(view)).toBe(false);
+
+    const source = copySource(view, null);
+
+    expect(source).toEqual({ kind: "fetch", length: bytes });
+    // The length the viewer asks for is the length the engine answers with, all of it.
+    const length = source.kind === "fetch" ? source.length : START;
+    const whole = store.window(publication.handle, START, length);
+    expect(whole.eof).toBe(true);
+    expect(Buffer.byteLength(whole.text, "utf8")).toBe(bytes);
+  });
+
+  it("givenBodyAboveCopyLimit_whenCopied_thenItIsRefusedWithReason", () => {
+    const { publication } = bodyOf(HUGE_BODY_BYTES, TEXT_TYPE);
+    expect(HUGE_BODY_BYTES).toBeGreaterThan(BODY_COPY_LIMIT_BYTES);
+
+    const source = copySource(seedView(publication), null);
+
+    expect(source.kind).toBe("refused");
+    expect(source.kind === "refused" ? source.reason : "").toContain("Too large to copy");
   });
 });
 
