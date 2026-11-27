@@ -69,6 +69,7 @@ The CLI's own design predates the practice.
 | [058](058-the-window-is-islands-on-a-frame.md)                      | The window is islands on a frame                                       |
 | [059](059-one-glyph-per-verb-across-both-apps.md)                   | One glyph per verb across both apps                                    |
 | [060](060-the-cli-hands-the-app-a-folder.md)                        | The CLI hands the app a folder                                         |
+| [061](061-personal-environments-live-outside-the-checkout.md)       | Personal environments live outside the checkout                        |
 
 001-015 were taken before implementation began. 016-019 were taken during it, and 017 in particular
 exists because measuring the budget in 016 disproved the first way it was phrased. 020-022 came with
@@ -453,5 +454,12 @@ folder off argv. A single-instance lock was refused because on macOS it adds not
 make `bun run desktop` defer to the installed build, and a URL scheme because `open-file` is
 already the operating system's message for the same thing. The cost is a macOS-only command and a
 bundle identifier spelled in two places.
+
+061 gives environments a second home outside the checkout, under the user's config directory keyed
+by the workspace's absolute path, so a personal token never becomes a file in someone else's
+repository. A gitignored folder was refused because it needs every repository's cooperation, and an
+override layer because it adds a scope. It also fills the collection scope from the collection's
+definition, never written back by scripts. The cost is personal environments orphaned when a
+checkout moves.
 
 `TEMPLATE.md` is the shape of a new one.
