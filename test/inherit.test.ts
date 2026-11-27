@@ -17,6 +17,7 @@ function group(
     order: undefined,
     scripts: extras.scripts ?? [],
     auth: extras.auth,
+    variables: {},
     filePath: `/tmp/${name}/.resources/definition.yaml`,
   };
 }

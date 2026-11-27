@@ -201,8 +201,11 @@ const CODE_EDITOR_SELECTOR = ".cm-editor";
 const NO_ENVIRONMENT = "\u0000none";
 /** The placeholder's own value, so it can never be mistaken for the choice above. */
 const UNCHOSEN_ENVIRONMENT = "\u0000unchosen";
-/** The one row in the picker that is not an answer. Same NUL reasoning, same guarantee. */
+/** The rows in the picker that are not answers. Same NUL reasoning, same guarantee. */
 const CREATE_ENVIRONMENT = "\u0000create";
+const CREATE_PERSONAL_ENVIRONMENT = "\u0000create-personal";
+/** Marks a personal environment's row, so two lists that read alike are told apart. */
+const PERSONAL_SUFFIX = " · personal";
 
 /**
  * What the trigger says while nobody has chosen. Two strings because there are two situations, and
@@ -252,6 +255,7 @@ const PALETTE_COMMANDS: readonly PaletteItem[] = [
   { kind: "command", id: "import", label: "Import from cURL or grpcurl…", detail: "command" },
   { kind: "command", id: "copy-command", label: "Copy as cURL or grpcurl", detail: "command" },
   { kind: "command", id: "create-environment", label: "New environment…", detail: "command" },
+  { kind: "command", id: "create-personal-environment", label: "New personal environment…", detail: "command" },
   { kind: "command", id: "settings", label: "Settings", detail: "⌘," },
 ];
 
@@ -281,6 +285,20 @@ const CREATE_ENVIRONMENT_ASK = {
   initial: "",
   submit: "Create",
   onConfirm: createEnvironment,
+} as const satisfies Ask;
+
+/**
+ * The same dialog for an environment kept outside the checkout, under the user's config directory:
+ * values that are one person's - a token, a local port - and that nobody else should be handed in
+ * a commit. Names stay unique across both kinds, so the dialog fails the same way.
+ */
+const CREATE_PERSONAL_ENVIRONMENT_ASK = {
+  kind: "name",
+  title: "New personal environment",
+  label: "Name",
+  initial: "",
+  submit: "Create",
+  onConfirm: (name: string) => createEnvironment(name, true),
 } as const satisfies Ask;
 
 export function App(): React.JSX.Element {
@@ -466,6 +484,9 @@ export function App(): React.JSX.Element {
           return;
         case "create-environment":
           setAsk(CREATE_ENVIRONMENT_ASK);
+          return;
+        case "create-personal-environment":
+          setAsk(CREATE_PERSONAL_ENVIRONMENT_ASK);
           return;
         case "settings":
           useOverlayStore.getState().showSettings();
@@ -1040,6 +1061,10 @@ function EnvironmentPicker({ onAsk }: { readonly onAsk: (ask: Ask) => void }): R
               onAsk(CREATE_ENVIRONMENT_ASK);
               return;
             }
+            if (value === CREATE_PERSONAL_ENVIRONMENT) {
+              onAsk(CREATE_PERSONAL_ENVIRONMENT_ASK);
+              return;
+            }
             setEnvironment(value === NO_ENVIRONMENT ? null : value);
           }}
         >
@@ -1057,12 +1082,15 @@ function EnvironmentPicker({ onAsk }: { readonly onAsk: (ask: Ask) => void }): R
           <SelectOption value={NO_ENVIRONMENT}>No environment</SelectOption>
           {environments.map((candidate) => (
             <SelectOption key={candidate.id} value={candidate.name}>
-              {candidate.name}
+              {candidate.personal ? `${candidate.name}${PERSONAL_SUFFIX}` : candidate.name}
             </SelectOption>
           ))}
           <SelectSeparator />
           <SelectCommand value={CREATE_ENVIRONMENT} icon={<AddIcon />}>
             New environment…
+          </SelectCommand>
+          <SelectCommand value={CREATE_PERSONAL_ENVIRONMENT} icon={<AddIcon />}>
+            New personal environment…
           </SelectCommand>
         </Select>
       )}
@@ -1380,7 +1408,7 @@ function EditorPane({
             exit={OVERLAY_HIDDEN}
             transition={OVERLAY_TIMING}
           >
-            <OverlayPane overlay={overlay} onDismiss={dismiss} />
+            <OverlayPane overlay={overlay} onDismiss={dismiss} onAsk={onAsk} />
           </m.div>
         </AnimatePresence>
       </>
@@ -1481,13 +1509,15 @@ function EditorPane({
 function OverlayPane({
   overlay,
   onDismiss,
+  onAsk,
 }: {
   readonly overlay: Overlay;
   readonly onDismiss: () => void;
+  readonly onAsk: (ask: Ask) => void;
 }): React.JSX.Element {
   switch (overlay.kind) {
     case "variables":
-      return <VariablesPane onDismiss={onDismiss} />;
+      return <VariablesPane onDismiss={onDismiss} onAsk={onAsk} />;
     case "protos":
       return <ProtosPane onDismiss={onDismiss} />;
     case "runner":

@@ -28,6 +28,7 @@ const DECLARED_SURFACE = [
   "deleteNode",
   "describeSpecs",
   "describeWorkspace",
+  "duplicateEnvironmentFile",
   "duplicateRequestFile",
   "editDefinitionFile",
   "editRequestFile",
@@ -66,6 +67,7 @@ const DECLARED_SURFACE = [
   "toJsonReport",
   "toJunitReport",
   "watchWorkspace",
+  "writeCollectionVariable",
   "writeEnvironmentValue",
   "writeRequestFile",
 ];

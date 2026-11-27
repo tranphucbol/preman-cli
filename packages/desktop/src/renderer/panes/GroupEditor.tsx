@@ -8,7 +8,8 @@
  *
  * Two sub-tabs, not seven: a group has no url, no body and no method, and its `scripts` and `name`
  * are edited elsewhere or not yet at all. `AuthPane` is imported from the request editor rather
- * than reimplemented - one `auth:` shape, one editor for it.
+ * than reimplemented - one `auth:` shape, one editor for it. A collection has a third, its
+ * `variables:`, on the same grid the request's params and headers use.
  *
  * No Send button and no response, which is why `App.tsx` forks on `tab.kind` before the exchange
  * split: running a collection is the sidebar's `Run…`, and it reports into the console rather than
@@ -32,12 +33,25 @@ import type { Ask } from "@preman/desktop/renderer/ui/Dialog.js";
 import { SaveIcon } from "@preman/desktop/renderer/ui/icons.js";
 import { TabTrigger, useTabUnderline } from "@preman/desktop/renderer/ui/Tabs.js";
 import { DocumentChrome, LoadFailure, Notice, SubTabPane } from "@preman/desktop/renderer/panes/DocumentChrome.js";
-import { AuthPane } from "@preman/desktop/renderer/panes/RequestEditor.js";
+import { AuthPane, PairPane } from "@preman/desktop/renderer/panes/RequestEditor.js";
 
-const GROUP_SUB_TABS: readonly SubTabEntry[] = [
+const FOLDER_SUB_TABS: readonly SubTabEntry[] = [
   { id: "auth", label: "Auth" },
   { id: "yaml", label: "YAML" },
 ];
+
+/**
+ * A collection also has its `variables:`. A folder does not: Postman has no folder variables, and
+ * the runner reads them from the collection's own definition only, so a grid on a folder would
+ * save rows nothing ever resolves.
+ */
+const COLLECTION_SUB_TABS: readonly SubTabEntry[] = [
+  { id: "auth", label: "Auth" },
+  { id: "variables", label: "Variables" },
+  { id: "yaml", label: "YAML" },
+];
+
+const VARIABLES_FIELD = "variables";
 
 /**
  * A group with no `.resources/definition.yaml` opens as an empty document rather than an error:
@@ -70,7 +84,9 @@ export function GroupEditor({ tab, onSave, onAsk }: GroupEditorProps) {
   if (tab.error !== null) return <LoadFailure title={tab.error.message} details={tab.error.details} />;
   if (saved === null) return <Notice message="Nothing loaded." />;
 
-  const subTab = resolveSubTab(GROUP_SUB_TABS, tab.subTab);
+  const collection = tab.kind === "collection";
+  const subTabs = collection ? COLLECTION_SUB_TABS : FOLDER_SUB_TABS;
+  const subTab = resolveSubTab(subTabs, tab.subTab);
   const text = tab.text ?? saved.text ?? EMPTY_DEFINITION;
 
   return (
@@ -87,7 +103,7 @@ export function GroupEditor({ tab, onSave, onAsk }: GroupEditorProps) {
         {/* Save lives on this row rather than on a bar of its own: the group editor has no target
             to address, so the sub-tab row is the only chrome there is to hang it on. */}
         <Tabs.List className="flex shrink-0 items-center border-b border-line px-gutter" aria-label="Group sections">
-          {GROUP_SUB_TABS.map((entry) => (
+          {subTabs.map((entry) => (
             <TabTrigger key={entry.id} value={entry.id} active={entry.id === subTab} underline={sectionUnderline}>
               {entry.label}
             </TabTrigger>
@@ -102,6 +118,12 @@ export function GroupEditor({ tab, onSave, onAsk }: GroupEditorProps) {
         <SubTabPane value="auth">
           <AuthPane nodeId={tab.nodeId} data={data} apply={apply} onAsk={onAsk} />
         </SubTabPane>
+
+        {collection && (
+          <SubTabPane value="variables">
+            <PairPane field={VARIABLES_FIELD} noun="variable" data={data} apply={apply} />
+          </SubTabPane>
+        )}
 
         <SubTabPane value="yaml">
           <CodeEditor

@@ -266,6 +266,52 @@ describe("preman run (end to end against a real gRPC server)", () => {
   });
 
   /**
+   * Decision 061. The collection's `variables:` fill the collection scope for every request inside
+   * it, nested folders included, and a script's change to one lasts for the run only: the
+   * definition is a shared file, and a run that rewrote it would leave a diff behind every send.
+   */
+  it("givenCollectionVariables_whenANestedRequestRuns_thenTheyResolveAndAScriptWriteIsNotSaved", async () => {
+    const clone = cloneFixtureWorkspace();
+    try {
+      const definition = definitionPath(clone.root, "payment");
+      appendFileSync(
+        definition,
+        [
+          "variables:",
+          "  - key: region",
+          "    value: from-collection",
+          "  - key: off",
+          "    value: x",
+          "    disabled: true",
+          "",
+        ].join("\n"),
+      );
+      const before = readFileSync(definition, "utf8");
+      const request = collectionPath(clone.root, "payment", "nested", "Deep Echo.request.yaml");
+      writeFileSync(request, readFileSync(request, "utf8").replace('"text": "deep"', '"text": "{{region}}"'));
+      appendFileSync(
+        request,
+        [
+          "scripts:",
+          "  - type: afterResponse",
+          "    language: text/javascript",
+          "    code: |-",
+          '      pm.collectionVariables.set("region", "set-by-the-script");',
+          "",
+        ].join("\n"),
+      );
+
+      const { code } = await runCli(["run", "Deep Echo", "-d", clone.root, "-e", "LOCAL", "--url", target(), "--json"]);
+
+      expect(code).toBe(EXIT.OK);
+      expect(received[0]?.body.text).toBe("from-collection");
+      expect(readFileSync(definition, "utf8")).toBe(before);
+    } finally {
+      clone.cleanup();
+    }
+  });
+
+  /**
    * Decision 041. The call succeeded and the body is already in hand, so a throw from the
    * request's own post-response script is one failed assertion about that response - not a
    * reason to report nothing. What used to be lost: the response, the assertions the script

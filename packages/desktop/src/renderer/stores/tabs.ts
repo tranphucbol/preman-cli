@@ -24,7 +24,7 @@ const NO_SCRIPT_PHASE = null;
  * The runtime list is the declaration and the type is derived from it, so `isSubTab` cannot fall
  * behind the union: a sub-tab that exists as a type but not as a value would not compile.
  */
-export const SUB_TABS = ["params", "auth", "headers", "body", "scripts", "settings", "yaml"] as const;
+export const SUB_TABS = ["params", "auth", "headers", "body", "scripts", "settings", "variables", "yaml"] as const;
 
 export type SubTab = (typeof SUB_TABS)[number];
 

@@ -745,7 +745,7 @@ describe("the engine host protocol", () => {
     });
 
     it("givenMethodAndEnvironment_whenSkeletonRequested_thenStringFieldsNamedAfterVariablesUseTokens", async () => {
-      const text = await open().send("message-skeleton", { methodPath: ECHO_METHOD, environment: "LOCAL" });
+      const text = await open().send("message-skeleton", { methodPath: ECHO_METHOD, environment: "LOCAL", at: null });
       const skeleton = JSON.parse(text) as Record<string, unknown>;
 
       expect(Object.keys(skeleton)).toEqual(["text", "amount", "trans_id", "mode"]);
@@ -756,7 +756,7 @@ describe("the engine host protocol", () => {
     });
 
     it("givenNoEnvironment_whenSkeletonRequested_thenOnlyGlobalsCanBecomeTokens", async () => {
-      const text = await open().send("message-skeleton", { methodPath: ECHO_METHOD, environment: null });
+      const text = await open().send("message-skeleton", { methodPath: ECHO_METHOD, environment: null, at: null });
 
       expect((JSON.parse(text) as { trans_id: string }).trans_id).toBe("");
     });
@@ -832,7 +832,11 @@ describe("the engine host protocol", () => {
 
   describe("preview", () => {
     it("givenPreviewRequest_whenHostHandlesIt_thenTextIsSubstituted", async () => {
-      const preview = await open().send("preview", { text: "{{greeting}} {{greetng}}", environment: "LOCAL" });
+      const preview = await open().send("preview", {
+        text: "{{greeting}} {{greetng}}",
+        environment: "LOCAL",
+        at: null,
+      });
 
       expect(preview.text).toBe("hello {{greetng}}");
       expect(preview.missing).toEqual(["greetng"]);
@@ -1403,7 +1407,7 @@ describe("the engine host running requests", () => {
         expect(readFileSync(join(httpRoot(), QC_ENV_PATH), "utf8")).toContain(MARKER);
 
         // And the variable manager reads it back without being told where it came from.
-        const view = await app.send("variables", { environment: "QC" });
+        const view = await app.send("variables", { environment: "QC", at: null });
         const binding = view.bindings.find((each) => each.key === MARKER_KEY);
         expect(binding?.value).toBe(MARKER);
         expect(binding?.scope).toBe("environment");

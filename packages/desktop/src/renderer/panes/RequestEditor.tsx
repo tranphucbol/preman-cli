@@ -624,7 +624,7 @@ function useMethodPicker(nodeId: string, apply: Apply, onFail: (failure: Failure
 }
 
 /** One grid, wired to whichever field it edits. The shape-preserving edits live in the model. */
-function PairPane({
+export function PairPane({
   field,
   noun,
   data,

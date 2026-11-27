@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 import { TEMP_SUFFIX } from "./atomic.js";
 
@@ -77,7 +79,96 @@ function truncateBytes(text: string, limit: number): string {
  * table.
  */
 export function nodeIdFor(root: string, absolute: string): string {
-  return relative(root, absolute).split(sep).join(ID_SEPARATOR);
+  // A string prefix, not `relative`: this runs once per catalog node and must stay that cheap.
+  const personal = `${personalEnvironmentsDirFor(root)}${sep}`;
+  if (absolute.startsWith(personal)) return `${PERSONAL_ID_PREFIX}${toPosix(absolute.slice(personal.length))}`;
+  return toPosix(relative(root, absolute));
+}
+
+function toPosix(path: string): string {
+  return path.split(sep).join(ID_SEPARATOR);
+}
+
+/** `absolute` relative to `dir`, or `undefined` when it is `dir` itself or lies outside it. */
+function withinDir(dir: string, absolute: string): string | undefined {
+  const step = relative(dir, absolute);
+  if (step.length === 0 || isAbsolute(step) || step === PARENT_SEGMENT || step.startsWith(`${PARENT_SEGMENT}${sep}`)) {
+    return undefined;
+  }
+  return step;
+}
+
+const PARENT_SEGMENT = "..";
+
+/**
+ * The id prefix of a file in the workspace's personal directory.
+ *
+ * A personal environment lives outside the workspace root, so its relative path would start with
+ * `../` - exactly what the desktop host refuses as an escape. A prefix no relative path can start
+ * with keeps the ids flat and lets {@link pathForPersonalId} map it back without a lookup table.
+ */
+export const PERSONAL_ID_PREFIX = "~personal/";
+
+/** The absolute path a {@link PERSONAL_ID_PREFIX} id names, or `undefined` for any other id. */
+export function pathForPersonalId(root: string, id: string): string | undefined {
+  if (!id.startsWith(PERSONAL_ID_PREFIX)) return undefined;
+  const dir = personalEnvironmentsDirFor(root);
+  const absolute = resolve(dir, id.slice(PERSONAL_ID_PREFIX.length));
+  if (withinDir(dir, absolute) === undefined) {
+    throw new PremanError(`"${id}" is outside the personal environments directory`, {
+      exitCode: EXIT.CLI,
+      details: [`personal environments: ${dir}`],
+    });
+  }
+  return absolute;
+}
+
+const CONFIG_HOME_VARIABLE = "XDG_CONFIG_HOME";
+const DEFAULT_CONFIG_DIR = ".config";
+const APP_CONFIG_DIR = "preman";
+const WORKSPACES_CONFIG_DIR = "workspaces";
+const WORKSPACE_HASH_LENGTH = 8;
+
+/**
+ * The per-user directory that belongs to one workspace, outside its checkout.
+ *
+ * Keyed by the folder name for a human browsing the directory and by a hash of the absolute
+ * path for uniqueness: two checkouts called `api` are two workspaces. The cost is that moving
+ * or re-cloning a checkout orphans its personal files, which is the price of not writing an id
+ * into the repository that personal files exist to keep clean.
+ */
+export function personalDirFor(root: string): string {
+  return personalPathsFor(root).dir;
+}
+
+/** Where a workspace's personal environments live, whether or not any exist yet. */
+export function personalEnvironmentsDirFor(root: string): string {
+  return personalPathsFor(root).environments;
+}
+
+interface PersonalPaths {
+  dir: string;
+  environments: string;
+}
+
+/**
+ * `nodeIdFor` asks once per catalog node, so every path operation and the hash run once per
+ * workspace and config home instead; the key is the raw strings, so a hit costs no syscall.
+ */
+const personalPaths = new Map<string, PersonalPaths>();
+
+function personalPathsFor(root: string): PersonalPaths {
+  const configured = process.env[CONFIG_HOME_VARIABLE] ?? "";
+  const cacheKey = `${configured}\0${root}`;
+  const cached = personalPaths.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const absolute = resolve(root);
+  const configHome = configured || join(homedir(), DEFAULT_CONFIG_DIR);
+  const hash = createHash("sha256").update(absolute).digest("hex").slice(0, WORKSPACE_HASH_LENGTH);
+  const dir = join(configHome, APP_CONFIG_DIR, WORKSPACES_CONFIG_DIR, `${basename(absolute)}-${hash}`);
+  const paths = { dir, environments: join(dir, ENVIRONMENTS_DIR) };
+  personalPaths.set(cacheKey, paths);
+  return paths;
 }
 
 /**
@@ -153,6 +244,17 @@ export function definitionPathFor(dir: string): string {
 /** The directory collections live in, given a workspace root. */
 export function collectionsDirFor(root: string): string {
   return join(root, POSTMAN_DIR, COLLECTIONS_DIR);
+}
+
+/**
+ * The collection directory that holds `path` - a request, a folder, or the collection itself,
+ * absolute or relative to `root` - or `undefined` when `path` is not inside any collection.
+ */
+export function collectionDirOf(root: string, path: string): string | undefined {
+  const collections = collectionsDirFor(root);
+  const step = withinDir(collections, resolve(root, path));
+  if (step === undefined) return undefined;
+  return join(collections, step.split(sep)[0]!);
 }
 
 /** The directory environments live in, given a workspace root. */

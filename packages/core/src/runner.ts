@@ -46,6 +46,7 @@ import type { GrpcRequest, HttpRequest } from "./workspace/schemas.js";
 import { GRPC_KIND, HTTP_KIND, RUNNABLE_KINDS, parseRequestFile } from "./workspace/request-file.js";
 import { saveEnvironmentValues, type EnvironmentEntry } from "./workspace/environments.js";
 import type { RequestEntry } from "./workspace/collections.js";
+import { collectionVariablesOf } from "./workspace/definitions.js";
 import type { Workspace } from "./workspace/discover.js";
 import type { FileReader } from "./workspace/files.js";
 import { resolveAuth } from "./workspace/inherit.js";
@@ -274,9 +275,18 @@ function syncFinalHttpRequest(
   }
 }
 
-function newStore(options: Pick<RunOptions, "globals" | "environment" | "localVars" | "data">): VariableStore {
+/**
+ * `collection` is filled from the definition and never written back: a script's
+ * `pm.collectionVariables.set` lasts for the run, so a login token never lands in a file the
+ * whole team commits. Only the environment has a writeback.
+ */
+function newStore(
+  options: Pick<RunOptions, "globals" | "environment" | "localVars" | "data">,
+  collection: Record<string, string>,
+): VariableStore {
   return new VariableStore({
     globals: options.globals,
+    collection,
     data: options.data ?? {},
     environment: options.environment?.values ?? {},
     local: options.localVars,
@@ -551,7 +561,7 @@ export async function runRequest(options: RunOptions): Promise<RunOutcome> {
 
   try {
     const parsed = parseRequestFile(options.entry);
-    const store = options.store ?? newStore(options);
+    const store = options.store ?? newStore(options, collectionVariablesOf(options.entry.ancestors));
     const cookies = options.cookies ?? new CookieJar();
 
     const outcome =
@@ -1056,7 +1066,8 @@ export async function runGroup(options: GroupRunOptions): Promise<GroupRunOutcom
   const sink = options.sink;
   sink?.emit({ type: "run-start", runId: sink.runId, total: options.entries.length * options.iterationCount });
 
-  const store = newStore({ ...options, data: {} });
+  // Every entry of a group run sits in the same collection, so the first one's is everyone's.
+  const store = newStore({ ...options, data: {} }, collectionVariablesOf(options.entries[0]?.ancestors ?? []));
   const cookies = new CookieJar();
   const started = performance.now();
   const items: GroupRunItem[] = [];

@@ -22,6 +22,7 @@ import {
   createFolder,
   createRequestFile,
   deleteNode,
+  duplicateEnvironmentFile,
   duplicateRequestFile,
   editDefinitionFile,
   editRequestFile,
@@ -34,7 +35,7 @@ import { writeEnvironmentValue } from "@preman/core/api/environments.js";
 import type { TextPreview } from "@preman/core/api/preview.js";
 import type { RunSelectionArgs, RunSelectionResult } from "@preman/core/api/run.js";
 import { failOnAmbiguity, type SelectionPort } from "@preman/core/api/select.js";
-import { readVariables, type VariableView } from "@preman/core/api/variables.js";
+import { readVariables, writeCollectionVariable, type VariableView } from "@preman/core/api/variables.js";
 import { watchWorkspace, type WatchHandle } from "@preman/core/api/watch.js";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 import { toJunitReport, type RunReport } from "@preman/core/report/junit.js";
@@ -42,7 +43,14 @@ import { toGroupJsonReport, toJsonReport } from "@preman/core/report/json.js";
 import { canonicalSharedPath, repoRootFor, sharedProtoRoot } from "@preman/core/workspace/links.js";
 import type { RunTarget } from "@preman/core/workspace/collections.js";
 import type { EnvironmentEntry } from "@preman/core/workspace/environments.js";
-import { definitionPathFor, ENVIRONMENT_SUFFIX, nodeIdFor, REQUEST_SUFFIX } from "@preman/core/workspace/paths.js";
+import {
+  definitionPathFor,
+  ENVIRONMENT_SUFFIX,
+  nodeIdFor,
+  pathForPersonalId,
+  personalEnvironmentsDirFor,
+  REQUEST_SUFFIX,
+} from "@preman/core/workspace/paths.js";
 import { toEngineError } from "@preman/desktop/engine/errors.js";
 import { createFrameBatcher, type FrameBatcher } from "@preman/desktop/engine/frames.js";
 import {
@@ -181,9 +189,14 @@ function usage(message: string, details: string[] = []): PremanError {
  * Turn a node id back into a path, refusing anything that leaves the workspace. Ids
  * come from a catalog this host built, but a renderer is the untrusted side of the
  * port, so containment is checked here rather than assumed.
+ *
+ * A personal environment's id names a file in the workspace's personal directory instead, and
+ * `pathForPersonalId` holds it to that directory the same way.
  */
 function resolveWithinRoot(root: string, nodeId: string): string {
   if (nodeId.length === 0) throw usage("a node id is required");
+  const personal = pathForPersonalId(root, nodeId);
+  if (personal !== undefined) return personal;
   if (isAbsolute(nodeId)) throw usage(`"${nodeId}" is not a node id`, ["node ids are relative to the workspace root"]);
 
   const absolute = resolve(root, nodeId);
@@ -431,8 +444,22 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       (paths) => {
         reconciling = reconciling.then(() => reconcile(paths)).catch(() => undefined);
       },
-      { onDegraded: (message) => post({ push: "degraded", message }) },
+      {
+        onDegraded: (message) => post({ push: "degraded", message }),
+        extraDirs: [personalEnvironmentsDirFor(root)],
+      },
     );
+  }
+
+  /**
+   * A watcher skips a directory that does not exist yet, and the personal one usually does
+   * not until its first environment is made. Restarting after that create is what lets an
+   * external edit to the new file reach the app.
+   */
+  function rewatch(): void {
+    if (watcher === undefined || disposed) return;
+    watcher.close();
+    startWatching();
   }
 
   async function ensureCatalog(): Promise<Catalog> {
@@ -540,8 +567,21 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
         });
       case "create-collection":
         return createCollection({ root, name: op.name, ...(op.order === undefined ? {} : { order: op.order }) });
-      case "create-environment":
-        return createEnvironmentFile({ root, name: op.name });
+      case "create-environment": {
+        const created = createEnvironmentFile({ root, name: op.name, personal: op.personal === true });
+        if (op.personal === true) rewatch();
+        return created;
+      }
+      case "duplicate-environment": {
+        const created = duplicateEnvironmentFile({
+          root,
+          source: resolveWithinRoot(root, op.targetId),
+          name: op.name,
+          personal: op.personal,
+        });
+        if (op.personal) rewatch();
+        return created;
+      }
       // Not `requireDirectory`'s opposite number: the target is a file, and the refusal for a
       // group belongs in core, where the message can say duplicating a folder is unsupported
       // rather than that the path is wrong.
@@ -623,12 +663,18 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   }
 
   /**
-   * Write one value and hand back the re-read view. `writeEnvironmentValue` rewrites the
-   * YAML in place, so comments and key order survive an edit made in the app.
+   * Write one value and hand back the re-read view. Both writers rewrite the YAML in place,
+   * so comments and key order survive an edit made in the app.
    */
   function writeVariable(write: VariableWrite): VariableView {
-    writeEnvironmentValue(root, write.environment, write.key, write.value);
-    return readVariables(root, write.environment);
+    if (write.scope === "collection") {
+      if (write.at === null) throw usage("a collection variable needs a request, folder or collection to belong to");
+      writeCollectionVariable(root, write.at, write.key, write.value);
+    } else {
+      if (write.environment === null) throw usage("pick an environment before writing to it");
+      writeEnvironmentValue(root, write.environment, write.key, write.value);
+    }
+    return readVariables(root, write.environment, write.at);
   }
 
   function startRun(args: RunArgs): string {
@@ -793,8 +839,8 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
    * environment, shadowed ones included: a shadowed key still interpolates, so a field
    * named after it should still be written as `{{token}}`.
    */
-  async function messageSkeleton(methodPath: string, environment: string | null): Promise<string> {
-    const tokens = new Set(readVariables(root, environment).bindings.map((binding) => binding.key));
+  async function messageSkeleton(methodPath: string, environment: string | null, at: string | null): Promise<string> {
+    const tokens = new Set(readVariables(root, environment, at).bindings.map((binding) => binding.key));
     return (await ensureProtos()).skeleton(methodPath, tokens);
   }
 
@@ -888,9 +934,9 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
   }
 
   /** Interpolation without sending, so `{{token}}` can be shown resolved as it is typed. */
-  async function preview(environment: string | null, text: string): Promise<TextPreview> {
+  async function preview(environment: string | null, text: string, at: string | null): Promise<TextPreview> {
     const { previewText } = await import("@preman/core/api/preview.js");
-    return previewText(root, environment, text);
+    return previewText(root, environment, text, at);
   }
 
   async function grep(query: string, limit: number | undefined): Promise<GrepResult> {
@@ -941,17 +987,17 @@ export function createEngineHost(options: EngineHostOptions): EngineHost {
       case "cancel":
         return cancelRun(request.runId);
       case "variables":
-        return readVariables(root, request.environment);
+        return readVariables(root, request.environment, request.at);
       case "write-variable":
         return writeVariable(request.write);
       case "preview":
-        return preview(request.environment, request.text);
+        return preview(request.environment, request.text, request.at);
       case "run-report":
         return runReport(request.runId, request.format);
       case "list-methods":
         return listMethods(request.nodeId);
       case "message-skeleton":
-        return messageSkeleton(request.methodPath, request.environment);
+        return messageSkeleton(request.methodPath, request.environment, request.at);
       case "grep":
         return grep(request.query, request.limit);
       case "git-status":

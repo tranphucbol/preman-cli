@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { PremanError } from "@preman/core/errors.js";
 import { groupDefinitionSchema } from "./schemas.js";
-import type { RequestAuth, RequestScript } from "./schemas.js";
+import type { GroupDefinitionFile, RequestAuth, RequestScript } from "./schemas.js";
 
 const RESOURCES_DIR = ".resources";
 const DEFINITION_FILE = "definition.yaml";
@@ -24,6 +24,12 @@ export interface GroupDefinition {
   order: number | undefined;
   scripts: RequestScript[];
   auth: RequestAuth | undefined;
+  /**
+   * The enabled `variables:` rows, coerced to strings. Read on every group, but only the
+   * collection's are a scope: Postman has no folder variables, and `collectionVariablesOf`
+   * reads the first ancestor and no other.
+   */
+  variables: Record<string, string>;
   /** Absolute path of `.resources/definition.yaml`, for error messages. */
   filePath: string | undefined;
 }
@@ -51,6 +57,7 @@ export function readGroupDefinition(dir: string, parentPath: string | undefined,
       order: undefined,
       scripts: [],
       auth: undefined,
+      variables: {},
       filePath: undefined,
     };
   }
@@ -78,6 +85,34 @@ export function readGroupDefinition(dir: string, parentPath: string | undefined,
     order: parsed.data.order,
     scripts: parsed.data.scripts ?? [],
     auth: parsed.data.auth,
+    variables: enabledVariables(parsed.data.variables ?? []),
     filePath,
   };
+}
+
+type VariableRow = NonNullable<GroupDefinitionFile["variables"]>[number];
+
+function enabledVariables(rows: readonly VariableRow[]): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.enabled === false || row.disabled === true) continue;
+    values[row.key] = stringify(row.value);
+  }
+  return values;
+}
+
+/** An object value is kept as JSON, the way Postman's own UI shows one, not as `[object Object]`. */
+function stringify(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return value.toString();
+  return JSON.stringify(value);
+}
+
+/**
+ * The collection scope of a request or group run: its collection's `variables:`.
+ * Empty when there are no ancestors, which a request outside any collection has.
+ */
+export function collectionVariablesOf(ancestors: readonly GroupDefinition[]): Record<string, string> {
+  return ancestors[0]?.variables ?? {};
 }

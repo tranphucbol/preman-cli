@@ -16,6 +16,12 @@ export interface WatchOptions {
    * silent: external edits simply stop arriving, which looks like data loss.
    */
   onDegraded?: (message: string) => void;
+  /**
+   * Absolute directories outside the root that the workspace also reads, such as its personal
+   * environments. Skipped while missing, like the workspace's own, and never reported as
+   * degraded for it: most workspaces have none.
+   */
+  extraDirs?: readonly string[];
 }
 
 /**
@@ -59,8 +65,7 @@ export function watchWorkspace(
     timer = setTimeout(flush, debounceMs);
   };
 
-  for (const name of WATCHED_DIRS) {
-    const dir = join(root, name);
+  for (const dir of [...WATCHED_DIRS.map((name) => join(root, name)), ...(options.extraDirs ?? [])]) {
     if (!existsSync(dir)) continue;
     try {
       watchers.push(watch(dir, { recursive: true }, (_event, filename) => record(dir, filename)));

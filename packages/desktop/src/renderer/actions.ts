@@ -202,12 +202,24 @@ export async function mutate(op: MutateOp, options: { readonly open?: boolean } 
  * a name another environment already holds is answered beside the field that caused it, while the
  * dialog is still on screen to correct it in.
  */
-export async function createEnvironment(name: string): Promise<AskOutcome> {
+export function createEnvironment(name: string, personal = false): Promise<AskOutcome> {
+  return makeEnvironment({ op: "create-environment", name, personal });
+}
+
+/**
+ * Copy the environment with id `sourceId` under `name`, then select the copy - the same answer
+ * shape as `createEnvironment`, because the one refusal is the same: a name already held.
+ */
+export function duplicateEnvironment(sourceId: string, name: string, personal: boolean): Promise<AskOutcome> {
+  return makeEnvironment({ op: "duplicate-environment", targetId: sourceId, name, personal });
+}
+
+async function makeEnvironment(op: MutateOp): Promise<AskOutcome> {
   const engine = client();
   // No workspace, so no picker to have opened this and nothing to report. As `mutate` does.
   if (engine === null) return { ok: true };
   try {
-    const { nodeId } = await engine.send("mutate", { op: { op: "create-environment", name } });
+    const { nodeId } = await engine.send("mutate", { op });
     const created = useCatalogStore.getState().environments.find((candidate) => candidate.id === nodeId);
     if (created !== undefined) useSessionStore.getState().setEnvironment(created.name);
     return { ok: true };
@@ -381,18 +393,29 @@ export async function bodySearch(handle: string, query: string, limit?: number):
   }
 }
 
+/** The node whose collection's variables are in scope: whatever the user is looking at. */
+function activeNodeId(): string | null {
+  return useTabsStore.getState().activeId;
+}
+
 /**
  * The variable layers, as they would apply to the next run.
  *
  * `undefined` and `null` are the same question here - "what applies with no environment?" - so
  * they collapse. Nothing is being run, so there is no sole environment to adopt on the user's
  * behalf and no ambiguity to refuse.
+ *
+ * `at` is the node the view is for: a request, folder or collection brings its collection's
+ * variables into the view, anything else leaves that layer out.
  */
-export async function readVariables(environment: string | null | undefined): Promise<Result<VariableView>> {
+export async function readVariables(
+  environment: string | null | undefined,
+  at: string | null = activeNodeId(),
+): Promise<Result<VariableView>> {
   const engine = client();
   if (engine === null) return { ok: false, failure: DISCONNECTED };
   try {
-    return { ok: true, value: await engine.send("variables", { environment: environment ?? null }) };
+    return { ok: true, value: await engine.send("variables", { environment: environment ?? null, at }) };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }
@@ -427,7 +450,10 @@ export async function previewText(text: string): Promise<Result<TextPreview>> {
   if (engine === null) return { ok: false, failure: DISCONNECTED };
   try {
     const { environment } = useSessionStore.getState();
-    return { ok: true, value: await engine.send("preview", { text, environment: environment ?? null }) };
+    return {
+      ok: true,
+      value: await engine.send("preview", { text, environment: environment ?? null, at: activeNodeId() }),
+    };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }
@@ -517,7 +543,14 @@ export async function messageSkeleton(methodPath: string): Promise<Result<string
   if (engine === null) return { ok: false, failure: DISCONNECTED };
   try {
     const { environment } = useSessionStore.getState();
-    return { ok: true, value: await engine.send("message-skeleton", { methodPath, environment: environment ?? null }) };
+    return {
+      ok: true,
+      value: await engine.send("message-skeleton", {
+        methodPath,
+        environment: environment ?? null,
+        at: activeNodeId(),
+      }),
+    };
   } catch (cause) {
     return { ok: false, failure: failure(cause) };
   }

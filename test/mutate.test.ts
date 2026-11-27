@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -9,6 +9,7 @@ import {
   createFolder,
   createRequestFile,
   deleteNode,
+  duplicateEnvironmentFile,
   duplicateRequestFile,
   editDefinitionFile,
   editRequestFile,
@@ -18,7 +19,14 @@ import {
 } from "@preman/core/api/mutate.js";
 import { PremanError, EXIT } from "@preman/core/errors.js";
 import { writeFileAtomic } from "@preman/core/workspace/atomic.js";
-import { nextOrder, sanitiseSegment } from "@preman/core/workspace/paths.js";
+import { findEnvironment } from "@preman/core/workspace/environments.js";
+import {
+  nextOrder,
+  PERSONAL_ID_PREFIX,
+  personalDirFor,
+  personalEnvironmentsDirFor,
+  sanitiseSegment,
+} from "@preman/core/workspace/paths.js";
 import { cloneFixtureWorkspace, collectionPath, definitionPath, type ClonedWorkspace } from "./helpers.js";
 
 /** A request file dense with the prose real workspaces carry, so edits have something to destroy. */
@@ -84,6 +92,7 @@ async function expectUsageError(run: () => Promise<unknown>): Promise<PremanErro
 }
 
 afterEach(() => {
+  if (clone !== undefined) rmSync(personalDirFor(clone.root), { recursive: true, force: true });
   clone?.cleanup();
   clone = undefined;
 });
@@ -387,6 +396,57 @@ describe("createEnvironmentFile", () => {
 
     const catalog = await buildCatalog(ws().root);
     expect(catalog.environments.map((environment) => environment.name)).toEqual(["LOCAL"]);
+  });
+
+  it("givenPersonal_whenCreateEnvironmentFile_thenItLivesOutsideTheCheckoutAndTheCatalogMarksIt", async () => {
+    const file = await createEnvironmentFile({ root: ws().root, name: "MINE", personal: true });
+    const catalog = await buildCatalog(ws().root);
+    const mine = catalog.environments.find((environment) => environment.name === "MINE");
+
+    expect(dirname(file)).toBe(personalEnvironmentsDirFor(ws().root));
+    expect(file.startsWith(ws().root)).toBe(false);
+    expect(mine?.personal).toBe(true);
+    expect(mine?.id.startsWith(PERSONAL_ID_PREFIX)).toBe(true);
+    expect(catalog.environments.find((environment) => environment.name === "LOCAL")?.personal).toBe(false);
+  });
+
+  it("givenNameTakenOnTheOtherSide_whenCreateEnvironmentFile_thenRefused", async () => {
+    await expectUsageError(() => createEnvironmentFile({ root: ws().root, name: "LOCAL", personal: true }));
+    await createEnvironmentFile({ root: ws().root, name: "MINE", personal: true });
+    await expectUsageError(() => createEnvironmentFile({ root: ws().root, name: "mine" }));
+
+    expect(readdirSync(personalEnvironmentsDirFor(ws().root))).toEqual(["MINE.environment.yaml"]);
+  });
+
+  it("givenSharedAndPersonalWithOneName_whenFound_thenTheAmbiguityIsAnError", () => {
+    const dir = personalEnvironmentsDirFor(ws().root);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "LOCAL.environment.yaml"), "name: LOCAL\nvalues: []\n");
+
+    expect(() => findEnvironment(ws().workspace, "LOCAL")).toThrow(/both a shared and a personal environment/);
+  });
+
+  it("givenSharedEnvironment_whenDuplicatedAsPersonal_thenValuesAndCommentsCarryOverUnderTheNewName", async () => {
+    const source = join(ws().root, "postman", "environments", "LOCAL.environment.yaml");
+    writeFileSync(source, `# kept\n${readFileSync(source, "utf8")}`);
+
+    const file = await duplicateEnvironmentFile({ root: ws().root, source, name: "MY LOCAL", personal: true });
+    const copy = parse(readFileSync(file, "utf8")) as { name: string; values: unknown[] };
+    const original = parse(readFileSync(source, "utf8")) as { name: string; values: unknown[] };
+
+    expect(dirname(file)).toBe(personalEnvironmentsDirFor(ws().root));
+    expect(readFileSync(file, "utf8").startsWith("# kept\n")).toBe(true);
+    expect(copy.name).toBe("MY LOCAL");
+    expect(copy.values).toEqual(original.values);
+    expect(original.name).toBe("LOCAL");
+  });
+
+  it("givenTakenName_whenDuplicateEnvironmentFile_thenRefusedAndNothingWritten", async () => {
+    const source = join(ws().root, "postman", "environments", "LOCAL.environment.yaml");
+
+    await expectUsageError(() => duplicateEnvironmentFile({ root: ws().root, source, name: "local", personal: true }));
+
+    expect(existsSync(personalEnvironmentsDirFor(ws().root))).toBe(false);
   });
 
   it("givenEnvironment_whenRenameNode_thenFileAndNameFieldAgree", async () => {

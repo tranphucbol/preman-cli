@@ -7,29 +7,39 @@
  * key, and it strikes through every value that loses. The precedence itself is core's: the engine
  * answers with the chain `VariableStore` walks, so nothing here can disagree with what a run does.
  *
- * Only the layers a workspace can persist appear, which today is globals and the chosen
- * environment. `data` and `local` exist only while a run is in flight, and the `collection` scope
- * is declared by core but no workspace file populates it, so a column for it would be a promise
- * preman does not keep.
+ * Only the layers a workspace can persist appear: globals, the collection of whatever tab is
+ * active, and the chosen environment. `data` and `local` exist only while a run is in flight. The
+ * collection column follows the active tab because a run only ever sees its own collection's
+ * variables; an environment tab, or no tab, has no collection and so no column.
  *
- * One writable layer, one write path: `write-variable` patches the environment file through the
- * same comment-preserving writer the CLI's `--save` uses, and answers with the re-read view.
+ * Two writable layers, one write path: `write-variable` patches the environment file or the
+ * collection's definition through the same comment-preserving writer the CLI's `--save` uses, and
+ * answers with the re-read view.
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { Scope, VariableBinding, VariableLayer, VariableView } from "@preman/desktop/engine/protocol.js";
+import type {
+  Scope,
+  SnapshotEnvironment,
+  VariableBinding,
+  VariableLayer,
+  VariableView,
+} from "@preman/desktop/engine/protocol.js";
 
-import { readVariables, writeVariable, type Failure } from "@preman/desktop/renderer/actions.js";
+import { duplicateEnvironment, readVariables, writeVariable, type Failure } from "@preman/desktop/renderer/actions.js";
 import { useDensityTokens, useRemeasure } from "@preman/desktop/renderer/stores/appearance.js";
 import { useCatalogStore } from "@preman/desktop/renderer/stores/catalog.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import { useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 import { cn } from "@preman/desktop/renderer/ui/cn.js";
 import { useEscapeToDismiss } from "@preman/desktop/renderer/ui/escape.js";
 import { Banner } from "@preman/desktop/renderer/ui/Banner.js";
 import { AnimatePresence } from "@preman/desktop/renderer/ui/motion.js";
 import { CellField, IconButton, toneClass, type FieldTone } from "@preman/desktop/renderer/ui/Controls.js";
-import { AddIcon, CloseIcon, RefreshIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { AddIcon, CloseIcon, DuplicateIcon, RefreshIcon } from "@preman/desktop/renderer/ui/icons.js";
+import { DropdownContent, DropdownItem, DropdownMenu, DropdownTrigger } from "@preman/desktop/renderer/ui/Menu.js";
+import type { Ask } from "@preman/desktop/renderer/ui/Dialog.js";
 import { GLOBALS_READ_ONLY_HINT, TokenBox, useTokenBox } from "@preman/desktop/renderer/ui/TokenBox.js";
 import type { TokenReporter } from "@preman/desktop/renderer/ui/template.js";
 
@@ -54,11 +64,42 @@ const FIRST_READ = 0;
 const NEXT_READ = 1;
 
 const NO_ENVIRONMENT_LABEL = "No environment";
+/** What the copy's name starts as, so the dialog opens on a name no environment holds yet. */
+const COPY_SUFFIX = " copy";
 const LOADING_HINT = "Reading variables…";
 const NO_VARIABLES_HINT = "This workspace defines no variables yet.";
 
-export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void }): React.JSX.Element {
+/**
+ * The naming dialog for a copy of `source`, kept shared or personal by `personal`. Copying across
+ * homes is the point as often as not: a shared environment taken as a personal one is how a
+ * teammate's `LOCAL` becomes yours to put a token in without committing it.
+ */
+function duplicateEnvironmentAsk(source: SnapshotEnvironment, personal: boolean): Ask {
+  const home = personal === source.personal ? "" : personal ? " as personal" : " as shared";
+  return {
+    kind: "name",
+    title: `Duplicate “${source.name}”${home}`,
+    label: "Name",
+    initial: `${source.name}${COPY_SUFFIX}`,
+    submit: "Duplicate",
+    onConfirm: (name: string) => duplicateEnvironment(source.id, name, personal),
+  };
+}
+
+/**
+ * Duplicating lives here and not in the picker: the picker is for choosing, and this header already
+ * names the environment a copy would be taken from.
+ */
+export function VariablesPane({
+  onDismiss,
+  onAsk,
+}: {
+  readonly onDismiss: () => void;
+  readonly onAsk: (ask: Ask) => void;
+}): React.JSX.Element {
   const environment = useSessionStore((state) => state.environment);
+  const source = useCatalogStore((state) => state.environments.find((candidate) => candidate.name === environment));
+  const at = useTabsStore((state) => state.activeId);
   // The catalog's revision changes on every reconcile, including the writeback a script's
   // `pm.environment.set` produces, so this is how the table follows a run that moved a value.
   const revision = useCatalogStore((state) => state.revision);
@@ -73,7 +114,7 @@ export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void })
 
   useEffect(() => {
     let live = true;
-    void readVariables(environment).then((result) => {
+    void readVariables(environment, at).then((result) => {
       if (!live) return;
       if (result.ok) {
         setView(result.value);
@@ -83,21 +124,28 @@ export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void })
       setFailure(result.failure);
     });
     return () => {
-      // The environment can change while a read is in flight, and the older answer must not be
+      // The environment or the active tab can change while a read is in flight, and the older answer must not be
       // the one that lands: it would describe a chain that is no longer the one a run would use.
       live = false;
     };
-  }, [environment, revision, nonce]);
+  }, [environment, at, revision, nonce]);
 
-  const commit = useCallback(async (layer: VariableLayer, key: string, value: string): Promise<void> => {
-    const result = await writeVariable({ environment: layer.label, key, value });
-    if (result.ok) {
-      setView(result.value);
-      setFailure(null);
-      return;
-    }
-    setFailure(result.failure);
-  }, []);
+  const commit = useCallback(
+    async (layer: VariableLayer, key: string, value: string): Promise<void> => {
+      const result = await writeVariable(
+        layer.scope === "collection"
+          ? { scope: "collection", environment: environment ?? null, at, key, value }
+          : { scope: "environment", environment: layer.label, at, key, value },
+      );
+      if (result.ok) {
+        setView(result.value);
+        setFailure(null);
+        return;
+      }
+      setFailure(result.failure);
+    },
+    [environment, at],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -105,6 +153,33 @@ export function VariablesPane({ onDismiss }: { readonly onDismiss: () => void })
         <span className="text-xs font-medium text-ink">Variables</span>
         <span className="truncate text-2xs text-ink-faint">{view?.environment ?? NO_ENVIRONMENT_LABEL}</span>
         <div className="flex-1" />
+        {source !== undefined && (
+          <DropdownMenu>
+            <DropdownTrigger>
+              <IconButton label="Duplicate environment">
+                <DuplicateIcon />
+              </IconButton>
+            </DropdownTrigger>
+            <DropdownContent align="end">
+              <DropdownItem
+                icon={<DuplicateIcon />}
+                onSelect={() => {
+                  onAsk(duplicateEnvironmentAsk(source, source.personal));
+                }}
+              >
+                Duplicate “{source.name}”…
+              </DropdownItem>
+              <DropdownItem
+                icon={<DuplicateIcon />}
+                onSelect={() => {
+                  onAsk(duplicateEnvironmentAsk(source, !source.personal));
+                }}
+              >
+                Duplicate as {source.personal ? "shared" : "personal"}…
+              </DropdownItem>
+            </DropdownContent>
+          </DropdownMenu>
+        )}
         <IconButton
           label="Reload"
           onClick={() => {
@@ -152,7 +227,10 @@ function Table({ view, onCommit }: { readonly view: VariableView; readonly onCom
   });
   useRemeasure(virtualizer, rowHeight);
 
-  const writable = layers.find((layer) => layer.writable);
+  // New keys go to the environment when there is one: it is the layer that wins, so a key added
+  // here is the value a run will see.
+  const writable =
+    layers.find((layer) => layer.writable && layer.scope === "environment") ?? layers.find((layer) => layer.writable);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

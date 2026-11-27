@@ -106,7 +106,10 @@ export type MutateOp =
   | { op: "create-request"; parentId: string; name: string; kind: RequestKind; order?: number }
   | { op: "create-folder"; parentId: string; name: string; order?: number }
   | { op: "create-collection"; name: string; order?: number }
-  | { op: "create-environment"; name: string }
+  /** `personal` keeps the file in the user's config directory, outside the checkout. */
+  | { op: "create-environment"; name: string; personal?: boolean }
+  /** `personal` says where the copy goes, whichever home the source is in. */
+  | { op: "duplicate-environment"; targetId: string; name: string; personal: boolean }
   /** Requests only, and `order` omitted lands the copy last. See `duplicateRequestFile`. */
   | { op: "duplicate"; targetId: string; order?: number }
   | { op: "rename"; targetId: string; name: string }
@@ -143,10 +146,19 @@ export interface RunArgs {
   timeoutMs?: number;
 }
 
-/** A layer the environment manager can write to, and the value to put there. */
+/**
+ * A layer the variable editors can write to, and the value to put there. Globals are read-only.
+ *
+ * `environment` and `at` are always both sent, whichever layer is written, because the answer is
+ * the re-read view and the view needs both: the environment in play, and the node whose
+ * collection is in play.
+ */
 export interface VariableWrite {
-  /** The environment's name. Only environment files are writable; globals are read-only. */
-  environment: string;
+  scope: "environment" | "collection";
+  /** The environment written to, or in play when writing a collection variable. */
+  environment: string | null;
+  /** The node the view is read from; its collection is the one a collection write lands in. */
+  at: string | null;
   key: string;
   value: string;
 }
@@ -215,13 +227,17 @@ export type EngineRequest =
   | { id: number; kind: "mutate"; op: MutateOp }
   | { id: number; kind: "run"; args: RunArgs }
   | { id: number; kind: "cancel"; runId: string }
-  | { id: number; kind: "variables"; environment: string | null }
+  /**
+   * `at` is the node being looked from: its collection's variables are a layer, so the same
+   * token can resolve differently in two collections. `null` reads no collection layer.
+   */
+  | { id: number; kind: "variables"; environment: string | null; at: string | null }
   | { id: number; kind: "write-variable"; write: VariableWrite }
   /**
    * What a text would become on the next run. Not a field on `variables`: one is a property
    * of the workspace, the other is a function of a string that changes on every keystroke.
    */
-  | { id: number; kind: "preview"; text: string; environment: string | null }
+  | { id: number; kind: "preview"; text: string; environment: string | null; at: string | null }
   | { id: number; kind: "run-report"; runId: string; format: ReportFormat }
   /**
    * Every method the workspace's declared protos offer. With a `nodeId` each choice also
@@ -234,7 +250,7 @@ export type EngineRequest =
    * variable that exists. The environment is named because the tokens depend on it, and
    * `null` means "none" exactly as it does on a run.
    */
-  | { id: number; kind: "message-skeleton"; methodPath: string; environment: string | null }
+  | { id: number; kind: "message-skeleton"; methodPath: string; environment: string | null; at: string | null }
   | { id: number; kind: "grep"; query: string; limit?: number }
   | { id: number; kind: "git-status" }
   /** Which protos this workspace declares, and which shared links they need to resolve. */

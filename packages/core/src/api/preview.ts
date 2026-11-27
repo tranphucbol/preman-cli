@@ -23,12 +23,18 @@ export interface TextPreview {
  * substituted. Only a cycle or the depth bound throws, because those are already actionable
  * and there is no partial answer to give.
  *
- * Resolves from globals and the chosen environment only, which is what a workspace persists.
- * A token whose value would come from an iteration data file or a `pm.variables.set` previews
- * as missing and sends fine; a preview against a store this cannot honestly build is how a
- * preview becomes a thing people learn to distrust.
+ * Resolves from globals, the variables of the collection holding `at`, and the chosen
+ * environment, which is what a workspace persists. A token whose value would come from an
+ * iteration data file or a `pm.variables.set` previews as missing and sends fine; a preview
+ * against a store this cannot honestly build is how a preview becomes a thing people learn to
+ * distrust.
  */
-export function previewText(dir: string, environment: string | null | undefined, text: string): TextPreview {
-  const { store } = readerScope(dir, environment);
+export function previewText(
+  dir: string,
+  environment: string | null | undefined,
+  text: string,
+  at?: string | null,
+): TextPreview {
+  const { store } = readerScope(dir, environment, at);
   return interpolate(text, store);
 }
