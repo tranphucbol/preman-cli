@@ -4,7 +4,7 @@ import { parseDocument, stringify, type Document } from "yaml";
 import type { ZodTypeAny } from "zod";
 import { EXIT, PremanError } from "@preman/core/errors.js";
 import { writeFileAtomic } from "@preman/core/workspace/atomic.js";
-import { existingEnvironmentName } from "@preman/core/workspace/environments.js";
+import { existingEnvironmentName, setKeyedValues } from "@preman/core/workspace/environments.js";
 import {
   collectionsDirFor,
   definitionPathFor,
@@ -12,6 +12,7 @@ import {
   environmentsDirFor,
   groupPathFor,
   nextOrder,
+  personalEnvironmentsDirFor,
   requestPathFor,
   sanitiseSegment,
   DEFINITION_FILE,
@@ -160,6 +161,20 @@ export function editDefinitionFile(file: string, edits: readonly FieldEdit[]): P
   validateDefinition(file, doc);
   writeFileAtomic(file, doc.toString());
   return Promise.resolve();
+}
+
+const VARIABLES_FIELD = "variables";
+
+/**
+ * Set one collection variable in a definition file, creating the file or the `variables:` list
+ * when either is missing. A row that already carries `key` keeps its place and its comments;
+ * only its value changes.
+ */
+export function setDefinitionVariable(file: string, key: string, value: string): void {
+  const doc = existsSync(file) ? readDocument(file) : seedDefinition();
+  setKeyedValues(doc, VARIABLES_FIELD, { [key]: value }, file);
+  validateDefinition(file, doc);
+  writeFileAtomic(file, doc.toString());
 }
 
 /** The schema a file's own reader will use on it, chosen by where the file sits. */
@@ -426,6 +441,11 @@ export interface CreateEnvironmentArgs {
   /** The workspace root. Environments have exactly one home too. */
   root: string;
   name: string;
+  /**
+   * Write to the user's personal directory for this workspace instead of `postman/environments`,
+   * so the file never shows up in the repository. See `personalEnvironmentsDirFor`.
+   */
+  personal?: boolean;
 }
 
 /**
@@ -443,18 +463,56 @@ export interface CreateEnvironmentArgs {
  * read and every `writeEnvironmentValue` would reach the first of them while the second
  * quietly rotted. Renaming the user's input instead would be a second surprise, so the
  * answer is a refusal the caller can show beside the field that caused it.
+ *
+ * The check spans both homes, shared and personal, because a lookup does: a personal `LOCAL`
+ * beside a shared `LOCAL` is the same two-files-one-name problem.
  */
 export function createEnvironmentFile(args: CreateEnvironmentArgs): Promise<string> {
-  const dir = environmentsDirFor(args.root);
+  const { clean, file } = claimEnvironmentName(args);
+  writeFileAtomic(file, stringify({ [NAME_KEY]: clean, values: [] }));
+  return Promise.resolve(file);
+}
+
+export interface DuplicateEnvironmentArgs extends CreateEnvironmentArgs {
+  /** The environment file to copy, shared or personal. */
+  source: string;
+}
+
+/**
+ * Copy an environment under a new name, shared or personal regardless of where the source lives.
+ *
+ * Goes through `parseDocument`, as `duplicateRequestFile` does, so the copy keeps the source's
+ * comments, disabled rows and key order: copying a shared environment into a personal one to
+ * change two values is the point, and a copy that dropped the rest would not be one. The name
+ * rule is `createEnvironmentFile`'s, for the same reason.
+ */
+export function duplicateEnvironmentFile(args: DuplicateEnvironmentArgs): Promise<string> {
+  if (!existsSync(args.source)) {
+    throw usage(`${args.source} does not exist`, ["it may have been deleted outside the app"]);
+  }
+  const doc = readDocument(args.source);
+  const { clean, file } = claimEnvironmentName(args);
+  doc.setIn([NAME_KEY], clean);
+  validateEnvironment(file, doc);
+  writeFileAtomic(file, doc.toString());
+  return Promise.resolve(file);
+}
+
+/**
+ * The file a new environment called `name` goes to, after refusing a name either home already
+ * holds - see `createEnvironmentFile` for why it refuses rather than picking a free one.
+ */
+function claimEnvironmentName(args: CreateEnvironmentArgs): { clean: string; file: string } {
+  const shared = environmentsDirFor(args.root);
+  const personal = personalEnvironmentsDirFor(args.root);
+  const dir = args.personal === true ? personal : shared;
   const clean = sanitiseSegment(args.name);
-  const taken = existingEnvironmentName(dir, clean);
+  const taken = existingEnvironmentName(shared, clean) ?? existingEnvironmentName(personal, clean);
   if (taken !== undefined) {
     throw usage(`an environment named "${taken}" already exists`, ["pick a name no other environment uses"]);
   }
   mkdirSync(dir, { recursive: true });
-  const file = environmentPathFor(dir, clean);
-  writeFileAtomic(file, stringify({ [NAME_KEY]: clean, values: [] }));
-  return Promise.resolve(file);
+  return { clean, file: environmentPathFor(dir, clean) };
 }
 
 function isRequestFile(target: string): boolean {

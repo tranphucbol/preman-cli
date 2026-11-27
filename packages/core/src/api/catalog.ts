@@ -11,7 +11,7 @@ import {
 import { readGroupDefinition, type GroupDefinition } from "@preman/core/workspace/definitions.js";
 import { requireWorkspace, type Workspace } from "@preman/core/workspace/discover.js";
 import { listEnvironments } from "@preman/core/workspace/environments.js";
-import { nodeIdFor } from "@preman/core/workspace/paths.js";
+import { nodeIdFor, PERSONAL_ID_PREFIX } from "@preman/core/workspace/paths.js";
 import { loadResources } from "@preman/core/workspace/resources.js";
 import type { SnapshotEnvironment } from "@preman/core/api/inspect.js";
 
@@ -223,6 +223,7 @@ function readSurroundings(ws: Workspace): Pick<Catalog, "workspaceId" | "environ
       name: environment.name,
       file: environment.filePath,
       keys: Object.keys(environment.values),
+      personal: environment.personal === true,
     })),
     specs: resources.specs,
   };
@@ -259,7 +260,11 @@ function classify(prev: Catalog, changed: string[]): Invalidation {
     if (id.startsWith("..")) {
       // Outside the root. A watcher should never report this, so rebuild rather than guess.
       invalidation.structure = true;
-    } else if (id.split("/").includes(ENVIRONMENTS_DIR) || id.endsWith(WORKSPACE_RESOURCES_FILE)) {
+    } else if (
+      id.startsWith(PERSONAL_ID_PREFIX) ||
+      id.split("/").includes(ENVIRONMENTS_DIR) ||
+      id.endsWith(WORKSPACE_RESOURCES_FILE)
+    ) {
       invalidation.surroundings = true;
     } else if (id.endsWith(`${RESOURCES_DIR}/${DEFINITION_FILE}`) || !id.endsWith(REQUEST_SUFFIX)) {
       // A definition carries its group's name and `order`, so its subtree can reorder.

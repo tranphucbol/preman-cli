@@ -97,7 +97,8 @@ describe("what the box may offer for a name", () => {
     expect(state).toEqual({
       kind: "writable",
       value: "hello",
-      environment: LOCAL,
+      scope: "environment",
+      label: LOCAL,
       shadows: ["globals"],
     });
   });
@@ -115,7 +116,8 @@ describe("what the box may offer for a name", () => {
   it("givenUndefinedName_whenResolvedWithAnEnvironment_thenItIsAbsentAndOfferable", () => {
     expect(tokenState(readVariables(FIXTURE_WS, LOCAL), UNDEFINED_NAME)).toEqual({
       kind: "absent",
-      environment: LOCAL,
+      scope: "environment",
+      label: LOCAL,
     });
   });
 

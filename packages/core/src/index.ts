@@ -45,6 +45,7 @@ export {
   createEnvironmentFile,
   createRequestFile,
   deleteNode,
+  duplicateEnvironmentFile,
   duplicateRequestFile,
   editDefinitionFile,
   editRequestFile,
@@ -57,6 +58,7 @@ export {
   type CreateEnvironmentArgs,
   type CreateGroupArgs,
   type CreateRequestArgs,
+  type DuplicateEnvironmentArgs,
   type DuplicateRequestArgs,
   type FieldEdit,
   type MoveArgs,
@@ -97,6 +99,8 @@ export {
 } from "@preman/core/api/environments.js";
 export {
   readVariables,
+  writeCollectionVariable,
+  type CollectionVariableWrite,
   type VariableBinding,
   type VariableLayer,
   type VariableView,

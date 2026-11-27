@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { appendFileSync, readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PremanError } from "@preman/core/errors.js";
 import { interpolate, interpolateStrict } from "@preman/core/vars/interpolate.js";
-import { readVariables, type VariableBinding, type VariableView } from "@preman/core/api/variables.js";
+import { previewText } from "@preman/core/api/preview.js";
+import {
+  readVariables,
+  writeCollectionVariable,
+  type VariableBinding,
+  type VariableView,
+} from "@preman/core/api/variables.js";
 import { VariableStore } from "@preman/core/vars/store.js";
 
-import { fixtureWorkspace } from "./helpers.js";
+import { cloneFixtureWorkspace, definitionPath, fixtureWorkspace, type ClonedWorkspace } from "./helpers.js";
 
 describe("VariableStore", () => {
   it("givenSameKeyInEveryScope_whenGet_thenLocalWinsThenEnvironmentThenCollectionThenGlobals", () => {
@@ -208,5 +215,106 @@ describe("readVariables", () => {
     const keys = readVariables(FIXTURE, "LOCAL").bindings.map((binding) => binding.key);
 
     expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
+});
+
+describe("collection variables for a reader", () => {
+  const PING = "postman/collections/payment/Ping.request.yaml";
+  const COLLECTION_VARIABLES = [
+    "variables:",
+    "  - key: region",
+    "    value: from-collection",
+    "  - key: greeting",
+    "    value: from-collection",
+    "  - key: off",
+    "    value: never",
+    "    disabled: true",
+    "",
+  ].join("\n");
+
+  let clone: ClonedWorkspace;
+
+  beforeEach(() => {
+    clone = cloneFixtureWorkspace();
+  });
+
+  afterEach(() => clone.cleanup());
+
+  function withCollectionVariables(): void {
+    appendFileSync(definitionPath(clone.root, "payment"), COLLECTION_VARIABLES);
+  }
+
+  it("givenARequestInsideACollection_whenRead_thenTheCollectionLayerSitsBetweenGlobalsAndEnvironment", () => {
+    withCollectionVariables();
+    const view = readVariables(clone.root, "LOCAL", PING);
+
+    expect(view.layers.map((layer) => layer.scope)).toEqual(["globals", "collection", "environment"]);
+    expect(view.layers.map((layer) => layer.writable)).toEqual([false, true, true]);
+    expect(view.layers[1]?.label).toBe("payment");
+    expect(view.bindings.find((binding) => binding.key === "region")?.scope).toBe("collection");
+  });
+
+  it("givenKeyInCollectionAndEnvironment_whenRead_thenEnvironmentWinsAndTheCollectionIsShadowed", () => {
+    withCollectionVariables();
+    const greeting = readVariables(clone.root, "LOCAL", PING).bindings.find((binding) => binding.key === "greeting");
+
+    expect(greeting?.value).toBe("hello");
+    expect(greeting?.shadowed).toEqual(["globals", "collection"]);
+  });
+
+  it("givenADisabledCollectionRow_whenRead_thenItIsAbsent", () => {
+    withCollectionVariables();
+    const view = readVariables(clone.root, "LOCAL", PING);
+
+    expect(view.bindings.some((binding) => binding.key === "off")).toBe(false);
+  });
+
+  it("givenVariablesInAFolderDefinition_whenRead_thenTheyAreIgnored", () => {
+    appendFileSync(definitionPath(clone.root, "payment", "nested"), "variables:\n  - key: folder_only\n    value: x\n");
+    const view = readVariables(clone.root, "LOCAL", "postman/collections/payment/nested/Deep Echo.request.yaml");
+
+    expect(view.bindings.some((binding) => binding.key === "folder_only")).toBe(false);
+  });
+
+  it("givenAPathOutsideEveryCollection_whenRead_thenThereIsNoCollectionLayer", () => {
+    withCollectionVariables();
+    const view = readVariables(clone.root, "LOCAL", "postman/environments/LOCAL.environment.yaml");
+
+    expect(view.layers.map((layer) => layer.scope)).toEqual(["globals", "environment"]);
+  });
+
+  it("givenACollectionToken_whenPreviewed_thenItResolvesFromTheCollection", () => {
+    withCollectionVariables();
+
+    expect(previewText(clone.root, "LOCAL", "{{region}}", PING).text).toBe("from-collection");
+  });
+
+  it("givenNoVariablesYet_whenWritten_thenTheListIsCreatedAndTheScriptsSurvive", () => {
+    const file = definitionPath(clone.root, "payment");
+    const before = readFileSync(file, "utf8");
+
+    writeCollectionVariable(clone.root, PING, "region", "eu");
+
+    const after = readFileSync(file, "utf8");
+    expect(after.startsWith(before.trimEnd())).toBe(true);
+    expect(readVariables(clone.root, null, PING).bindings.find((binding) => binding.key === "region")?.value).toBe(
+      "eu",
+    );
+  });
+
+  it("givenAnExistingKey_whenWritten_thenItsValueIsReplacedInPlace", () => {
+    withCollectionVariables();
+
+    writeCollectionVariable(clone.root, PING, "region", "us");
+
+    const view = readVariables(clone.root, null, PING);
+    expect(view.bindings.filter((binding) => binding.key === "region").map((binding) => binding.value)).toEqual(["us"]);
+    expect(readFileSync(definitionPath(clone.root, "payment"), "utf8").match(/key: region/g)).toHaveLength(1);
+  });
+
+  it("givenAPathOutsideEveryCollection_whenWritten_thenItIsRefused", () => {
+    expect(() => writeCollectionVariable(clone.root, "postman/environments/LOCAL.environment.yaml", "a", "b")).toThrow(
+      /is not inside a collection/,
+    );
   });
 });

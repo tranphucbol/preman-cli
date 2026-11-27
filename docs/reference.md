@@ -796,6 +796,54 @@ Variable precedence, from lowest to highest, is:
 `{{name}}` tokens are expanded recursively with cycle detection. Unresolved tokens are errors and
 name the missing variables instead of being sent on the wire.
 
+### Collection variables
+
+A collection declares its variables in its own `.resources/definition.yaml`, in the shape Postman's
+Local View writes:
+
+```yaml
+$kind: collection
+name: payments
+variables:
+  - key: baseUrl
+    value: https://api.example.com
+  - key: legacyPath
+    value: /v1
+    disabled: true
+```
+
+A row with `disabled: true` or `enabled: false` is skipped. Non-string values are JSON-encoded.
+Folders have no variables: a `variables:` block in a folder's definition is ignored, as it is in
+Postman. A collection run, and every request inside it, reads the variables of the collection it
+belongs to.
+
+`pm.collectionVariables.set` changes a value for the rest of the run only. It is never written back
+to the definition, unlike an environment change; to change the stored value, edit the definition.
+The desktop app edits it from the collection's Variables tab and from the Variables pane.
+
+### Personal environments
+
+An environment is either shared, under `postman/environments/` and committed with the workspace, or
+personal, kept outside the checkout under the user's config directory:
+
+```text
+$XDG_CONFIG_HOME/preman/workspaces/<folder>-<hash>/environments/<name>.environment.yaml
+```
+
+`$XDG_CONFIG_HOME` defaults to `~/.config`. `<folder>` is the workspace directory's name and
+`<hash>` the first 8 hex characters of the SHA-256 of its absolute path, so two checkouts of the
+same repository keep separate personal environments, and moving a checkout leaves its old ones
+behind.
+
+Personal environments use the same file format and are listed, selected with `-e`, and written back
+exactly like shared ones. Names are unique across both kinds: creating one whose name is taken by
+either kind is refused, and a name that matches one of each fails with both paths listed. In the
+desktop app, the environment picker marks personal environments and creates them with
+**New personal environment…**. The Variables pane's **Duplicate environment** menu copies the
+selected environment, either as the same kind or as the other one; duplicating a shared environment as personal is how to fill
+in private values without committing them. The copy keeps every value and comment and takes the new
+name.
+
 The Postman dynamic variable set is supported by category:
 
 | Category              | Variables                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -1025,7 +1073,8 @@ explicitly. `pm.test.skip` and `pm.test.todo` record skipped tests.
 
 Variables changed by scripts are written back after post-response scripts finish. The YAML edit
 preserves comments, key order, and quoting. Collection runs write once after the group completes.
-Use `--no-save` to disable writeback.
+Use `--no-save` to disable writeback. Only environment changes are written; collection, global,
+and local changes last for the run.
 
 ## Engine protocol
 

@@ -28,6 +28,8 @@ export interface SnapshotEnvironment {
   name: string;
   file: string;
   keys: string[];
+  /** Kept outside the checkout, under the user's config directory, and never committed. */
+  personal: boolean;
 }
 
 /** Everything an interface needs to describe a workspace without reading it again. */
@@ -61,6 +63,7 @@ export function describeWorkspace(dir: string): WorkspaceSnapshot {
       name: environment.name,
       file: environment.filePath,
       keys: Object.keys(environment.values),
+      personal: environment.personal === true,
     })),
     specs: resources.specs,
     includeDirs: resources.includeDirs,

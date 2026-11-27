@@ -16,8 +16,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { VariableView } from "@preman/desktop/engine/protocol.js";
 import { readVariables, writeVariable, type Failure } from "@preman/desktop/renderer/actions.js";
-import { tokenState, type TokenState } from "@preman/desktop/renderer/model/tokens.js";
+import { tokenState, type TokenState, type WritableScope } from "@preman/desktop/renderer/model/tokens.js";
 import { useSessionStore } from "@preman/desktop/renderer/stores/session.js";
+import { useTabsStore } from "@preman/desktop/renderer/stores/tabs.js";
 
 import { Button, Field } from "./Controls.js";
 import type { TokenReporter } from "./template.js";
@@ -47,7 +48,7 @@ export const GLOBALS_READ_ONLY_HINT = "preman has no writer for globals: edit th
 
 const DYNAMIC_NOTE = "A dynamic variable. preman generates one at send time, so there is no value to store.";
 const NO_ENVIRONMENT_NOTE =
-  "No environment is chosen, so there is nowhere to define this. Choose one in the toolbar and it can be set here.";
+  "No environment is chosen and this tab is in no collection, so there is nowhere to define this. Choose an environment in the toolbar and it can be set here.";
 
 /**
  * What Radix's popper needs to place a surface: a rect and nothing else.
@@ -112,6 +113,7 @@ export function useTokenBox(): TokenBoxHost {
 
 export function TokenBox({ name, at, onDismiss, onWrite }: TokenBoxProps) {
   const environment = useSessionStore((state) => state.environment);
+  const active = useTabsStore((state) => state.activeId);
   const countVariableWrite = useSessionStore((state) => state.countVariableWrite);
 
   const [view, setView] = useState<VariableView | null>(null);
@@ -128,7 +130,7 @@ export function TokenBox({ name, at, onDismiss, onWrite }: TokenBoxProps) {
 
   useEffect(() => {
     let live = true;
-    void readVariables(environment).then((result) => {
+    void readVariables(environment, active).then((result) => {
       if (!live) return;
       if (result.ok) {
         setView(result.value);
@@ -138,11 +140,15 @@ export function TokenBox({ name, at, onDismiss, onWrite }: TokenBoxProps) {
     return () => {
       live = false;
     };
-  }, [environment]);
+  }, [environment, active]);
 
   const commit = useCallback(
-    (into: string, value: string) => {
-      void writeVariable({ environment: into, key: name, value }).then((result) => {
+    (scope: WritableScope, label: string, value: string) => {
+      const write =
+        scope === "collection"
+          ? { scope, environment: environment ?? null, at: active, key: name, value }
+          : { scope, environment: label, at: active, key: name, value };
+      void writeVariable(write).then((result) => {
         if (!result.ok) {
           setFailure(result.failure);
           return;
@@ -156,7 +162,7 @@ export function TokenBox({ name, at, onDismiss, onWrite }: TokenBoxProps) {
         onWrite?.();
       });
     },
-    [name, countVariableWrite, onWrite],
+    [name, environment, active, countVariableWrite, onWrite],
   );
 
   return (
@@ -205,7 +211,7 @@ function Body({
 }: {
   readonly name: string;
   readonly state: TokenState;
-  readonly onCommit: (environment: string, value: string) => void;
+  readonly onCommit: (scope: WritableScope, label: string, value: string) => void;
 }) {
   switch (state.kind) {
     case "dynamic":
@@ -224,11 +230,11 @@ function Body({
       return (
         <ValueField
           key={state.value}
-          label={`Value in ${state.environment}`}
+          label={`Value in ${state.label}`}
           value={state.value}
           note={state.shadows.length > 0 ? `Overrides ${state.shadows.join(", ")}.` : undefined}
           onCommit={(next) => {
-            onCommit(state.environment, next);
+            onCommit(state.scope, state.label, next);
           }}
         />
       );
@@ -236,9 +242,9 @@ function Body({
       return (
         <Define
           name={name}
-          environment={state.environment}
+          into={state.label}
           onCommit={(next) => {
-            onCommit(state.environment, next);
+            onCommit(state.scope, state.label, next);
           }}
         />
       );
@@ -288,11 +294,12 @@ function ValueField({
  */
 function Define({
   name,
-  environment,
+  into,
   onCommit,
 }: {
   readonly name: string;
-  readonly environment: string;
+  /** The environment's or the collection's name. */
+  readonly into: string;
   readonly onCommit: (value: string) => void;
 }) {
   const draft = useRef<HTMLInputElement | null>(null);
@@ -303,7 +310,7 @@ function Define({
 
   return (
     <>
-      <p className={NOTE_CLASS}>{`Not defined in ${environment}.`}</p>
+      <p className={NOTE_CLASS}>{`Not defined in ${into}.`}</p>
       <Field
         ref={draft}
         mono
@@ -314,7 +321,7 @@ function Define({
         }}
       />
       <Button variant="primary" tier="chrome" onClick={define}>
-        {`Define in ${environment}`}
+        {`Define in ${into}`}
       </Button>
     </>
   );

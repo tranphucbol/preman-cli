@@ -72,6 +72,22 @@ const authSchema = z
   })
   .passthrough();
 
+const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+/**
+ * A collection variable as Postman writes it. Postman's own model says `disabled: true`, the
+ * environment format says `enabled: false`; an import carries the first and a hand-edited file
+ * copied from an environment the second, so both switch the row off.
+ */
+const collectionVariableSchema = z
+  .object({
+    key: z.string(),
+    value: z.unknown().optional(),
+    enabled: z.boolean().optional(),
+    disabled: z.boolean().optional(),
+  })
+  .passthrough();
+
 /**
  * `.resources/definition.yaml` for a collection *or* a folder. One schema for both:
  * every folder in real workspaces writes `$kind: collection`, so `$kind` cannot
@@ -85,6 +101,8 @@ export const groupDefinitionSchema = z
     order: z.number().optional(),
     scripts: z.array(scriptSchema).optional(),
     auth: authSchema.optional(),
+    /** Read from the collection's own definition only: Postman has no folder variables. */
+    variables: z.array(collectionVariableSchema).optional(),
   })
   .passthrough();
 
@@ -95,8 +113,6 @@ const requestSchemaRef = z
     location: z.string().optional(),
   })
   .passthrough();
-
-const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
 /**
  * Headers and query params appear in two shapes in real exports: a plain YAML map

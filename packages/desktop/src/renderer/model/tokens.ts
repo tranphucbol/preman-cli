@@ -33,8 +33,14 @@ const OPENING_BRACE = "{";
 /** `vars/dynamic` decides what a dynamic name is by this prefix, and so does this. */
 const DYNAMIC_PREFIX = "$";
 
-/** The scope this app can write, and the only one `VariableLayer.writable` is ever true for. */
-const WRITABLE_SCOPE: Scope = "environment";
+/** The scopes this app can write: the ones `VariableLayer.writable` is ever true for. */
+export type WritableScope = Extract<Scope, "environment" | "collection">;
+
+const WRITABLE_SCOPES: ReadonlySet<Scope> = new Set<WritableScope>(["environment", "collection"]);
+
+function isWritableScope(scope: Scope): scope is WritableScope {
+  return WRITABLE_SCOPES.has(scope);
+}
 
 /** Only reachable if the engine answered with a binding from a layer it did not also report. */
 const UNKNOWN_FILE = "";
@@ -103,19 +109,27 @@ export function tokenAt(text: string, offset: number): TokenSpan | null {
 export type TokenState =
   /** A `{{$name}}`: generated per occurrence at send time, so there is nothing to store. */
   | { readonly kind: "dynamic" }
-  /** No environment is chosen, so there is no writable layer to put a value in. */
+  /**
+   * No environment is chosen and the active tab has no collection, so there is no writable layer
+   * to put a value in.
+   */
   | { readonly kind: "no-environment" }
-  /** Defined in the chosen environment: the one editable case. */
+  /** Won by the chosen environment or the active tab's collection: the editable case. */
   | {
       readonly kind: "writable";
       readonly value: string;
-      readonly environment: string;
+      readonly scope: WritableScope;
+      /** The environment's or the collection's name. */
+      readonly label: string;
       readonly shadows: readonly Scope[];
     }
   /** Defined in globals and nowhere else. `readVariables` marks that layer unwritable. */
   | { readonly kind: "read-only"; readonly value: string; readonly file: string }
-  /** Defined nowhere. The environment is named because the box offers to append the key to it. */
-  | { readonly kind: "absent"; readonly environment: string };
+  /**
+   * Defined nowhere. The layer is named because the box offers to append the key to it: the
+   * environment when one is chosen, since it is the layer that would win, else the collection.
+   */
+  | { readonly kind: "absent"; readonly scope: WritableScope; readonly label: string };
 
 /**
  * Which of {@link TokenState} a name is in, given the view the engine answered with.
@@ -132,20 +146,24 @@ export function tokenState(view: VariableView, name: string): TokenState {
   if (binding === undefined) {
     // Nothing carries the name. Whether that is fixable is entirely a question of whether there is
     // a writable layer to fix it in.
-    return view.environment === undefined
+    const into =
+      view.layers.find((layer) => layer.writable && layer.scope === "environment") ??
+      view.layers.find((layer) => layer.writable);
+    return into === undefined || !isWritableScope(into.scope)
       ? { kind: "no-environment" }
-      : { kind: "absent", environment: view.environment };
+      : { kind: "absent", scope: into.scope, label: into.label };
   }
 
-  if (binding.scope === WRITABLE_SCOPE && view.environment !== undefined) {
+  const layer = view.layers.find((candidate) => candidate.scope === binding.scope);
+  if (layer?.writable === true && isWritableScope(layer.scope)) {
     return {
       kind: "writable",
       value: binding.value,
-      environment: view.environment,
+      scope: layer.scope,
+      label: layer.label,
       shadows: binding.shadowed,
     };
   }
 
-  const layer = view.layers.find((candidate) => candidate.scope === binding.scope);
   return { kind: "read-only", value: binding.value, file: layer?.file ?? UNKNOWN_FILE };
 }

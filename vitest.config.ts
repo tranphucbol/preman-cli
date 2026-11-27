@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 const WORKSPACE_ROOT = import.meta.dirname;
@@ -32,7 +33,12 @@ const NODE_CONDITIONS = ["node"];
  * of hoping for it. `test.env` reaches the worker that imports the code under test, which is where
  * picocolors decides, so this is the environment of the renderers rather than a global switch.
  */
-const TEST_ENV = { NO_COLOR: "1" };
+const TEST_ENV = {
+  NO_COLOR: "1",
+  // Personal environments live under the config directory (decision 061); a test that creates one
+  // must never leave it in the real `~/.config` of whoever ran the suite.
+  XDG_CONFIG_HOME: join(tmpdir(), "preman-test-config"),
+};
 
 /** One Vitest project over one `test/fixtures/`; the packages only carry build config. */
 export default defineConfig({

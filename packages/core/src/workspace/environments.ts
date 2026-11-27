@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { isMap, isSeq, parseDocument } from "yaml";
+import { isMap, isSeq, parseDocument, type Document } from "yaml";
 import { PremanError } from "@preman/core/errors.js";
 import { environmentSchema } from "./schemas.js";
 import type { Workspace } from "./discover.js";
+import { personalEnvironmentsDirFor } from "./paths.js";
 
 const ENV_SUFFIX = ".environment.yaml";
 const ENV_DIR = "environments";
@@ -16,10 +17,25 @@ export interface EnvironmentEntry {
   name: string;
   /** Enabled key/value pairs, coerced to strings. */
   values: Record<string, string>;
+  /** Set when the file lives in the user's personal directory rather than the workspace. */
+  personal?: true;
 }
 
+/**
+ * Every environment a run can select: the workspace's shared ones, then the user's personal
+ * ones for this workspace (`personalEnvironmentsDirFor`), sorted together by name.
+ *
+ * Personal environments are files outside the checkout, so they can hold a developer's own
+ * hosts and credentials without a diff in the repository. Both kinds are addressed by name and
+ * nothing else; {@link findEnvironment} refuses a name that both answer to.
+ */
 export function listEnvironments(ws: Workspace): EnvironmentEntry[] {
-  return listEnvironmentsIn(join(ws.postmanDir, ENV_DIR));
+  const shared = listEnvironmentsIn(join(ws.postmanDir, ENV_DIR));
+  const personal = listEnvironmentsIn(personalEnvironmentsDirFor(ws.root)).map((entry) => ({
+    ...entry,
+    personal: true as const,
+  }));
+  return personal.length === 0 ? shared : [...shared, ...personal].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -86,9 +102,20 @@ export function loadEnvironment(filePath: string): EnvironmentEntry {
 export function findEnvironment(ws: Workspace, name: string): EnvironmentEntry | undefined {
   const needle = name.trim().toLowerCase();
   const all = listEnvironments(ws);
-  return (
-    all.find((e) => e.name.toLowerCase() === needle) ?? all.find((e) => stemOf(e.filePath).toLowerCase() === needle)
-  );
+  const pick = (entries: readonly EnvironmentEntry[]): EnvironmentEntry | undefined =>
+    entries.find((e) => e.name.toLowerCase() === needle) ??
+    entries.find((e) => stemOf(e.filePath).toLowerCase() === needle);
+
+  const shared = pick(all.filter((e) => e.personal !== true));
+  const personal = pick(all.filter((e) => e.personal === true));
+  // Creation refuses a name the other directory already uses, so this is a file someone copied
+  // in by hand. Picking either would send at a host the user may not have meant.
+  if (shared !== undefined && personal !== undefined) {
+    throw new PremanError(`environment "${name}" is both a shared and a personal environment`, {
+      details: [`shared: ${shared.filePath}`, `personal: ${personal.filePath}`, "rename or delete one of them"],
+    });
+  }
+  return shared ?? personal;
 }
 
 /**
@@ -119,14 +146,25 @@ export function saveEnvironmentValues(filePath: string, updates: Record<string, 
   if (keys.length === 0) return;
 
   const doc = parseDocument(readFileSync(filePath, "utf8"));
-  let seq = doc.get("values");
+  setKeyedValues(doc, VALUES_FIELD, updates, filePath);
+  writeFileSync(filePath, doc.toString(), "utf8");
+}
+
+const VALUES_FIELD = "values";
+
+/**
+ * Set `updates` on the `{ key, value }` list under `field`, creating the list when the document
+ * has none. Shared by environment files (`values:`) and collection definitions (`variables:`),
+ * which are the same list under two names.
+ */
+export function setKeyedValues(doc: Document, field: string, updates: Record<string, string>, filePath: string): void {
+  let seq = doc.get(field);
   if (!isSeq(seq)) {
-    doc.set("values", (seq = doc.createNode([])));
-    if (!isSeq(seq)) throw new PremanError(`cannot write values into ${filePath}`);
+    doc.set(field, (seq = doc.createNode([])));
+    if (!isSeq(seq)) throw new PremanError(`cannot write ${field} into ${filePath}`);
   }
 
-  for (const key of keys) {
-    const value = updates[key] ?? "";
+  for (const [key, value] of Object.entries(updates)) {
     const existing = seq.items.find((item) => isMap(item) && item.get("key") === key);
     if (existing && isMap(existing)) {
       existing.set("value", value);
@@ -134,6 +172,4 @@ export function saveEnvironmentValues(filePath: string, updates: Record<string, 
       seq.add(doc.createNode({ key, value }));
     }
   }
-
-  writeFileSync(filePath, doc.toString(), "utf8");
 }
